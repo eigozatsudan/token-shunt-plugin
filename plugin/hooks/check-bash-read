@@ -150,6 +150,58 @@ cmd="${cmd#"${cmd%%[![:space:]]*}"}"
 cmd="${cmd%"${cmd##*[![:space:]]}"}"
 [[ -z $cmd ]] && pass
 
+# Remove shell comments before either operator scanning or tokenization. Keep
+# newlines so a command following a comment remains a separate command.
+strip_comments() {
+  local s=$1 i=0 n=${#1} qs=0 c nxt word=0
+  COMMENT_FREE=''
+  while (( i < n )); do
+    c=${s:i:1}; nxt=${s:i+1:1}
+    if (( qs == 0 )) && [[ $c == '#' ]] && (( !word )); then
+      while (( i < n )) && [[ ${s:i:1} != $'\n' ]]; do ((i++)); done
+      continue
+    fi
+    COMMENT_FREE+=$c
+    case $qs in
+      1) [[ $c == "'" ]] && qs=0 ;;
+      2) if [[ $c == '"' ]]; then qs=0
+         elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then
+           COMMENT_FREE+=$nxt; ((i++))
+         fi ;;
+      0) case $c in
+           '\') if [[ $nxt == $'\n' ]]; then
+                     COMMENT_FREE=${COMMENT_FREE%?}
+                   else COMMENT_FREE+=$nxt; word=1
+                   fi
+                   ((i++)) ;;
+           "'") qs=1; word=1 ;;
+           '"') qs=2; word=1 ;;
+           [[:space:]]|'|'|'&'|';'|'('|')'|'<'|'>') word=0 ;;
+           *) word=1 ;;
+         esac ;;
+    esac
+    ((i++))
+  done
+}
+strip_comments "$cmd"
+cmd=$COMMENT_FREE
+
+# A stdout redirect is isolating only for a normal file or /dev/null.
+# Follow links without reading their contents; unknown devices/FIFOs and
+# destinations with expansion syntax receive the usual input-file check.
+is_isolating_target() {
+  local target=$1 resolved
+  [[ -n $target ]] || return 1
+  case $target in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*) return 1;; esac
+  case $target in *'$'*|*'`'*|*'~'*|*'<'*|*'>'*|*'*'*|*'?'*|*'['*) return 1;; esac
+  [[ $target -ef /dev/stdout || $target -ef /dev/stderr ]] && return 1
+  resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
+  case $resolved in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*|*'pipe:['*|*'socket:['*) return 1;; esac
+  [[ $target -ef /dev/null ]] && return 0
+  [[ -f $target ]] && return 0
+  [[ ! -e $target && ! -L $target ]]
+}
+
 # --- §10-4: quote-aware operator scan ---
 # Sets: S_UNINTERP, PIPES=("pos:len"), SEPS=("pos:len"), CLEAN_GT, SPECIAL_GT
 scan_ops() {
@@ -162,7 +214,8 @@ scan_ops() {
     nxt=${s:i+1:1}
     case $qs in
       1) [[ $c == "'" ]] && qs=0 ;;
-      2) [[ $c == '"' ]] && qs=0 ;;
+      2) if [[ $c == '"' ]]; then qs=0
+         elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then ((i++)); fi ;;
       3) qs=0 ;;
       0) case $c in
          "\\") qs=3 ;;
@@ -186,7 +239,15 @@ scan_ops() {
                  # `2>`/`3>`/... leave stdout alone -> not an early pass.
                  local j=$((fdpos-1)) fd=''
                  while (( j >= 0 )) && [[ ${s:j:1} =~ [0-9] ]]; do fd=${s:j:1}$fd; ((j--)); done
-                 [[ -z $fd || $fd == 1 ]] && CLEAN_GT=1
+                 if [[ -z $fd || $fd == 1 ]]; then
+                   # Every stdout redirect must be isolating before early pass.
+                   # Tokenization only removes quotes; it never expands/evals.
+                   local -a saved_toks=("${TOKS[@]}")
+                   tokenize "${s:i+1}"
+                   if is_isolating_target "${TOKS[0]-}"; then CLEAN_GT=1
+                   else SPECIAL_GT=1; fi
+                   TOKS=("${saved_toks[@]}")
+                 fi
                fi ;;
          ';'|$'\n') SEPS+=("$i:1") ;;
        esac ;;
@@ -199,19 +260,34 @@ scan_ops() {
 # tokenize: whitespace-split honoring quotes/escapes; quotes removed -> TOKS
 tokenize() {
   local s=$1
-  local i=0 n=${#s} qs=0 c cur='' have=0
+  local i=0 n=${#s} qs=0 c nxt cur='' have=0 quoted=0
   TOKS=()
   while (( i < n )); do
-    c=${s:i:1}
+    c=${s:i:1}; nxt=${s:i+1:1}
     case $qs in
       1) [[ $c == "'" ]] && qs=0 || { cur+=$c; have=1; } ;;
-      2) [[ $c == '"' ]] && qs=0 || { cur+=$c; have=1; } ;;
+      2) if [[ $c == '"' ]]; then qs=0
+         elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then
+           [[ $nxt != $'\n' ]] && cur+=$nxt
+           ((i++))
+         else cur+=$c; have=1; fi ;;
       3) cur+=$c; qs=0 ;;
       0) case $c in
-         "\\") qs=3; have=1 ;;
-         "'")  qs=1; have=1 ;;
-         '"')  qs=2; have=1 ;;
-         [[:space:]]) (( have )) && { TOKS+=("$cur"); cur=''; have=0; } ;;
+         "\\") qs=3; have=1; quoted=1 ;;
+         "'")  qs=1; have=1; quoted=1 ;;
+         '"')  qs=2; have=1; quoted=1 ;;
+         '&'|'|'|';'|'('|')')
+              (( have )) && TOKS+=("$cur")
+              TOKS+=("$c"); cur=''; have=0; quoted=0 ;;
+         '>') local redir=''
+              if (( have )); then
+                if (( !quoted )) && [[ $cur =~ ^[0-9]+$ ]]; then redir=$cur
+                else TOKS+=("$cur"); fi
+              fi
+              redir+='>'
+              if [[ $nxt == '>' || $nxt == '|' || $nxt == '&' ]]; then redir+=$nxt; ((i++)); fi
+              TOKS+=("$redir"); cur=''; have=0; quoted=0 ;;
+         [[:space:]]) (( have )) && { TOKS+=("$cur"); cur=''; have=0; quoted=0; } ;;
          *) cur+=$c; have=1 ;;
        esac ;;
     esac
@@ -441,7 +517,9 @@ if ((${#PIPES[@]})); then
       else
         deny "Piped '$base' output has no byte bound; use 'head -c N file' / 'tail -c N file' with explicit bytes or /token-shunt:bulk-reader."
       fi ;;
-    cat|tee|less|more) check_stage_full "${SPLIT[0]}"; pass ;;
+    cat|tee|less|more)
+      for stage in "${SPLIT[@]}"; do check_stage_full "$stage"; done
+      pass ;;
     *) pass ;;   # unknown tail command: intended fail-open (§10-4, §15)
   esac
 fi

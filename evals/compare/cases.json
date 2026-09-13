@@ -299,7 +299,7 @@
         "gen/verify/notes_ref.md",
         "gen/verify/notes_ref.yaml"
       ],
-      "prompt_delegate": "Three delegated generations. (1) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/config_ref.json --target {TMP}/vl_config.json --verify \"jq empty {TMP}/vl_config.json\" --spec \"config_ref に沿った JSON。必須キー required_key を含む\". (2) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.md --target {TMP}/vl_notes.md --spec \"notes_ref に沿った 30 行の Markdown\". (3) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.yaml --target {TMP}/vl_notes.yaml --spec \"notes_ref に沿った YAML（.md と同じ最小契約）\". Then classify these already-written samples (do not rewrite them): {FIX}/gen/verify/control_missing_key.json (syntactically valid JSON missing required_key), {FIX}/gen/verify/control_trunc.json (similar-length mid-truncation), {FIX}/gen/verify/control_fence.md (Markdown whose trailing fence is a legitimate code block). Run each verification and report status and the verification level (minimal|syntax|requirements) for each artifact. JSON parse-only is syntax + partial; Markdown/YAML minimal checks are minimal + partial; requirements only if acceptance keys were checked. For this evaluation, run a separate parent Bash verification for each artifact using exactly these commands: python3 {JUDGE_DIR}/flow_checks.py --verify syntax {TMP}/vl_config.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.md --expected-lines 30; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.yaml; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_missing_key.json; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_trunc.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {FIX}/gen/verify/control_fence.md. These checks print only verification evidence, never artifact bodies. Report each filename followed by its verification level and status on its own line or Markdown table row. The truncated JSON must be reported failed/error or partial; the legitimate Markdown control must pass minimal checks and be reported minimal + partial. Do not claim requirements verification from these checks.",
+      "prompt_delegate": "Three delegated generations. (1) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/config_ref.json --target {TMP}/vl_config.json --verify \"jq empty {TMP}/vl_config.json\" --spec \"config_ref に沿った JSON。必須キー required_key を含む\". (2) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.md --target {TMP}/vl_notes.md --spec \"notes_ref に沿った 30 行の Markdown\". (3) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.yaml --target {TMP}/vl_notes.yaml --spec \"notes_ref に沿った YAML（.md と同じ最小契約）\". (4) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/config_ref.json --target {TMP}/vl_req.json --verify \"python3 {JUDGE_DIR}/flow_checks.py --verify requirements {TMP}/vl_req.json --require-key required_key=rk-1\" --spec \"config_ref に沿った JSON。受入条件は必須キー required_key の値が rk-1 であること\". Then classify these already-written samples (do not rewrite them): {FIX}/gen/verify/control_missing_key.json (syntactically valid JSON missing required_key), {FIX}/gen/verify/control_trunc.json (similar-length mid-truncation), {FIX}/gen/verify/control_fence.md (Markdown whose trailing fence is a legitimate code block). Run each verification and report status and the verification level (minimal|syntax|requirements) for each artifact. JSON parse-only is syntax + partial; Markdown/YAML minimal checks are minimal + partial; requirements only if acceptance keys were checked. For this evaluation, run a separate parent Bash verification for each artifact using exactly these commands: python3 {JUDGE_DIR}/flow_checks.py --verify syntax {TMP}/vl_config.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.md --expected-lines 30; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.yaml; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_missing_key.json; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_trunc.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {FIX}/gen/verify/control_fence.md; python3 {JUDGE_DIR}/flow_checks.py --verify requirements {TMP}/vl_req.json --require-key required_key=rk-1. These checks print only verification evidence, never artifact bodies. Report each filename followed by its verification level and status on its own line or Markdown table row. The truncated JSON must be reported failed/error or partial; the legitimate Markdown control must pass minimal checks and be reported minimal + partial. Do not claim requirements verification from any of these checks except vl_req.json: only there is an acceptance condition (required_key=rk-1) actually checked, so report vl_req.json as requirements + complete when that check succeeds, and do not downgrade it to syntax or minimal.",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:code-writer",
@@ -340,6 +340,14 @@
             {
               "path": "{FIX}/gen/verify/control_fence.md",
               "level": "minimal",
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{TMP}/vl_req.json",
+              "level": "requirements",
+              "require_keys": [
+                "required_key=rk-1"
+              ],
               "checker": "{JUDGE_DIR}/flow_checks.py"
             }
           ]
@@ -386,6 +394,22 @@
             "partial"
           ],
           "expected_level": "minimal"
+        },
+        {
+          "path": "{TMP}/vl_req.json",
+          "expected_level": "requirements",
+          "allowed_status": [
+            "complete"
+          ],
+          "forbid_levels": [
+            "minimal",
+            "syntax"
+          ],
+          "forbid_status": [
+            "partial",
+            "failed",
+            "error"
+          ]
         }
       ],
       "disk_check": "verify_levels"
@@ -548,12 +572,13 @@
       "fixtures": [
         "gen/verify/config_ref.json"
       ],
-      "prompt_delegate": "Use token-shunt:code-writer (--worker-model auto) --reference {FIX}/gen/verify/config_ref.json --target {TMP}/wb_out.json --verify \"jq empty {TMP}/wb_out.json\" --spec \"config_ref に沿った設定ファイル\". Report the result.",
+      "prompt_delegate": "Use token-shunt:code-writer (--worker-model auto) --reference {FIX}/gen/verify/config_ref.json --target {TMP}/wb_out.json --verify \"jq empty {TMP}/wb_out.json\" --spec \"config_ref に沿った設定ファイル\". Report the result. The worker inspects at most 16 files and at most 20 Read/Grep/Glob calls in total.",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:code-writer",
           "agent_calls_max": 4,
-          "child_tool_budget": 20
+          "child_tool_budget": 20,
+          "child_file_budget": 16
         }
       }
     },
@@ -954,6 +979,68 @@
         }
       },
       "disk_check": "edit_hint"
+    },
+    {
+      "id": "auto-edit-grep-ambiguous",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/edit_ambiguous.py"
+      ],
+      "gold_any": [
+        "ambiguous",
+        "ambiguity",
+        "曖昧",
+        "multiple",
+        "複数",
+        "not unique",
+        "一意"
+      ],
+      "prompt_direct": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.",
+      "prompt_delegate": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "no_parent_edit": true,
+          "no_parent_write": true,
+          "fixture_unchanged": {
+            "path": "{FIX}/gen/edit_ambiguous.py",
+            "occurrences": {
+              "HDR_MODE = 'off'": 3,
+              "def render_header": 3
+            },
+            "absent": [
+              "HDR_MODE = 'on'",
+              "HDR_MODE='on'",
+              "HDR_MODE=on"
+            ]
+          }
+        },
+        "delegate": {
+          "agent_zero": true,
+          "no_parent_edit": true,
+          "no_parent_write": true,
+          "fixture_unchanged": {
+            "path": "{FIX}/gen/edit_ambiguous.py",
+            "occurrences": {
+              "HDR_MODE = 'off'": 3,
+              "def render_header": 3
+            },
+            "absent": [
+              "HDR_MODE = 'on'",
+              "HDR_MODE='on'",
+              "HDR_MODE=on"
+            ]
+          }
+        }
+      },
+      "disk_check": "edit_unchanged:{FIX}/gen/edit_ambiguous.py"
     },
     {
       "id": "auto-routing-boundary-16k-minus",

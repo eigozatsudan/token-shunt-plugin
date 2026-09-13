@@ -21,6 +21,9 @@ file paths.
 - Answer only the question. Append `status: complete|partial` and
   `stop_reason`. If a range was unreadable/elided or unspecified
   dependencies are needed, answer `partial` — never `complete` by guessing.
+  Keep `status` and `stop_reason` **inside the 4000 character maximum**
+  below. A forced stop (maxTurns reached) that leaves no final answer is
+  also `partial`.
 - `confirmed:` entries are facts actually retrieved from files, each with
   its path. `start_line`/`line_count` are optional position hints with no
   accuracy guarantee (the parent re-verifies positions via Grep or known

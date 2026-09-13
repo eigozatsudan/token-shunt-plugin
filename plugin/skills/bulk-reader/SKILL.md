@@ -100,3 +100,8 @@ Examples:
 - No escalation on: unspecified dependencies, Read/context limits, budget
   exhaustion, auth/permission errors, missing references, unsupported
   model. Report those as partial.
+- Shared cap: Agent invocations for one user question (both workers,
+  batches, boundary checks, retries) total at most 4. The cap also binds
+  after work has started: once it is reached, do not escalate and do not
+  start another batch — report partial plus the unfinished paths and
+  range. Do not bypass via another agent name or resume.

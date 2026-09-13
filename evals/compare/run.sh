@@ -200,6 +200,23 @@ while len(buf) < 400:
     buf.append("# tail pad %d" % len(buf))
 open(os.path.join(g, "edit_hint.py"), "w").write("\n".join(buf) + "\n")
 json.dump(["HDR_MODE=on"], open(os.path.join(g, "gold-edit-hint.json"), "w"))
+
+# edit_ambiguous.py: same shape, but render_header (and its HDR_MODE marker)
+# occurs three times with identical bodies, so no Grep pattern isolates one.
+# Expected outcome is NO edit at all; the file must stay byte-identical.
+buf = ["# module header", "", ""]
+for i in range(9, 290):
+    if i == 12:
+        buf.append("# see render_header for the header path")  # decoy
+    else:
+        buf.append("PADA%03d = %d" % (i, i))
+for cls in ("AlphaView", "BetaView", "GammaView"):
+    buf += ["", "class %s:" % cls, "    def render_footer(self):",
+            "        return 'footer'", "", "    def render_header(self):",
+            "        HDR_MODE = 'off'", "        return HDR_MODE", ""]
+while len(buf) < 400:
+    buf.append("# tail pad %d" % len(buf))
+open(os.path.join(g, "edit_ambiguous.py"), "w").write("\n".join(buf) + "\n")
 PY
 }
 
@@ -290,11 +307,18 @@ expb = pre.replace(b"HDR_MODE = 'off'", b"HDR_MODE = 'on'")
 print(json.dumps({"ok": post == expb}))
 PY
       if jq -e .ok "$TMP/edit-ck.json" >/dev/null; then ok=1; else reason="expected-bytes mismatch"; fi ;;
+    edit_unchanged)
+      local t=${dc#*:}; t=${t//\{TMP\}/$TMP}; t=${t//\{FIX\}/$FIX}
+      local pre=$SNAP/$id.$(basename "$t").pre
+      if [[ ! -f $t || ! -f $pre ]]; then reason="missing fixture or pre-run snapshot"
+      elif ! cmp -s "$pre" "$t"; then reason="fixture bytes changed; control case must not edit"
+      else ok=1; fi ;;
     verify_levels)
       if python3 "$CMP/flow_checks.py" --verify syntax "$TMP/vl_config.json" >/dev/null \
         && python3 "$CMP/flow_checks.py" --verify minimal "$TMP/vl_notes.md" --expected-lines 30 >/dev/null \
-        && python3 "$CMP/flow_checks.py" --verify minimal "$TMP/vl_notes.yaml" >/dev/null; then ok=1
-      else reason="generated verification-level artifacts failed syntax/minimal checks"; fi ;;
+        && python3 "$CMP/flow_checks.py" --verify minimal "$TMP/vl_notes.yaml" >/dev/null \
+        && python3 "$CMP/flow_checks.py" --verify requirements "$TMP/vl_req.json" --require-key required_key=rk-1 >/dev/null; then ok=1
+      else reason="generated verification-level artifacts failed syntax/minimal/requirements checks"; fi ;;
     *) reason="unknown disk_check $dc" ;;
   esac
   jq -nc --argjson ok "$ok" --arg r "$reason" '{disk_ok:($ok==1),reason:$r}' >"$VRD/$id.$mode.disk.json"
@@ -436,6 +460,7 @@ while IFS= read -r case; do
     # snapshot files this case may mutate (for expected-bytes comparison)
     [[ -f $FIX/gen/dense_edit.txt ]] && cp "$FIX/gen/dense_edit.txt" "$SNAP/$id.pre"
     [[ -f $FIX/gen/edit_hint.py ]] && cp "$FIX/gen/edit_hint.py" "$SNAP/$id.edit_hint.pre"
+    [[ -f $FIX/gen/edit_ambiguous.py ]] && cp "$FIX/gen/edit_ambiguous.py" "$SNAP/$id.edit_ambiguous.py.pre"
     # run claude
     transcript=$TRD/$id.$mode.jsonl
     say "RUN $id/$mode"

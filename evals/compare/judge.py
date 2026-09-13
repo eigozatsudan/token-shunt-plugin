@@ -695,6 +695,24 @@ def judge(transcript_path, spec, ctx):
                      % (u["id"], n, ctb))
         v["checks"].setdefault("child_tool_budget", True)
 
+    # unique files a child touched with Read/Grep/Glob (§26.3: at most 16)
+    cfb = exp.get("child_file_budget")
+    if cfb is not None:
+        for u in parent_agents:
+            files = set()
+            for c in tr.child_tool_uses(u["id"]):
+                if c["name"] not in ("Read", "Grep", "Glob"):
+                    continue
+                for k in ("file_path", "path", "notebook_path"):
+                    val = c["input"].get(k)
+                    if isinstance(val, str) and val:
+                        files.add(norm_path(val))
+            if len(files) > cfb:
+                fail("child_file_budget",
+                     "child of Agent %s touched %d unique files > %d"
+                     % (u["id"], len(files), cfb))
+        v["checks"].setdefault("child_file_budget", True)
+
     # --- child read contract ---
     sip = exp.get("single_invocation_paths")
     carrier = None
@@ -916,6 +934,34 @@ def judge(transcript_path, spec, ctx):
             fail("edit_flow", error)
         if not errors:
             passed("edit_flow")
+
+    # Control cases that must not edit: the fixture on disk stays as generated.
+    fu = exp.get("fixture_unchanged")
+    if fu:
+        fpath = resolve_fixture_path(fu["path"], spec)
+        try:
+            with open(fpath, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError as exc:
+            fail("fixture_unchanged", "unreadable fixture %s: %s" % (fu["path"], exc))
+            body = None
+        if body is not None:
+            bad = False
+            for needle, want in (fu.get("occurrences") or {}).items():
+                got = body.count(needle)
+                if got != int(want):
+                    bad = True
+                    fail("fixture_unchanged",
+                         "%s: %r occurs %d times, want %d" % (fu["path"], needle, got, want))
+            for needle in fu.get("absent") or []:
+                if needle in body:
+                    bad = True
+                    fail("fixture_unchanged", "%s: %r appeared" % (fu["path"], needle))
+            if fu.get("bytes") is not None and len(body.encode("utf-8")) != int(fu["bytes"]):
+                bad = True
+                fail("fixture_unchanged", "%s: byte length changed" % fu["path"])
+            if not bad:
+                passed("fixture_unchanged")
 
     # parent must have run a Bash command containing all needles, succeeded
     pb = exp.get("parent_bash")
@@ -1275,6 +1321,60 @@ def selftest():
         token_evs({"input_tokens": 0, "cache_read_input_tokens": 0,
                    "cache_creation_input_tokens": 0, "output_tokens": 0}),
         tok_spec, "direct", True)
+
+    # --- §13 skills/agents RED vs GREEN: the child_no_body detector itself ---
+    # RED: a child with no "do not return the body" contract quotes the file.
+    # GREEN: the contracted child returns only a located summary.
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tf:
+        body = "".join("LINE%03d = %d  # %s\n" % (i, i, "c" * 60) for i in range(40))
+        body = "MARKER_NB = 'nb-7c1'\n" + body
+        tf.write(body)
+        nb_path = tf.name
+    try:
+        def nb_evs(child_text, subagent):
+            return [
+                ev_init(),
+                ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
+                                "input": {"subagent_type": subagent,
+                                          "prompt": nb_path}}]),
+                ev_tool_result("a1", child_text),
+                ev_result("MARKER_NB = 'nb-7c1'", usage=usage_ok),
+            ]
+
+        def nb_spec(agent_type=None, fixtures=True):
+            exp = {"child_no_body": True}
+            if agent_type:
+                exp["agent_type"] = agent_type
+            spec = {"id": "selftest-child-no-body", "expect": {"delegate": exp}}
+            if fixtures:
+                spec["fixtures"] = [os.path.basename(nb_path)]
+                spec["fixtures_abs"] = [nb_path]
+            return spec
+
+        fenced = "Here is the file:\n```python\n" + body + "```\n"
+        run("child_no_body-RED-no-contract-child-quotes-body",
+            nb_evs(fenced, "general-purpose"), nb_spec(), "delegate", False,
+            require_reason="child_no_body")
+
+        # Same leak without a fence: >20 consecutive fixture lines still fails.
+        run("child_no_body-RED-no-contract-child-unfenced-body",
+            nb_evs(body, "general-purpose"), nb_spec(), "delegate", False,
+            require_reason="child_no_body")
+
+        # No fixture to compare against: a long generated body still fails.
+        generated = "\n".join("print(%d)" % i for i in range(25))
+        run("child_no_body-RED-no-contract-child-generated-body",
+            nb_evs(generated, "general-purpose"), nb_spec(fixtures=False),
+            "delegate", False, require_reason="child_no_body")
+
+        # GREEN: contracted child, same fixture, summary only.
+        summary = ("confirmed: MARKER_NB = 'nb-7c1' — path: %s line 1\n"
+                   "41 lines; no body returned. status: complete" % nb_path)
+        run("child_no_body-GREEN-contracted-child-summary",
+            nb_evs(summary, "token-shunt:bulk-reader"),
+            nb_spec("token-shunt:bulk-reader"), "delegate", True)
+    finally:
+        os.unlink(nb_path)
 
     if errors:
         for e in errors:

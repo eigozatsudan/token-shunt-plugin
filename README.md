@@ -53,12 +53,19 @@ reads; multiple PreToolUse denies merge as deny).
   Image / PDF / `.ipynb` paths pass (the official Read tool handles them via
   visual/page/cell paths, not raw text). Non-regular paths pass.
 - `check-bash-read` (Bash): `cat`/`head`/`tail`/`less`/`more` on oversized
-  files are denied. Quote-aware: `|` inside quotes is not a pipe. Pipes are
+  files are denied. Quotes and escapes preserve literal `|` and `#`; shell
+  comments are ignored through the end of the line. Pipes are
   judged by the last command (narrowing filters pass; `| head/tail` passes only
   for interpretable `-c N` with `N <= MIN_BYTES`; `| cat`/`tee`/`less`/`more`
-  fall through to the first command). Compound commands (`;`/`&&`/`||`/newline/
+  check explicit input files in every stage at full thresholds; `tee`
+  operands are output files). Compound commands (`;`/`&&`/`||`/newline/
   `&`) check every segment's explicit files at full thresholds. A plain
-  `>`/`>>` stdout redirect on a single command passes.
+  `>`/`>>` stdout redirect on a single command passes only for ordinary
+  file destinations (including new files) or `/dev/null`. Destinations that
+  return output to stdout/stderr, other special files, and unresolved
+  expansions use the normal input-file check. Every stdout redirect in
+  the command must qualify for early pass. Link checks use file identity
+  and canonical paths when `readlink -f` is available.
   Leading literal `cd <dir>` / `cd -- <dir>` chains separated by `&&`, `;`,
   or newlines resolve subsequent file arguments from the destination.
 - Passing a hook emits **no** `permissionDecision` — it never bypasses the
@@ -73,7 +80,8 @@ reads; multiple PreToolUse denies merge as deny).
 
 - `/token-shunt:bulk-reader --worker-model auto|haiku|sonnet <paths...> --question "..."`
   delegates bounded reads (max 3 explicit paths per invocation, each read
-  once; child answers within a 4000-char cap, `confirmed:`/`inferred:`/
+  once, `maxTurns` 4; child answers within a 4000-char cap,
+  `confirmed:`/`inferred:`/
   `unconfirmed:` + `status`/`stop_reason`). 4+ paths follow the inter-batch
   evidence contract: integrate only corroborated facts; do not guess
   unconfirmed relations.
@@ -139,6 +147,10 @@ blocked filesystem read.
   out of scope.
 - The child's final message is the only parent boundary. Fences or quotes in
   the child reply become parent noise; there is no script fence-strip.
+- Related-file exploration and answer reuse (reuse index, fingerprints,
+  `resume`) are out of scope for v0.1: the worker reads only the explicit
+  paths, and a follow-up question re-sends the same paths to a fresh
+  invocation.
 - A single huge file is one worker; do not even-split by lines.
 - Compare-eval results are pending a working Claude login on this machine;
   until they pass, nothing here is release-validated.
@@ -179,4 +191,13 @@ metrics; do not treat body-byte cuts as token savings.
 `scripts/doctor.sh` checks jq, prints `claude --version` when present, warns
 if `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, notes whether agents registered on
 the plugin-load stream, and explains how to confirm `agent_type` on the hook
-stdin. A missing live dump is not a doctor failure.
+stdin. It also launches `bulk-reader` once as `haiku` and once as `sonnet` to
+compare the requested alias against the model the worker actually ran, reports
+whether `effort` is observable on this CLI, and reports the subagent's task
+status plus any `status:` / `stop_reason:` line (the `maxTurns` partial
+contract). Under `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` the model comparison is
+printed as invalid. On a successful probe it writes the probed CLI version to
+`docs/distribution/doctor-last-probe.txt` as the recorded supported version —
+a probe log, not a version pin; no numeric floor goes into `plugin.json`.
+Live checks that cannot run (no auth, model not permitted) print `unconfirmed`
+and do not change the exit code; only a missing `jq` fails the doctor.

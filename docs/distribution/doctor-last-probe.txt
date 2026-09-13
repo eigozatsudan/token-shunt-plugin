@@ -1,0 +1,7 @@
+token-shunt doctor probe record (design §7: record the minimum supported version at implementation time)
+date: 2026-09-13T03:08:55Z
+claude --version: 2.1.270 (Claude Code)
+plugin + agent registration: confirmed
+worker model resolution (haiku/sonnet): probed — see doctor output for match/mismatch
+agent_type on PreToolUse stdin: confirm manually (see the hook stdin section)
+This file is a probe log, not a version pin. Do not copy a numeric floor into plugin.json.
