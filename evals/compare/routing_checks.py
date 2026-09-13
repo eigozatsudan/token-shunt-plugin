@@ -78,14 +78,32 @@ def check_reader_reads(tr, exp, agents):
             if not matches:
                 errors.append(('child_reads_once', '%s must be read in this invocation' % path))
                 continue
-            # A Read the tool rejected returned no content: it cannot double-read
-            # a region, but it still costs a turn (counted above).
+            # Only a native whole-file token-cap refusal authorizes
+            # partitioning. Failed attempts consume budget but no region.
             got = []
-            for c in matches:
+            partition = False
+            next_line = 1
+            for index, c in enumerate(matches):
                 result = tr.result_of(c['id'])
-                if not result or result['is_error']:
+                span = _read_range(c)
+                if not result:
                     continue
-                got.append((c, _read_range(c)))
+                if result['is_error']:
+                    if (index == 0 and span == (1, None)
+                            and re.search(r'File content .*exceeds maximum allowed tokens',
+                                          result.get('text', ''), re.I)):
+                        partition = True
+                    continue
+                if partition:
+                    if span[0] != next_line:
+                        errors.append(('child_reads_once',
+                                       '%s: partition must continue at line %s, got %s'
+                                       % (path, next_line, span)))
+                    next_line = span[1] + 1 if span[1] is not None else None
+                elif index > 0:
+                    errors.append(('child_reads_once',
+                                   '%s: repeated Read without a whole-file token-cap refusal' % path))
+                got.append((c, span))
             if not got:
                 errors.append(('child_reads_once', 'Read did not succeed: %s' % path))
                 continue

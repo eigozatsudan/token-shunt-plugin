@@ -69,21 +69,44 @@ cat "$MANIFEST"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no cases match", result.stdout)
 
-    def test_selected_run_end_to_end_with_local_cli_double(self):
+    def run_with_cli_double(self, **settings):
         # Exercise the shell loop, resolved specs, judge and aggregate together.
         # The double only emits a small-files transcript; no live model is used.
         bindir = Path(self.temp.name) / "bin"
-        bindir.mkdir()
+        bindir.mkdir(exist_ok=True)
         cli = bindir / "claude"
         cli.write_text('#!' + sys.executable + '\n' + '''
-import json, re, sys
+import json, os, re, sys
 if sys.argv[1:3] == ['plugin', 'validate']:
     sys.exit(0)
 prompt = sys.stdin.read()
 loaded = '--plugin-dir' in sys.argv
+probe = prompt == 'Reply with just OK'
+with open(os.environ['CALL_LOG'], 'a') as log:
+    log.write(('load' if loaded else 'isolation') if probe else 'case')
+    log.write('\\n')
+failure = os.environ.get('PROBE_FAILURE') if probe and (
+    os.environ.get('FAIL_PROBE') == ('load' if loaded else 'isolation')) else None
+if failure == 'empty':
+    sys.exit(0)
 print(json.dumps({'type':'system','subtype':'init',
-    'plugins':[{'name':'token-shunt'}] if loaded else [],
+    'plugins':[{'name':'token-shunt'}] if loaded or failure == 'loaded-direct' else [],
     'agents':['token-shunt:bulk-reader','token-shunt:code-writer'] if loaded else []}))
+if failure == 'init-only':
+    sys.exit(0)
+if failure == 'foreign-hook':
+    print(json.dumps({'type':'system','subtype':'hook_response',
+        'hook_name':'foreign:PreToolUse'}))
+if failure == '429':
+    print(json.dumps({'type':'result','subtype':'success','is_error':True,
+        'result':'Rate limit reached','terminal_reason':'api_error','api_error_status':429}))
+    sys.exit(0)
+if failure == 'invalid-result':
+    print(json.dumps({'type':'result','is_error':False,'result':None}))
+    sys.exit(0)
+if failure == 'missing-error-flag':
+    print(json.dumps({'type':'result','result':'OK'}))
+    sys.exit(0)
 for i, path in enumerate(re.findall(r'(/[^\\s]+/gen/small3/[abc]\\.txt)', prompt)):
     uid = 'read-' + str(i)
     print(json.dumps({'type':'assistant','message':{'id':uid,'content':[
@@ -95,18 +118,61 @@ print(json.dumps({'type':'result','is_error':False,
     'result':'ALPHA-111 BRAVO-222 CHARLIE-333',
     'usage':{'input_tokens':10,'output_tokens':5,
              'cache_read_input_tokens':0,'cache_creation_input_tokens':0}}))
+sys.exit(17 if failure == 'nonzero' else 0)
 ''')
         cli.chmod(0o755)
         result = subprocess.run(
             ["bash", str(self.compare / "run.sh"), "auto-small-files"],
             text=True, capture_output=True,
             env={**os.environ, "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
-                 "SUITE": ""})
+                 "SUITE": "", "CALL_LOG": str(Path(self.temp.name) / "calls.log"),
+                 **settings})
+        return result
+
+    def test_selected_run_end_to_end_with_local_cli_double(self):
+        result = self.run_with_cli_double()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         verdict = json.loads((self.compare / "last-run.json").read_text())
         self.assertTrue(verdict["selected_run_valid"])
         self.assertFalse(verdict["release_eligible"])
         self.assertEqual(set(verdict["cases"]), {"auto-small-files"})
+
+    def test_failed_probe_runtime_aborts_before_cases(self):
+        for probe in ("load", "isolation"):
+            for failure, detail in (("empty", "missing init"),
+                                    ("init-only", "missing final result"),
+                                    ("429", "api_error_status=429"),
+                                    ("invalid-result", "invalid or error final result"),
+                                    ("missing-error-flag", "invalid or error final result"),
+                                    ("nonzero", "claude exit 17")):
+                with self.subTest(probe=probe, failure=failure):
+                    calls = Path(self.temp.name) / "calls.log"
+                    calls.write_text("")
+                    result = self.run_with_cli_double(FAIL_PROBE=probe,
+                                                      PROBE_FAILURE=failure)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("fail:environment:", result.stdout)
+                    self.assertIn(detail, result.stdout)
+                    self.assertNotIn("case", calls.read_text().splitlines())
+                    verdict = json.loads((self.compare / "last-run.json").read_text())
+                    self.assertTrue(verdict["probe_failure"])
+                    self.assertTrue(verdict["environment_failure"])
+                    self.assertFalse(verdict["selected_run_valid"])
+                    self.assertFalse(verdict["release_eligible"])
+
+    def test_isolation_checks_still_reject_loaded_plugin_and_foreign_hooks(self):
+        for failure in ("loaded-direct", "foreign-hook"):
+            with self.subTest(failure=failure):
+                calls = Path(self.temp.name) / "calls.log"
+                calls.write_text("")
+                result = self.run_with_cli_double(FAIL_PROBE="isolation",
+                                                  PROBE_FAILURE=failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("FAIL probe-isolation", result.stdout)
+                self.assertNotIn("case", calls.read_text().splitlines())
+                verdict = json.loads((self.compare / "last-run.json").read_text())
+                self.assertTrue(verdict["probe_failure"])
+                self.assertFalse(verdict["environment_failure"])
 
 
 if __name__ == "__main__":

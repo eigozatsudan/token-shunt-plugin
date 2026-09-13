@@ -95,7 +95,9 @@ def split_read_transcript(reads):
         if offset: inp['offset']=offset
         if limit: inp['limit']=limit
         result={'type':'tool_result','tool_use_id':rid,'content':'source'}
-        if is_error: result['is_error']=True
+        if is_error:
+            result['is_error']=True
+            result['content']='File content (47078 tokens) exceeds maximum allowed tokens (25000).'
         events.extend([
             {'type':'assistant','parent_tool_use_id':aid,'message':{'model':'claude-haiku','content':[{'type':'tool_use','id':rid,'name':'Read','input':inp}]}},
             {'type':'user','parent_tool_use_id':aid,'message':{'content':[result]}}])
@@ -121,7 +123,23 @@ class SplitReadTests(unittest.TestCase):
 
     def test_open_ended_range_overlaps_anything_after_it(self):
         self.assertTrue(self.check([(175,None,False),(400,10,False)]))
-        self.assertEqual([], self.check([(1,100,False),(101,None,False)]))
+        self.assertEqual([], self.check([(None,None,True),(1,100,False),(101,None,False)]))
+
+    def test_partition_requires_native_whole_file_refusal(self):
+        self.assertTrue(self.check([(1,100,False),(101,100,False)]))
+        self.assertTrue(self.check([(1,100,True),(1,50,False)]))
+        tr = split_read_transcript([(None,None,True),(1,100,False)])
+        tr.result_of('a0r0')['text'] = 'Permission denied'
+        self.assertTrue(check_reader_reads(tr, {'child_reads_once':['/a.py']}, tr.agent_uses()))
+
+    def test_partition_is_consecutive_and_in_order(self):
+        for ranges in [[(1,10,False),(101,10,False)],
+                       [(101,10,False),(1,10,False)], [(2,10,False)]]:
+            self.assertTrue(self.check([(None,None,True)] + ranges))
+
+    def test_answer_can_stop_before_eof_and_single_targeted_read_is_allowed(self):
+        self.assertEqual([], self.check([(None,None,True),(1,10,False)]))
+        self.assertEqual([], self.check([(101,10,False)]))
 
     def test_only_failed_reads_is_not_coverage(self):
         self.assertTrue(self.check([(None,None,True)]))

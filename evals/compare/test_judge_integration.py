@@ -415,6 +415,10 @@ class QuoteLeakContiguityTests(unittest.TestCase):
         self.assertEqual((False, ""), judge.quote_leak(scattered, ["f"], {"f": body}))
         self.assertTrue(judge.quote_leak(body, ["f"], {"f": body})[0])
 
+    def test_partial_repeated_run_still_leaks(self):
+        self.assertTrue(judge.quote_leak("a\n" * 21, ["f"], {"f": "a\n" * 100})[0])
+        self.assertFalse(judge.quote_leak("a\n" * 20, ["f"], {"f": "a\n" * 100})[0])
+
     def test_crlf_reply_matches_lf_fixture(self):
         body = "".join("line%d\n" % i for i in range(30))
         self.assertTrue(judge.quote_leak(body.replace("\n", "\r\n"), ["f"], {"f": body})[0])

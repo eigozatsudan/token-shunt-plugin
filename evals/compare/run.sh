@@ -236,6 +236,37 @@ run_claude() { # prompt transcript extra-args...
       >"$out" 2>"$out.err")
 }
 
+check_probe_run() { # transcript cli-exit-code -> ok or environment failure
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+if int(sys.argv[2]) != 0:
+    print("fail:environment: claude exit " + sys.argv[2])
+    sys.exit(0)
+init = None
+result = None
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if not isinstance(event, dict):
+        continue
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        init = event
+    if event.get("type") == "result":
+        result = event
+if init is None:
+    print("fail:environment: missing init")
+elif result is None:
+    print("fail:environment: missing final result")
+elif result.get("is_error") is not False or not isinstance(result.get("result"), str):
+    print("fail:environment: invalid or error final result (terminal_reason=%s, api_error_status=%s)"
+          % (result.get("terminal_reason"), result.get("api_error_status")))
+else:
+    print("ok")
+PY
+}
+
 # ---------- disk checks (runner-side, §13 編集/生成ディスク検証) ----------
 disk_check() { # spec_json mode -> writes $VRD/<id>.<mode>.disk.json
   local spec=$1 mode=$2 id dc ok=0 reason=""
@@ -347,11 +378,17 @@ say "== judge selftest =="
 python3 "$CMP/judge.py" --selftest || { say "judge selftest failed"; exit 1; }
 
 say "== probes =="
+probe_environment_failure=false
 # judge.py needs a spec file arg; probes bypass it with inline checks
 load_out=$TRD/_probe_load.jsonl
 run_claude "Reply with just OK" "$load_out" --plugin-dir "$ROOT/plugin"
-load_ok=$(python3 - "$load_out" <<'PY'
+load_run=$(check_probe_run "$load_out" "$?")
+[[ $load_run == ok ]] || probe_environment_failure=true
+load_ok=$(python3 - "$load_out" "$load_run" <<'PY'
 import json, sys
+if sys.argv[2] != "ok":
+    print(sys.argv[2])
+    sys.exit(0)
 init = {}
 for line in open(sys.argv[1], encoding="utf-8"):
     try: e = json.loads(line)
@@ -370,8 +407,13 @@ PY
 
 iso_out=$TRD/_probe_iso.jsonl
 run_claude "Reply with just OK" "$iso_out"
-iso_ok=$(python3 - "$iso_out" <<'PY'
+iso_run=$(check_probe_run "$iso_out" "$?")
+[[ $iso_run == ok ]] || probe_environment_failure=true
+iso_ok=$(python3 - "$iso_out" "$iso_run" <<'PY'
 import json, sys
+if sys.argv[2] != "ok":
+    print(sys.argv[2])
+    sys.exit(0)
 # Match judge.py foreign_hooks(): subtype==hook_response + hook_name.
 # Direct mode: any non-builtin PreToolUse hook_response fails (token-shunt
 # hooks are also foreign here because the plugin must not be loaded).
@@ -412,7 +454,8 @@ fi
 if (( FAIL > 0 )); then
   say "probes failed; aborting case runs"
   for f in "${FAILED[@]}"; do say "FAIL $f"; done
-  jq -nc --argjson fails "$FAIL" '{probe_failure:true,fail_count:$fails,selected_run_valid:false,release_eligible:false,generated_at:(now|todate)}' >"$LASTRUN"
+  jq -nc --argjson fails "$FAIL" --argjson env_failure "$probe_environment_failure" \
+    '{probe_failure:true,environment_failure:$env_failure,fail_count:$fails,selected_run_valid:false,release_eligible:false,generated_at:(now|todate)}' >"$LASTRUN"
   restore_fixtures; exit 1
 fi
 

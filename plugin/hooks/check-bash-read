@@ -235,18 +235,22 @@ scan_ops() {
                if   [[ $nxt == '>' || $nxt == '|' ]]; then ((i++)); fi
                if   [[ $prv == '&' || $nxt == '&' ]]; then SPECIAL_GT=1
                else
-                 # stdout redirect only when the fd before '>' is 1 or absent.
-                 # `2>`/`3>`/... leave stdout alone -> not an early pass.
-                 local j=$((fdpos-1)) fd=''
-                 while (( j >= 0 )) && [[ ${s:j:1} =~ [0-9] ]]; do fd=${s:j:1}$fd; ((j--)); done
-                 if [[ -z $fd || $fd == 1 ]]; then
+                 # Only an entirely unquoted digit token is an IO number.
+                 # Reuse the lexer so filename suffixes and quoted/escaped
+                 # digits cannot be mistaken for an explicit descriptor.
+                 local -a saved_toks=("${TOKS[@]}") saved_kinds=("${TOK_KINDS[@]}")
+                 tokenize "${s:0:fdpos}>"
+                 local fd=${TOKS[${#TOKS[@]}-1]%>}
+                 TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
+                 # Bash accepts zero-padded fd 1. Match lexically, avoiding
+                 # overflow from arithmetic on arbitrarily long IO numbers.
+                 if [[ -z $fd || $fd =~ ^0*1$ ]]; then
                    # Every stdout redirect must be isolating before early pass.
                    # Tokenization only removes quotes; it never expands/evals.
-                   local -a saved_toks=("${TOKS[@]}")
                    tokenize "${s:i+1}"
                    if is_isolating_target "${TOKS[0]-}"; then CLEAN_GT=1
                    else SPECIAL_GT=1; fi
-                   TOKS=("${saved_toks[@]}")
+                   TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
                  fi
                fi ;;
          ';'|$'\n') SEPS+=("$i:1") ;;
@@ -257,11 +261,12 @@ scan_ops() {
   (( qs == 1 || qs == 2 )) && S_UNINTERP=1
 }
 
-# tokenize: whitespace-split honoring quotes/escapes; quotes removed -> TOKS
+# tokenize: quote removal -> TOKS, with lexical kinds preserved in TOK_KINDS.
+# Quoted/escaped operator characters remain words, never redirections.
 tokenize() {
   local s=$1
   local i=0 n=${#s} qs=0 c nxt cur='' have=0 quoted=0
-  TOKS=()
+  TOKS=(); TOK_KINDS=()
   while (( i < n )); do
     c=${s:i:1}; nxt=${s:i+1:1}
     case $qs in
@@ -277,34 +282,31 @@ tokenize() {
          "'")  qs=1; have=1; quoted=1 ;;
          '"')  qs=2; have=1; quoted=1 ;;
          '&'|'|'|';'|'('|')')
-              (( have )) && TOKS+=("$cur")
-              TOKS+=("$c"); cur=''; have=0; quoted=0 ;;
+              (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); }
+              TOKS+=("$c"); TOK_KINDS+=(operator); cur=''; have=0; quoted=0 ;;
          '>') local redir=''
               if (( have )); then
                 if (( !quoted )) && [[ $cur =~ ^[0-9]+$ ]]; then redir=$cur
-                else TOKS+=("$cur"); fi
+                else TOKS+=("$cur"); TOK_KINDS+=(word); fi
               fi
               redir+='>'
               if [[ $nxt == '>' || $nxt == '|' || $nxt == '&' ]]; then redir+=$nxt; ((i++)); fi
-              TOKS+=("$redir"); cur=''; have=0; quoted=0 ;;
-         [[:space:]]) (( have )) && { TOKS+=("$cur"); cur=''; have=0; quoted=0; } ;;
+              TOKS+=("$redir"); TOK_KINDS+=(redirect); cur=''; have=0; quoted=0 ;;
+         [[:space:]]) (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); cur=''; have=0; quoted=0; } ;;
          *) cur+=$c; have=1 ;;
        esac ;;
     esac
     ((i++))
   done
-  (( have )) && TOKS+=("$cur")
+  (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); }
 }
 
 strip_vars() {
-  VTOKS=("${TOKS[@]}")
+  VTOKS=("${TOKS[@]}"); VTOK_KINDS=("${TOK_KINDS[@]}")
   while ((${#VTOKS[@]})) && [[ ${VTOKS[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
-    VTOKS=("${VTOKS[@]:1}")
+    VTOKS=("${VTOKS[@]:1}"); VTOK_KINDS=("${VTOK_KINDS[@]:1}")
   done
 }
-
-is_redirect_op()  { case $1 in '>'|'>>'|'>|'|'&>'|'&>>'|[0-9]'>'|[0-9]'>>'|[0-9]'>|'|'>&'|[0-9]'>&') return 0;; esac; return 1; }
-is_redirect_tok() { local re='^(&|[0-9]*)>{1,2}'; [[ $1 =~ $re ]]; }
 
 split_at() { # str cuts... -> SPLIT
   local s=$1; shift; local last=0 pl p l
@@ -319,8 +321,7 @@ collect_file_args() {
   FILES=(); local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
     t=${TOKS[i]}
-    if is_redirect_op "$t";  then ((i+=2)); continue; fi
-    if is_redirect_tok "$t"; then ((i+=1)); continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]];  then eoo=1; ((i++)); continue; fi
     if (( !eoo )) && [[ $t == -* ]];  then ((i++)); continue; fi
     [[ -f $t ]] && FILES+=("$t")
@@ -344,8 +345,7 @@ ht_parse() {
   local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
     t=${TOKS[i]}
-    if is_redirect_op "$t";  then ((i+=2)); continue; fi
-    if is_redirect_tok "$t"; then ((i++));  continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]]; then eoo=1; ((i++)); continue; fi
     if (( eoo )); then [[ -f $t ]] && FILES+=("$t"); ((i++)); continue; fi
     case $t in
@@ -368,15 +368,14 @@ ht_parse() {
 # C <= MIN_BYTES, reading pure stdin (no file args, no redirects)
 pipe_tail_ok() {
   local opts=0 form='' val='' bad=0 files=0 i t eoo=0
-  local -a A=("$@")
-  for (( i=0; i<${#A[@]}; i++ )); do
-    t=${A[i]}
-    if is_redirect_tok "$t"; then bad=1; continue; fi
+  for (( i=1; i<${#TOKS[@]}; i++ )); do
+    t=${TOKS[i]}
+    if [[ ${TOK_KINDS[i]} != word ]]; then bad=1; continue; fi
     if (( !eoo )) && [[ $t == -- ]]; then eoo=1; continue; fi
     if (( eoo )); then ((files++)); continue; fi
     case $t in
       -q|-v|--quiet|--verbose) ;;
-      -c|--bytes)      ((opts++)); form=byte; ((i++)); val=${A[i]-} ;;
+      -c|--bytes)      ((opts++)); form=byte; ((i++)); val=${TOKS[i]-} ;;
       -c?*)            ((opts++)); form=byte; val=${t:2} ;;
       --bytes=*)       ((opts++)); form=byte; val=${t#--bytes=} ;;
       -n|--lines|-n?*|--lines=*|-[0-9]*) ((opts++)); form=line ;;
@@ -430,7 +429,7 @@ check_stage_full() {
   ((${#VTOKS[@]})) || return 0
   base=${VTOKS[0]##*/}
   case $base in
-    cat|head|tail|less|more) TOKS=("${VTOKS[@]}"); collect_file_args; check_files_full "$base" ;;
+    cat|head|tail|less|more) TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$base" ;;
   esac
 }
 
@@ -512,7 +511,8 @@ if ((${#PIPES[@]})); then
   ((${#VTOKS[@]})) && base=${VTOKS[0]##*/}
   case $base in
     head|tail)
-      if pipe_tail_ok "${VTOKS[@]:1}"; then
+      TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+      if pipe_tail_ok; then
         pass
       else
         deny "Piped '$base' output has no byte bound; use 'head -c N file' / 'tail -c N file' with explicit bytes or /token-shunt:bulk-reader."
@@ -531,7 +531,7 @@ fi
 tokenize "$cmd"; strip_vars
 ((${#VTOKS[@]})) || pass
 base=${VTOKS[0]##*/}
-TOKS=("${VTOKS[@]}")
+TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
 case $base in
   cat|less|more) collect_file_args; check_files_full "$base"; pass ;;
   head|tail)     run_head_tail ;;

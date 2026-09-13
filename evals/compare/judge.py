@@ -59,6 +59,22 @@ def text_of(content):
     return "\n".join(out)
 
 
+def input_text(value):
+    """Stable structural rendering; string values retain literal Unicode/newlines.
+
+    This is a context-size representation, not JSON for round-trip parsing.
+    Keeping values literal lets the same text support body-leak checks.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(k, ensure_ascii=False) + ":" + input_text(value[k])
+                              for k in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(input_text(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
 class Transcript:
     def __init__(self, events):
         self.events = events
@@ -80,10 +96,12 @@ class Transcript:
                 m = e.get("message", {})
                 mid = m.get("id")
                 text_parts = []
+                context_parts = []
                 for b in m.get("content", []) or []:
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "tool_use":
+                        context_parts.append(input_text(b.get("input", {})))
                         self.tool_uses.append({
                             "id": b.get("id"),
                             "name": b.get("name"),
@@ -94,9 +112,11 @@ class Transcript:
                         })
                     elif b.get("type") == "text":
                         text_parts.append(b.get("text", ""))
+                        context_parts.append(b.get("text", ""))
                 self.assistant_msgs.append({
                     "id": mid, "model": m.get("model"),
                     "text": "\n".join(text_parts), "parent_tool_use_id": ptid,
+                    "context_text": "\n".join(context_parts),
                 })
             elif t == "user":
                 m = e.get("message", {})
@@ -175,7 +195,7 @@ class Transcript:
             if a["id"] and key in seen:
                 continue
             seen.add(key)
-            parts.append(a["text"])
+            parts.append(a["context_text"])
         for u in self.user_msgs:
             if u["parent_tool_use_id"] is not None:
                 continue
@@ -491,6 +511,57 @@ def long_nonempty_run(text, n=20):
     return False
 
 
+def contiguous_bytes(left, right, size=2049):
+    """Exact fixed-width common UTF-8 byte window, at every byte offset.
+
+    Rolling hashes scan every offset and index the shorter input. Hash matches
+    are verified against the bytes, so collisions cannot create false leaks.
+    Repeated identical windows share one candidate instead of a growing bucket.
+    """
+    left, right = left.encode("utf-8"), right.encode("utf-8")
+    if len(left) > len(right):
+        left, right = right, left
+    if len(left) < size:
+        return False
+    mask = (1 << 64) - 1
+    factor = pow(257, size - 1, 1 << 64)
+
+    def windows(data):
+        h = 0
+        for b in data[:size]:
+            h = (h * 257 + b) & mask
+        yield h, 0
+        for off in range(1, len(data) - size + 1):
+            h = ((h - data[off - 1] * factor) * 257 + data[off + size - 1]) & mask
+            yield h, off
+
+    index = {}
+    for h, off in windows(left):
+        bucket = index.setdefault(h, [])
+        if not any(left[old:old + size] == left[off:off + size] for old in bucket):
+            bucket.append(off)
+    for h, off in windows(right):
+        for candidate in index.get(h, ()):
+            if left[candidate:candidate + size] == right[off:off + size]:
+                return True
+    return False
+
+
+def body_quote_reason(reply, body):
+    """Shared reader/writer policy: >2048 UTF-8 bytes or 21 nonempty lines."""
+    if contiguous_bytes(reply, body):
+        return ">2KiB contiguous quote"
+    if not long_nonempty_run(reply):
+        return ""
+    lines = body.splitlines()
+    haystack = reply.replace("\r\n", "\n")
+    for start in range(len(lines) - 20):
+        window = lines[start:start + 21]
+        if all(line.strip() for line in window) and "\n".join(window) in haystack:
+            return ">20 consecutive fixture lines"
+    return ""
+
+
 def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
     """Child final message must not contain the fixture body:
     >20 consecutive fixture lines or >2KiB contiguous quotation -> leak."""
@@ -509,34 +580,9 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
                 continue
             if read_texts is not None:
                 read_texts[fp] = body
-        if len(body) >= 2048:
-            last = len(body) - 2048
-            offs = list(range(0, last + 1, 512))
-            if offs[-1] != last:
-                offs.append(last)
-            for off in offs:
-                chunk = body[off:off + 2048]
-                if chunk and chunk in agent_result_text:
-                    return True, f"2KiB contiguous quote from {fp}"
-        # A run of fixture lines counts only if those lines appear as one
-        # contiguous block in the reply. Testing each line independently
-        # mistakes a reply's single "a" for 21 quoted lines of a dense
-        # fixture (observed on compare-edit-dense-lines, 2026-09-13).
-        lines = body.splitlines()
-        haystack = agent_result_text.replace("\r\n", "\n")
-        present = [bool(l.strip()) and l in haystack for l in lines]
-        start = None
-        for i in range(len(lines) + 1):
-            if i < len(lines) and present[i]:
-                if start is None:
-                    start = i
-                continue
-            if start is not None:
-                if i - start > 20:
-                    block = "\n".join(lines[start:i])
-                    if block in haystack:
-                        return True, f">20 consecutive fixture lines from {fp}"
-                start = None
+        reason = body_quote_reason(agent_result_text, body)
+        if reason:
+            return True, f"{reason} from {fp}"
     return False, ""
 
 
@@ -1244,8 +1290,8 @@ def selftest():
     chunk = ""
     if os.path.isfile(fx_abs):
         body = open(fx_abs, encoding="utf-8", errors="replace").read()
-        if len(body) >= 2048:
-            chunk = body[0:2048]
+        if len(body) >= 2049:
+            chunk = body[0:2049]
     if not chunk:
         errors.append("quote_leak: fixtures/rails/app/models/user.rb missing or <2KiB")
     else:
@@ -1434,24 +1480,15 @@ def leakcheck(transcript_path, target_path):
     tr = Transcript(load_events(transcript_path))
     ptxt = tr.parent_added_text()
     try:
-        body = open(target_path, encoding="utf-8", errors="replace").read()
+        with open(target_path, encoding="utf-8", errors="replace") as target:
+            body = target.read()
     except OSError:
         print("leakcheck: target unreadable")
         return 1
-    for off in range(0, max(0, len(body) - 2048), 512):
-        chunk = body[off:off + 2048]
-        if chunk and chunk in ptxt:
-            print("leak: 2KiB contiguous quote")
-            return 0
-    run = 0
-    for l in body.splitlines():
-        if l.strip() and l in ptxt:
-            run += 1
-            if run > 20:
-                print("leak: >20 consecutive lines")
-                return 0
-        else:
-            run = 0
+    reason = body_quote_reason(ptxt, body)
+    if reason:
+        print("leak: " + reason)
+        return 0
     print("leakcheck: clean")
     return 1  # no leak -> exit 1 (caller treats 0 as leak found)
 

@@ -46,8 +46,10 @@ Examples:
    `head_limit`.
 
 2. **Delegation prompt.** Contains only: the question, the explicit paths
-   to read, each path's **size and line count** from the step 1 metadata
-   (`wc -lc`), a short diagnosis, and the compact response contract below.
+   to read, each path's **size and line count**, a short diagnosis, and the
+   compact response contract below. After step 1 selects delegation from
+   size metadata, obtain `wc -lc` for the selected paths. The small-task
+   routing check itself does not require counting lines.
    The child needs the line count to split a file the Read tool refuses whole (see step 4). Never read or
    paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,

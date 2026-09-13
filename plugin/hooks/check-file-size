@@ -134,7 +134,10 @@ case $agent in
 esac
 
 # --- §9 ---
-file_path=$(jq -r '.tool_input.file_path // empty' <<<"$input")
+# -j omits jq's separator; the sentinel keeps command substitution from
+# stripping LF bytes that belong to the filename. Remove only the sentinel.
+file_path=$(jq -j '.tool_input.file_path // empty' <<<"$input"; printf '.')
+file_path=${file_path%.}
 [[ -z $file_path ]] && pass
 [[ -f $file_path ]] || pass
 

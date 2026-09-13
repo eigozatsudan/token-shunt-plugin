@@ -1,4 +1,4 @@
-"""Read/Bash must measure the file opened through a symbolic link."""
+"""Read/Bash must measure the exact file requested, including unusual paths."""
 import json
 import os
 from pathlib import Path
@@ -67,6 +67,34 @@ class SymlinkHooksTest(unittest.TestCase):
         self.assertEqual(self.decision("check-file-size", {
             "file_path": str(self.root / "large-link.txt")},
             "token-shunt:bulk-reader"), "pass")
+
+    def test_read_preserves_trailing_newlines(self):
+        large = (self.root / "large.txt").read_bytes()
+        for suffix in ["\n", "\n\n"]:
+            for counterpart in ["absent", "small", "excluded.pdf"]:
+                with self.subTest(suffix=suffix, counterpart=counterpart):
+                    stripped = self.root / counterpart
+                    if counterpart != "absent":
+                        stripped.write_bytes(b"small\n")
+                    path = self.root / (counterpart + suffix)
+                    path.write_bytes(large)
+                    # Removing LF would inspect a missing/small/excluded file.
+                    self.assertEqual(self.decision("check-file-size", {
+                        "file_path": str(path)}), "deny")
+                    for limit, expected in [(1, "pass"), (100, "deny")]:
+                        self.assertEqual(self.decision("check-file-size", {
+                            "file_path": str(path), "offset": 1,
+                            "limit": limit}), expected)
+
+    def test_small_read_preserves_trailing_newlines(self):
+        for suffix in ["\n", "\n\n"]:
+            with self.subTest(suffix=suffix):
+                # The LF-free counterpart is large, so trimming also causes
+                # false denials of valid small-file reads.
+                path = self.root / ("large.txt" + suffix)
+                path.write_bytes(b"small\n")
+                self.assertEqual(self.decision("check-file-size", {
+                    "file_path": str(path)}), "pass")
 
 
 if __name__ == "__main__":
