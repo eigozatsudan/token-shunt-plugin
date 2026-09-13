@@ -48,8 +48,12 @@ Examples:
 2. **Delegation prompt.** Contains only: the question, the explicit paths
    to read, each path's **size and line count**, a short diagnosis, and the
    compact response contract below. After step 1 selects delegation from
-   size metadata, obtain `wc -lc` for the selected paths. The small-task
-   routing check itself does not require counting lines.
+   size metadata, obtain byte size with `wc -c` (or `stat`) and a logical
+   line count with `awk 'END{print NR}'` for the selected paths. The line
+   count MUST include a nonempty unterminated final line (POSIX `wc -l`
+   counts newline characters and would miss that last line; do not use
+   `wc -l` / `wc -lc` as the EOF line count). The small-task routing
+   check itself does not require counting lines.
    The child needs the line count to split a file the Read tool refuses whole (see step 4). Never read or
    paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,

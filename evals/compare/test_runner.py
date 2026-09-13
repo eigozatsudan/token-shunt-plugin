@@ -88,6 +88,8 @@ with open(os.environ['CALL_LOG'], 'a') as log:
     log.write('\\n')
 failure = os.environ.get('PROBE_FAILURE') if probe and (
     os.environ.get('FAIL_PROBE') == ('load' if loaded else 'isolation')) else None
+if not probe:
+    failure = os.environ.get('CASE_FAILURE')
 if failure == 'empty':
     sys.exit(0)
 print(json.dumps({'type':'system','subtype':'init',
@@ -137,6 +139,24 @@ sys.exit(17 if failure == 'nonzero' else 0)
         self.assertTrue(verdict["selected_run_valid"])
         self.assertFalse(verdict["release_eligible"])
         self.assertEqual(set(verdict["cases"]), {"auto-small-files"})
+
+    def test_case_nonzero_exit_is_recorded_but_complete_evidence_still_passes(self):
+        result = self.run_with_cli_double(CASE_FAILURE='nonzero')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        verdict = json.loads((self.compare / 'last-run.json').read_text())
+        self.assertTrue(verdict['selected_run_valid'])
+        for mode in verdict['cases']['auto-small-files']['modes'].values():
+            self.assertEqual(mode['cli_exit_code'], 17)
+            self.assertEqual(mode['verdict'], 'pass')
+
+    def test_case_error_result_is_not_excused_by_zero_exit(self):
+        result = self.run_with_cli_double(CASE_FAILURE='429')
+        self.assertNotEqual(result.returncode, 0)
+        verdict = json.loads((self.compare / 'last-run.json').read_text())
+        self.assertFalse(verdict['selected_run_valid'])
+        for mode in verdict['cases']['auto-small-files']['modes'].values():
+            self.assertEqual(mode['cli_exit_code'], 0)
+            self.assertEqual(mode['verdict'], 'fail')
 
     def test_failed_probe_runtime_aborts_before_cases(self):
         for probe in ("load", "isolation"):

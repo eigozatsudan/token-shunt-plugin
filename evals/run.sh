@@ -4,6 +4,14 @@
 set -u
 export LC_ALL=C
 cd "$(dirname "$0")" || exit 1
+if ! jq -e 'type == "array" and length > 0' hook-evals.json >/dev/null; then
+  echo "error: hook-evals.json must be a non-empty JSON array catalog" >&2
+  exit 1
+fi
+if ! jq -e 'type == "array" and length > 0' bash-hook-evals.json >/dev/null; then
+  echo "error: bash-hook-evals.json must be a non-empty JSON array catalog" >&2
+  exit 1
+fi
 ROOT=$(cd .. && pwd)
 FIX=$PWD/fixtures
 HOOKS=$ROOT/plugin/hooks

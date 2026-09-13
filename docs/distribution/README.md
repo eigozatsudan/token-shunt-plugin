@@ -40,7 +40,7 @@ unzip token-shunt.zip -d /tmp/token-shunt-plugin
 claude --plugin-dir /tmp/token-shunt-plugin
 ```
 
-この `/tmp` の例は一時的な動作確認用です。セッション中はフックスクリプトを参照するため、展開先を削除しないでください。このディレクトリを参照するセッションをすべて終了した後なら削除できます。次回も同じコマンドを使う場合は、再展開するかディレクトリを残す必要があります。継続して `--plugin-dir` を使う場合は、ホーム配下などの永続ディレクトリに展開してください。
+この `/tmp` の例は一時的な動作確認用です。`--plugin-dir` はセッション限定の読み込みで、同名の導入済みプラグインより優先します。セッション中はフックスクリプトを参照するため、展開先を削除しないでください。このディレクトリを参照するセッションをすべて終了した後なら削除できます。次回も同じコマンドを使う場合は、再展開するかディレクトリを残す必要があります。継続して `--plugin-dir` を使う場合は、ホーム配下などの永続ディレクトリに展開してください。
 
 ソースから直接読み込む場合は次のとおりです。
 
@@ -61,7 +61,7 @@ claude plugin install token-shunt@token-shunt --scope user
 
 登録元はリポジトリのルートです。ZIPの展開先には `marketplace.json` がないため、この登録方法には使えません。マニフェストは `name`、`owner.name`、`plugins` を持ち、プラグインの参照先 `plugins[].source` は `./plugin` です。
 
-インストール後はClaude側のキャッシュにコピーされたプラグインを使います。一時展開先は、それを直接参照するセッションの終了後に削除できます。登録元のリポジトリは更新用に残してください。[配布・キャッシュの仕様](https://code.claude.com/docs/en/plugin-marketplaces)
+継続利用の正本は `~/.claude/plugins/cache` にコピーされたプラグインです。リポジトリの `plugin/` を編集しても、このキャッシュは更新されません。更新の合図は `plugin.json` の `version`（現行 0.1.0）です。バンプしたうえで `claude plugin marketplace update` と `claude plugin update token-shunt@token-shunt` を実行するか、再インストールしてください。ローカルマーケットプレイスの自動更新は既定オフです。一時展開先は、それを直接参照するセッションの終了後に削除できます。登録元のリポジトリは更新用に残してください。[配布・キャッシュの仕様](https://code.claude.com/docs/en/plugin-marketplaces)
 
 ClaudeデスクトップのCodeタブで使う場合の確認手順と制限は、[ルートREADMEの導入手順](../../README.md#claudeデスクトップで使う)を参照してください。
 
@@ -74,6 +74,6 @@ scripts/doctor.sh
 evals/compare/run.sh
 ```
 
-ZIPの検証や診断の成功だけではリリース可能とは判断しません。[設計書](../2026-09-12-token-shunt-design.md) §26.5・§26.6に沿って、スイートA・B、本文の分離、必須の親トークン計測と費用比較を確認します。実機比較評価の集計では `selected_run_valid` と `release_eligible` を区別してください。
+`scripts/doctor.sh` はソースツリーのプローブです。`--plugin-dir "$ROOT/plugin"` と `--setting-sources ""` で隔離ロードし、ユーザースコープのキャッシュは見ません。`plugin + agent registration: confirmed` はソース側の登録確認であり、導入済みコピーの確認ではありません。ZIPの検証や診断の成功だけではリリース可能とは判断しません。[設計書](../2026-09-12-token-shunt-design.md) §26.5・§26.6に沿って、スイートA・Bの経路・品質・本文の分離と、必須の親トークン計測を確認します。費用比較は内部回帰の記録であり、欠測や費用の悪化だけでは出荷を止めません。削減効果の宣伝には実測が必要です。実機比較評価の集計では `selected_run_valid` と `release_eligible` を区別してください。
 
 利用方法、依存コマンド、フックの制限事項は[ルートREADME](../../README.md)を参照してください。

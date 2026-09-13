@@ -524,19 +524,23 @@ while IFS= read -r case; do
     rc=$?
     if (( rc != 0 )) && [[ ! -s $transcript ]]; then
       jq -nc --arg id "$id" --arg m "$mode" --argjson rc "$rc" \
-        '{case:$id,mode:$m,verdict:"fail",checks:{run:false},reasons:["claude exit "+($rc|tostring)+" with empty transcript"]}' \
+        '{case:$id,mode:$m,cli_exit_code:$rc,verdict:"fail",checks:{run:false},reasons:["claude exit "+($rc|tostring)+" with empty transcript"]}' \
         >"$VRD/$id.$mode.json"
       record "$id/$mode" 1 "claude exit $rc"
       disk_check "$spec" "$mode" || true
       continue
     fi
-    # judge transcript (nonzero exit still yields a judgeable stream, e.g. api_error)
+    # Case verdicts use transcript/disk evidence; process status is retained
+    # separately. A nonzero CLI exit alone is not a case failure (§13).
     if python3 "$CMP/judge.py" "$transcript" "$SPD/$id.$mode.json" "$mode" \
         >"$VRD/$id.$mode.json" 2>"$VRD/$id.$mode.judge-err"; then
       record "$id/$mode" 0 ""
     else
       record "$id/$mode" 1 "$(head -c 200 "$VRD/$id.$mode.judge-err" 2>/dev/null; jq -r '.reasons[0] // empty' "$VRD/$id.$mode.json" 2>/dev/null)"
     fi
+    jq --argjson rc "$rc" '.cli_exit_code = $rc' "$VRD/$id.$mode.json" \
+        >"$VRD/$id.$mode.run.json" || exit 1
+    mv "$VRD/$id.$mode.run.json" "$VRD/$id.$mode.json" || exit 1
     # disk-side verification (runner-side)
     disk_check "$spec" "$mode" || true
     # writer body-absence check (isolation: generated body must not enter parent)

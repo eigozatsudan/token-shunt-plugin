@@ -28,6 +28,9 @@ class WriterReferenceTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='writer reference ')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        reference = self.root / 'fixtures/codegen/greeter.py'
+        reference.parent.mkdir(parents=True)
+        reference.write_text('def greet(name):\n    return "Hello, " + name + "!"\n')
 
     def evaluate(self, case_id, variant='ordered', metadata='root'):
         raw = next(c for c in CASES if c['id'] == case_id)

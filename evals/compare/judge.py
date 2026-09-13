@@ -31,6 +31,10 @@ TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
+def token_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def load_events(path):
     events = []
     with open(path, encoding="utf-8") as f:
@@ -155,8 +159,18 @@ class Transcript:
         self.events = events
         self.init = next((e for e in events if e.get("type") == "system"
                           and e.get("subtype") == "init"), {})
-        self.result = next((e for e in reversed(events)
-                            if e.get("type") == "result"), {})
+        self.parent_results = []
+        seen_results = set()
+        for e in events:
+            if e.get("type") != "result" or e.get("parent_tool_use_id") is not None:
+                continue
+            uid = e.get("uuid")
+            if uid and uid in seen_results:
+                continue
+            if uid:
+                seen_results.add(uid)
+            self.parent_results.append(e)
+        self.result = self.parent_results[-1] if self.parent_results else {}
         self.tool_uses = []      # {id,name,input,parent_tool_use_id,msg_id,model}
         self.tool_results = {}   # tool_use_id -> {content_text,is_error,parent_tool_use_id}
         self.hook_events = []    # hook_started/hook_response
@@ -172,11 +186,13 @@ class Transcript:
                 mid = m.get("id")
                 text_parts = []
                 context_parts = []
+                context_blocks = []
                 for block_index, b in enumerate(m.get("content", []) or []):
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "tool_use":
-                        context_parts.append(input_text(b.get("input", {})))
+                        block_text = input_text(b.get("input", {}))
+                        context_parts.append(block_text)
                         self.tool_uses.append({
                             "id": b.get("id"),
                             "name": b.get("name"),
@@ -187,12 +203,26 @@ class Transcript:
                             "position": (event_index, block_index),
                         })
                     elif b.get("type") == "text":
-                        text_parts.append(b.get("text", ""))
-                        context_parts.append(b.get("text", ""))
+                        block_text = b.get("text", "")
+                        text_parts.append(block_text)
+                        context_parts.append(block_text)
+                    else:
+                        continue
+                    # API message IDs are shared by distinct content blocks.
+                    # Prefer tool identity, then event UUID + block position.
+                    # With neither, retain the event rather than guess a replay.
+                    if b.get("type") == "tool_use" and b.get("id") and mid:
+                        key = ("tool", mid, b["id"])
+                    elif e.get("uuid"):
+                        key = ("event", e["uuid"], block_index)
+                    else:
+                        key = ("position", event_index, block_index)
+                    context_blocks.append((key, block_text))
                 self.assistant_msgs.append({
                     "id": mid, "model": m.get("model"),
                     "text": "\n".join(text_parts), "parent_tool_use_id": ptid,
                     "context_text": "\n".join(context_parts),
+                    "context_blocks": context_blocks,
                 })
             elif t == "user":
                 m = e.get("message", {})
@@ -305,11 +335,11 @@ class Transcript:
         for a in self.assistant_msgs:
             if a["parent_tool_use_id"] is not None:
                 continue
-            key = ("a", a["id"])
-            if a["id"] and key in seen:
-                continue
-            seen.add(key)
-            parts.append(a["context_text"])
+            for key, text in a["context_blocks"]:
+                if not text or key in seen:
+                    continue
+                seen.add(key)
+                parts.append(text)
         for u in self.user_msgs:
             if u["parent_tool_use_id"] is not None:
                 continue
@@ -336,7 +366,16 @@ class Transcript:
 
     def metrics(self):
         ptxt = self.parent_added_text()
-        usage = self.result.get("usage", {}) or {}
+        parent_usages = [e.get("usage") if isinstance(e.get("usage"), dict) else {}
+                         for e in self.parent_results]
+        usage = dict(parent_usages[0]) if len(parent_usages) == 1 else {}
+        for key in ("input_tokens", "cache_read_input_tokens",
+                    "cache_creation_input_tokens", "output_tokens"):
+            if not parent_usages or (len(parent_usages) == 1 and key not in usage):
+                continue
+            values = [u.get(key) for u in parent_usages]
+            usage[key] = (sum(values) if values and all(token_count(v) for v in values)
+                          else None)
         parent_input = {
             "uncached": usage.get("input_tokens"),
             "cache_read": usage.get("cache_read_input_tokens"),
@@ -368,21 +407,21 @@ def resolve_fixture_path(fp, spec=None):
     """Resolve a fixture path: absolute, fixtures_abs, or compare/fixtures/."""
     if not fp or not isinstance(fp, str):
         return fp
-    if os.path.isabs(fp) and os.path.isfile(fp):
-        return fp
+    if os.path.isabs(fp):
+        return fp  # Missing absolute paths must not alias another file.
     spec = spec or {}
-    for a in spec.get("fixtures_abs") or []:
-        if not isinstance(a, str):
-            continue
-        if a == fp or a.endswith("/" + fp.lstrip("./")) \
-                or os.path.basename(a) == os.path.basename(fp):
-            if os.path.isfile(a):
-                return a
-        if os.path.isfile(a) and fp in a:
-            return a
-    rel = fp
+    rel = os.path.normpath(fp)
     if rel.startswith("fixtures/"):
         rel = rel[len("fixtures/"):]
+    if spec.get("fixture_root"):
+        return os.path.normpath(os.path.join(spec["fixture_root"], rel))
+    aliases = {os.path.realpath(a) for a in spec.get("fixtures_abs") or []
+               if isinstance(a, str) and os.path.isabs(a)
+               and os.path.normpath(a).endswith("/" + rel)}
+    if len(aliases) == 1:
+        return aliases.pop()
+    if len(aliases) > 1:
+        return None  # Ambiguous suffixes are not evidence for either file.
     cand = os.path.join(FIXTURES_DIR, rel)
     if os.path.isfile(cand):
         return cand
@@ -395,14 +434,20 @@ def fixture_text(fp, spec=None, cache=None):
     if cache is not None and fp in cache:
         return cache[fp]
     path = resolve_fixture_path(fp, spec)
+    canonical = ("file", os.path.realpath(path)) if isinstance(path, str) else None
     body = None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            body = f.read()
-    except OSError:
-        body = None
+    if cache is not None and canonical in cache:
+        body = cache[canonical]
+    elif isinstance(path, str):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                body = f.read()
+        except (OSError, ValueError):
+            body = None
     if cache is not None:
         cache[fp] = body
+        if canonical is not None:
+            cache[canonical] = body
     return body
 
 
@@ -739,12 +784,6 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
         if body is None:
             body = fixture_text(fp, spec, read_texts if read_texts is not None else None)
             if body is None:
-                # last-ditch: fixtures_abs entries themselves
-                for a in spec.get("fixtures_abs") or []:
-                    body = fixture_text(a, spec)
-                    if body:
-                        break
-            if body is None:
                 continue
             if read_texts is not None:
                 read_texts[fp] = body
@@ -855,6 +894,10 @@ def judge(transcript_path, spec, ctx):
             fail("parent_tokens", "parent_input_tokens is null")
         elif m.get("parent_output_tokens") is None:
             fail("parent_tokens", "parent_output_tokens is null")
+        elif not all(token_count(m["parent_input_tokens"].get(k))
+                     for k in ("uncached", "cache_read", "cache_creation")) \
+                or not token_count(m["parent_output_tokens"]):
+            fail("parent_tokens", "missing or invalid parent token evidence")
         else:
             passed("parent_tokens")
 
@@ -1133,6 +1176,12 @@ def judge(transcript_path, spec, ctx):
     # child->parent text contract
     cap = exp.get("child_msg_max")
     if cap or exp.get("child_no_body"):
+        fpaths = list(dict.fromkeys(list(spec.get("fixtures") or [])
+                                   + list(spec.get("fixtures_abs") or [])))
+        fixture_cache = {}
+        missing_bodies = ([fp for fp in fpaths
+                           if fixture_text(fp, spec, fixture_cache) is None]
+                          if exp.get("child_no_body") else [])
         # Only an observed parent-side return between invocation and the final
         # parent result proves what the worker returned. Child events and late
         # returns cannot establish a clean, bounded parent response.
@@ -1155,15 +1204,14 @@ def judge(transcript_path, spec, ctx):
             if cap and len(txt) > cap:
                 fail("child_msg_cap", "agent result %d chars > %d" % (len(txt), cap))
             if exp.get("child_no_body"):
-                fpaths = list(spec.get("fixtures") or [])
-                fpaths.extend(spec.get("fixtures_abs") or [])
-                leaked, why = quote_leak(txt, fpaths, {}, spec)
+                leaked, why = quote_leak(txt, fpaths, fixture_cache, spec)
                 if leaked:
                     fail("child_no_body", why)
                 elif has_code_fence(txt):
                     fail("child_no_body", "code fence in child message")
-                elif not any(fixture_text(fp, spec) for fp in fpaths) \
-                        and long_nonempty_run(txt):
+                elif missing_bodies:
+                    fail("child_no_body", "unreadable fixture body: " + ", ".join(missing_bodies))
+                elif not fpaths and long_nonempty_run(txt):
                     fail("child_no_body", ">20 consecutive non-empty child lines")
         v["checks"].setdefault("child_result_evidence", True)
         v["checks"].setdefault("child_msg_cap", True)
