@@ -34,6 +34,27 @@ def _read_range(call):
     return start, end
 
 
+def _returned_range(result, requested, total_lines):
+    """Trust only consecutive native line labels within the requested range."""
+    numbers = [int(n) for n in re.findall(r'^\s*(\d+)(?:\t|→)',
+                                         result.get('text', ''), re.M)]
+    if (not numbers or numbers[0] != requested[0]
+            or numbers != list(range(numbers[0], numbers[-1] + 1))
+            or (requested[1] is not None and numbers[-1] > requested[1])
+            or (total_lines is not None and numbers[-1] > total_lines)):
+        return None
+    return numbers[0], numbers[-1]
+
+
+def _line_count(path):
+    # Use the actual fixture, never line counts asserted in agent prompts.
+    try:
+        with open(path, 'rb') as source:
+            return sum(1 for _ in source)
+    except OSError:
+        return None
+
+
 def _overlaps(a, b):
     (a0, a1), (b0, b1) = a, b
     return (a1 is None or b0 <= a1) and (b1 is None or a0 <= b1)
@@ -41,7 +62,9 @@ def _overlaps(a, b):
 
 # The Read tool refuses a whole file over its own token cap, which is exactly
 # the size class token-shunt delegates. The child may then cover the file with
-# consecutive non-overlapping ranges (plugin/agents/bulk-reader.md), so the
+# consecutive non-overlapping ranges (plugin/agents/bulk-reader.md). Native
+# successful results can also stop before EOF without a truncation notice;
+# verified returned line labels authorize continuation in that case. Thus the
 # contract is "each region once", not "each path once". maxTurns is 6.
 MAX_CHILD_READS = 6
 
@@ -78,32 +101,63 @@ def check_reader_reads(tr, exp, agents):
             if not matches:
                 errors.append(('child_reads_once', '%s must be read in this invocation' % path))
                 continue
-            # Only a native whole-file token-cap refusal authorizes
-            # partitioning. Failed attempts consume budget but no region.
+            # Native refusal retains the bounded partition fallback. Successful
+            # partial results need actual EOF and returned-line evidence.
             got = []
             partition = False
             next_line = 1
+            total_lines = _line_count(path)
+            incomplete = False
+            retry_limit = None
+            retry_stopped = False
             for index, c in enumerate(matches):
                 result = tr.result_of(c['id'])
                 span = _read_range(c)
-                if not result:
-                    continue
-                if result['is_error']:
-                    if (index == 0 and span == (1, None)
-                            and re.search(r'File content .*exceeds maximum allowed tokens',
-                                          result.get('text', ''), re.I)):
-                        partition = True
-                    continue
-                if partition:
+                # Validate attempted ranges too: a refused jump still violates
+                # the cursor contract, and does not authorize filling its gap.
+                if partition or incomplete:
                     if span[0] != next_line:
                         errors.append(('child_reads_once',
                                        '%s: partition must continue at line %s, got %s'
                                        % (path, next_line, span)))
-                    next_line = span[1] + 1 if span[1] is not None else None
                 elif index > 0:
                     errors.append(('child_reads_once',
-                                   '%s: repeated Read without a whole-file token-cap refusal' % path))
-                got.append((c, span))
+                                   '%s: repeated Read without evidence of an incomplete prior Read' % path))
+                if retry_stopped:
+                    errors.append(('child_reads_once',
+                                   '%s: Read continued after limit=1 refusal' % path))
+                if retry_limit is not None:
+                    count = span[1] - span[0] + 1 if span[1] is not None else None
+                    if count != retry_limit:
+                        errors.append(('child_reads_once',
+                                       '%s: refused range must retry with limit %s, got %s'
+                                       % (path, retry_limit, count)))
+                if not result:
+                    errors.append(('child_reads_once', 'Read result missing: %s' % path))
+                    incomplete = False
+                    partition = False
+                    continue
+                if result['is_error']:
+                    if re.search(r'File content .*exceeds maximum allowed tokens',
+                                 result.get('text', ''), re.I):
+                        if index == 0:
+                            next_line = span[0]
+                        partition = True
+                        count = span[1] - span[0] + 1 if span[1] is not None else None
+                        retry_limit = max(1, count // 2) if count is not None else None
+                        retry_stopped = count == 1
+                    else:
+                        incomplete = False
+                        partition = False
+                    continue
+                retry_limit = None
+                retry_stopped = False
+                returned = _returned_range(result, span, total_lines)
+                incomplete = (returned is not None and total_lines is not None
+                              and returned[1] < total_lines)
+                actual = returned if returned is not None else span
+                next_line = actual[1] + 1 if actual[1] is not None else None
+                got.append((c, actual))
             if not got:
                 errors.append(('child_reads_once', 'Read did not succeed: %s' % path))
                 continue
@@ -133,11 +187,11 @@ def check_routing(tr, spec, exp, mode, agents, resolved_models):
     positions = {}
     results = {}
     for index, event in enumerate(tr.events):
-        for block in event.get('message', {}).get('content', []) or []:
+        for block_index, block in enumerate(event.get('message', {}).get('content', []) or []):
             if isinstance(block, dict) and block.get('type') == 'tool_use':
-                positions[block.get('id')] = index
+                positions[block.get('id')] = (index, block_index)
             elif isinstance(block, dict) and block.get('type') == 'tool_result':
-                results[block.get('tool_use_id')] = index
+                results[block.get('tool_use_id')] = (index, block_index)
     seen = {}
     retries = 0
     boundaries = 0
@@ -161,8 +215,16 @@ def check_routing(tr, spec, exp, mode, agents, resolved_models):
             question = _question(_prompt(previous))
             if question and question not in prompt:
                 errors.append(('retry_policy', 'retry omitted the original question'))
-            result = tr.result_of(previous['id'])
-            if not result or results.get(previous['id'], float('inf')) >= positions.get(agent['id'], -1):
+            result = tr.child_return_of(previous)
+            # Async launch acknowledgements are not completed worker returns.
+            # Use the matching parent notification's position for async replies;
+            # keep synchronous positions tied to the actual transcript events.
+            returned_at = (results.get(previous['id']) if result and 'raw' in result
+                           else result.get('position') if result else None)
+            if (not result or result.get('parent_tool_use_id') is not None
+                    or returned_at is None
+                    or not (positions.get(previous['id'], (float('inf'), 0))
+                            < returned_at < positions.get(agent['id'], (-1, 0)))):
                 errors.append(('retry_policy', 'retry began without a previous worker result'))
         elif mode == 'auto' and agent.get('input', {}).get('model') == 'sonnet':
             errors.append(('retry_policy', 'Sonnet retry changed paths or has no Haiku attempt'))

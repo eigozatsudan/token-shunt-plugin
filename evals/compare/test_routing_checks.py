@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from judge import Transcript, agent_resolved_models
 from routing_checks import check_reader_reads, check_routing, _paths
 
@@ -125,12 +127,32 @@ class SplitReadTests(unittest.TestCase):
         self.assertTrue(self.check([(175,None,False),(400,10,False)]))
         self.assertEqual([], self.check([(None,None,True),(1,100,False),(101,None,False)]))
 
-    def test_partition_requires_native_whole_file_refusal(self):
+    def test_partition_requires_native_refusal(self):
         self.assertTrue(self.check([(1,100,False),(101,100,False)]))
-        self.assertTrue(self.check([(1,100,True),(1,50,False)]))
+        self.assertEqual([], self.check([(1,100,True),(1,50,False)]))
         tr = split_read_transcript([(None,None,True),(1,100,False)])
         tr.result_of('a0r0')['text'] = 'Permission denied'
         self.assertTrue(check_reader_reads(tr, {'child_reads_once':['/a.py']}, tr.agent_uses()))
+
+    def test_bounded_refusal_halves_at_the_same_cursor(self):
+        self.assertEqual([], self.check([(101,101,True),(101,50,True),(101,25,False)]))
+        self.assertEqual([], self.check([(None,None,True),(1,100,False),
+                                        (101,101,True),(101,50,False)]))
+        for retry in [(102,50,False), (101,100,False), (101,49,False),
+                      (101,None,False)]:
+            self.assertTrue(self.check([(101,100,True), retry]))
+
+    def test_refused_jump_is_checked_even_when_next_success_is_consecutive(self):
+        for refused_start in [1, 400]:
+            self.assertTrue(self.check([(None,None,True),(1,100,False),
+                                        (refused_start,100,True),(101,50,False)]))
+        self.assertTrue(self.check([(None,None,True),(1,100,False),
+                                    (400,100,True),(101,100,False)]))
+
+    def test_refusal_at_limit_one_must_stop(self):
+        self.assertEqual([], self.check([(None,None,True),(1,100,False),(101,1,True)]))
+        self.assertTrue(self.check([(None,None,True),(1,100,False),
+                                    (101,1,True),(101,1,False)]))
 
     def test_partition_is_consecutive_and_in_order(self):
         for ranges in [[(1,10,False),(101,10,False)],
@@ -147,6 +169,58 @@ class SplitReadTests(unittest.TestCase):
     def test_read_budget_is_bounded(self):
         self.assertEqual([], self.check([(None,None,True)]+[(1+100*i,100,False) for i in range(5)]))
         self.assertTrue(self.check([(None,None,True)]+[(1+100*i,100,False) for i in range(6)]))
+
+
+class SilentTruncationTests(unittest.TestCase):
+    def check(self, reads, numbered, exists=True):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'source.py')
+            if exists:
+                Path(path).write_text('source\n' * 10)
+            tr = split_read_transcript(reads)
+            tr.agent_uses()[0]['input']['prompt'] = path
+            for index, call in enumerate(tr.child_tool_uses('a0')):
+                call['input']['file_path'] = path
+                if numbered[index] is not None:
+                    tr.result_of(call['id'])['text'] = numbered[index]
+            return check_reader_reads(tr, {'child_reads_once': [path]}, tr.agent_uses())
+
+    def lines(self, start, end):
+        return '\n'.join('%s\tsource' % n for n in range(start, end + 1))
+
+    def test_silent_whole_and_bounded_truncation_continue_at_returned_end(self):
+        self.assertEqual([], self.check(
+            [(None,None,False),(4,7,False),(7,4,False)],
+            [self.lines(1,3), self.lines(4,6), self.lines(7,10)]))
+
+    def test_gap_overlap_and_eof_reread_fail(self):
+        for offset in [3, 5, 10]:
+            self.assertTrue(self.check([(None,None,False),(offset,1,False)],
+                [self.lines(1,3), self.lines(offset,offset)]))
+        self.assertTrue(self.check([(None,None,False),(11,1,False)],
+            [self.lines(1,10), self.lines(11,11)]))
+
+    def test_silent_truncation_then_refusal_keeps_the_returned_cursor(self):
+        self.assertEqual([], self.check(
+            [(None,None,False),(4,6,True),(4,3,False)],
+            [self.lines(1,3), None, self.lines(4,6)]))
+        self.assertTrue(self.check(
+            [(None,None,False),(7,6,True),(4,3,False)],
+            [self.lines(1,3), None, self.lines(4,6)]))
+
+    def test_unknown_or_malformed_line_evidence_does_not_authorize_continuation(self):
+        for text in ['source', '1\tsource\n3\tsource', '2\tsource',
+                     '1\tsource\n1\tsource']:
+            self.assertTrue(self.check([(None,None,False),(4,7,False)],
+                [text, self.lines(4,10)]))
+        self.assertTrue(self.check([(None,None,False),(4,7,False)],
+            [self.lines(1,3), self.lines(4,10)], exists=False))
+
+    def test_silent_continuation_preserves_six_read_budget(self):
+        for count in [6, 7]:
+            errors = self.check([(None,None,False)] + [(n,1,False) for n in range(2,count+1)],
+                                [self.lines(n,n) for n in range(1,count+1)])
+            self.assertEqual(bool(errors), count > 6)
 
 
 if __name__=='__main__':

@@ -8,6 +8,7 @@ failures so the runner can stop the release.
 import json
 import os
 import re
+import shlex
 import sys
 
 from routing_checks import check_reader_reads, check_routing
@@ -75,6 +76,31 @@ def input_text(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def parent_bash_contains(command, needle):
+    """Recognize the supported unittest invocation, including Python 3.
+
+    Keep this exception to a simple command (optionally `cd PATH && ...`),
+    so quoted commands, echo, conditional branches, and failure masking cannot
+    supply apparent execution evidence.
+    """
+    if needle not in ("python -m unittest", "python3 -m unittest"):
+        return needle in command
+    if any(c in command for c in ('\n', '`', '$', '<', '>')):
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()')
+        lexer.whitespace_split = True
+        argv = list(lexer)
+    except ValueError:
+        return False
+    if len(argv) >= 3 and argv[0] == 'cd' and argv[2] == '&&':
+        argv = argv[3:]
+    return (len(argv) >= 3 and argv[0] in ('python', 'python3')
+            and argv[1:3] == ['-m', 'unittest']
+            and not any(token and all(c in ';&|()' for c in token)
+                        for token in argv[3:]))
+
+
 class Transcript:
     def __init__(self, events):
         self.events = events
@@ -131,6 +157,7 @@ class Transcript:
                             "parent_tool_use_id": ptid,
                             "raw": b,
                             "position": (event_index, block_index),
+                            "tool_use_result": e.get("tool_use_result"),
                         }
                         for k in ("resolvedModel", "resolved_model",
                                   "modelsUsed", "models_used"):
@@ -166,6 +193,42 @@ class Transcript:
 
     def result_of(self, tool_use_id):
         return self.tool_results.get(tool_use_id)
+
+    def child_return_of(self, use):
+        """Resolve a worker reply, including the CLI's background completion.
+
+        An async launch is only an acknowledgement. The parent-facing completed
+        notification carries the returned text; child messages alone do not
+        prove delivery to the parent.
+        """
+        result = self.result_of(use["id"])
+        if not result:
+            return None
+        metadata = result.get("tool_use_result")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        is_async = (metadata.get("isAsync") is True
+                    or metadata.get("status") == "async_launched"
+                    or result["text"].startswith("Async agent launched successfully."))
+        if not is_async:
+            return result
+        agent_id = metadata.get("agentId")
+        if (not agent_id or result["is_error"]
+                or result["parent_tool_use_id"] is not None
+                or result["position"] <= use["position"]):
+            return None
+        for i, event in enumerate(self.events):
+            if (event.get("type") == "system"
+                    and event.get("subtype") == "task_notification"
+                    and event.get("parent_tool_use_id") is None
+                    and event.get("tool_use_id") == use["id"]
+                    and event.get("task_id") == agent_id
+                    and event.get("status") == "completed"
+                    and isinstance(event.get("summary"), str)
+                    and event["summary"].strip()
+                    and (i, 0) > result["position"]):
+                return {"text": event["summary"], "is_error": False,
+                        "parent_tool_use_id": None, "position": (i, 0)}
+        return None
 
     def agent_uses(self):
         return [u for u in self.all_tool_uses()
@@ -1015,7 +1078,7 @@ def judge(transcript_path, spec, ctx):
                                if tr.events[i].get("type") == "result"
                                and tr.events[i].get("parent_tool_use_id") is None), None)
         for u in parent_agents:
-            r = tr.result_of(u["id"])
+            r = tr.child_return_of(u)
             if (not r or r["parent_tool_use_id"] is not None
                     or final_position is None
                     or not (u["position"] < r["position"] < final_position)):
@@ -1048,7 +1111,7 @@ def judge(transcript_path, spec, ctx):
     if needles:
         mentioned = False
         for u in parent_agents:
-            r = tr.result_of(u["id"])
+            r = tr.child_return_of(u)
             if r and all(n in r["text"] for n in needles):
                 mentioned = True
         if not mentioned:
@@ -1117,7 +1180,7 @@ def judge(transcript_path, spec, ctx):
         hit = False
         for u in tr.parent_tool_uses("Bash"):
             cmd = u["input"].get("command", "")
-            if all(n in cmd for n in pb.get("contains", [])):
+            if all(parent_bash_contains(cmd, n) for n in pb.get("contains", [])):
                 r = tr.result_of(u["id"])
                 if r and not r["is_error"]:
                     out = r["text"]

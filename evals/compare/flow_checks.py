@@ -95,18 +95,76 @@ def artifact_sections(final, names):
     for i, match in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(final)
         sections.setdefault(match.group(), []).append(final[match.end():end])
+    # A table row is a complete artifact report. Later prose mentions are
+    # explanations, not additional rows with missing verification fields.
+    for name in names:
+        rows = []
+        for line in final.splitlines():
+            cells = line.strip().split('|')
+            if len(cells) >= 5 and cells[0] == '' and cells[1].strip().strip('`*') == name:
+                rows.append('|' + '|'.join(cells[2:]))
+        if rows:
+            sections[name] = rows
     return sections
 
 
 def report_fields(section):
     cleaned = section.replace('`', '').replace('*', '')
-    levels = re.findall(r'\bverification\s*:\s*(minimal|syntax|requirements)\b', cleaned, re.I)
-    statuses = re.findall(r'\bstatus\s*:\s*(partial|complete|error|failed)\b', cleaned, re.I)
+    # Collect explicitly listed field values, stopping before explanatory
+    # prose/parentheses so mentions of other states are not claims of them.
+    def listed_values(field, words):
+        word = r'(?:' + words + r')\b'
+        lists = re.findall(
+            r'\b' + field + r'\s*:\s*(' + word
+            + r'(?:[ \t]*(?:[/,+&]|\band\b|\bor\b)[ \t]*' + word
+            + r'(?=[ \t]*(?:[/,+&;|.(]|\band\b|\bor\b|\b(?:status|verification)\s*:|$|\n)))*)', cleaned, re.I)
+        return [value for values in lists for value in re.findall(word, values, re.I)]
+    levels = listed_values('verification', 'minimal|syntax|requirements')
+    statuses = listed_values('status', 'partial|complete|error|failed')
     if not levels:
-        levels = re.findall(r'(?:^|[|+])\s*(minimal|syntax|requirements)\s*(?=[|+]|$)', cleaned.strip(), re.I)
+        levels = re.findall(r'(?:^|[|+])\s*(minimal|syntax|requirements)\s*(?:\([^|\n]*\)\s*)?(?=[|+]|$)', cleaned.strip(), re.I)
     if not statuses:
-        statuses = re.findall(r'(?:^|[|+])\s*(partial|complete|error|failed)\s*(?=[|+]|$)', cleaned.strip(), re.I)
+        statuses = re.findall(r'(?:^|[|+])\s*(partial|complete|error|failed)\s*(?:\([^|\n]*\)\s*)?(?=[|+]|$)', cleaned.strip(), re.I)
     return {s.lower() for s in levels}, {s.lower() for s in statuses}
+
+
+def verification_commands(command, cwd):
+    """Recognize literal verification batches; never execute shell input.
+
+    Only newline-separated cd, echo labels and checker calls are supported.
+    Conditionals, pipelines, expansions and other commands are not evidence.
+    """
+    if any(c in command for c in ('$','`')):
+        return []
+    commands = []
+    for line in command.splitlines():
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=';&|<>()')
+        lexer.whitespace_split = True
+        lexer.commenters = ''
+        try:
+            argv = list(lexer)
+        except ValueError:
+            return []
+        if not argv:
+            continue
+        if any(a and all(c in ';&|<>()' for c in a) for a in argv):
+            return []
+        if argv[0] == 'cd' and len(argv) == 2 and not commands:
+            cwd = os.path.normpath(os.path.join(cwd or '', argv[1]))
+            if not os.path.isabs(cwd):
+                return []
+        elif argv[0] == 'echo' and not any('{' in a or '}' in a for a in argv[1:]):
+            continue
+        elif len(argv) >= 5 and argv[0] == 'python3' and argv[2] == '--verify':
+            if not cwd and not (os.path.isabs(argv[1]) and os.path.isabs(argv[4])):
+                return []
+            normalized = list(argv)
+            for i in (1, 4):
+                normalized[i] = os.path.normpath(os.path.join(cwd or '', argv[i]))
+            commands.append((normalized, cwd))
+        else:
+            return []
+    return commands
 
 
 def verification_errors(tr, spec, exp):
@@ -162,26 +220,38 @@ def verification_errors(tr, spec, exp):
         for key in check.get('require_keys') or []:
             expected_cmd += ['--require-key', key]
         for u in tr.parent_tool_uses('Bash'):
-            try:
-                argv = shlex.split(u['input'].get('command', ''))
-            except ValueError:
-                continue
-            if len(argv) > 1:
-                argv[1] = os.path.normpath(argv[1])
-            if argv != expected_cmd:
+            commands = verification_commands(u['input'].get('command', ''), spec.get('tool_cwd'))
+            if not any(argv == expected_cmd for argv, _ in commands):
                 continue
             r = tr.result_of(u['id'])
             if not r or u['id'] not in results or not (uses[u['id']] < results[u['id']] < report):
                 continue
-            if bool(r['is_error']) == ok:
-                continue
+            evidence_rows = []
             for line in r['text'].splitlines():
                 try:
                     evidence = json.loads(line)
                 except (ValueError, TypeError):
                     continue
-                if isinstance(evidence, dict) and evidence.get('path') == path and evidence.get('verification') == level and evidence.get('ok') is ok:
-                    found = True
+                if isinstance(evidence, dict):
+                    evidence_rows.append(evidence)
+            if len(evidence_rows) != len(commands):
+                continue
+            # One ordered JSON result per command also proves checks that
+            # intentionally failed before the final successful batch command.
+            valid = True
+            for (argv, cwd), evidence in zip(commands, evidence_rows):
+                reported_path = evidence.get('path')
+                if (not isinstance(reported_path, str)
+                        or not (cwd or os.path.isabs(reported_path))
+                        or os.path.normpath(os.path.join(cwd or '', reported_path)) != argv[4]
+                        or evidence.get('verification') != argv[3]
+                        or not isinstance(evidence.get('ok'), bool)):
+                    valid = False
+            if not valid or bool(r['is_error']) == evidence_rows[-1]['ok']:
+                continue
+            if any(argv == expected_cmd and ev['ok'] is ok
+                   for (argv, _), ev in zip(commands, evidence_rows)):
+                found = True
         if not found:
             errors.append(('verification_execution', path + ' lacks parent verification command/result before report'))
     return errors

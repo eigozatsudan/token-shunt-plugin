@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 
-from flow_checks import edit_flow_errors, verification_errors, verify_artifact
+from flow_checks import edit_flow_errors, verification_errors, verify_artifact, report_fields
 from judge import Transcript, is_full_parent_read, use_targets_path
 
 
@@ -83,10 +83,81 @@ class VerificationEvidenceTest(unittest.TestCase):
         return verification_errors(Transcript(events), self.spec, self.exp)
     def test_scoped_markdown_success(self):
         self.assertEqual([], self.errors(self.events()))
+    def test_table_explanations_and_later_prose_mentions(self):
+        self.report = ('| config.json | syntax | partial (JSON valid; requirements unverified) |\n'
+                       '| fence.md | minimal | **partial** (content unverified) |\n'
+                       'Notes: config.json is valid JSON; fence.md uses minimal checks.')
+        self.assertEqual([], self.errors(self.events()))
+        self.report = self.report.replace('partial (JSON', 'complete (JSON')
+        self.assertTrue(self.errors(self.events()))
+    def test_table_status_must_be_a_complete_word(self):
+        for status in ('partially', 'not partial', 'partial_failure'):
+            self.report = '| config.json | syntax | ' + status + ' |\n| fence.md | minimal | partial |'
+            self.assertTrue(self.errors(self.events()))
+    def batch_events(self):
+        command = ('cd /tmp\necho "--- config ---"\n'
+                   'python3 /eval/flow_checks.py --verify syntax config.json\n'
+                   'python3 /eval/flow_checks.py --verify minimal fence.md')
+        output = '\n'.join(json.dumps({'path': os.path.basename(a['path']), 'verification': a['level'], 'ok': True})
+                           for a in self.artifacts)
+        return [call('batch', 'Bash', {'command': command}), result('batch', output),
+                {'type': 'result', 'result': self.report}]
+    def test_literal_batch_resolves_paths_and_individual_results(self):
+        self.assertEqual([], self.errors(self.batch_events()))
+        self.artifacts[0]['ok'] = False
+        ev = self.batch_events()
+        block = ev[1]['message']['content'][0]
+        block['content'] = block['content'].replace('"ok": true', '"ok": false', 1)
+        self.assertEqual([], self.errors(ev))
+    def test_batch_rejects_unexecuted_or_unmatched_evidence(self):
+        for variant in ('echo', 'conditional', 'missing', 'reordered', 'wrong_path', 'late'):
+            ev = self.batch_events()
+            inp = ev[0]['message']['content'][0]['input']
+            block = ev[1]['message']['content'][0]
+            if variant == 'echo': inp['command'] = inp['command'].replace('python3', 'echo python3')
+            if variant == 'conditional': inp['command'] = 'false && ' + inp['command']
+            if variant == 'missing': block['content'] = block['content'].splitlines()[0]
+            if variant == 'reordered': block['content'] = '\n'.join(reversed(block['content'].splitlines()))
+            if variant == 'wrong_path': block['content'] = block['content'].replace('config.json', 'other.json')
+            if variant == 'late': ev = [ev[0], ev[2], ev[1]]
+            self.assertTrue(self.errors(ev), variant)
     def test_explicit_fields_allow_explanation_of_unchecked_requirements(self):
         ev = self.events()
         ev[-1]['result'] = 'config.json verification: syntax status: partial; requirements remain unverified.\nfence.md verification: minimal status: partial'
         self.assertEqual([], self.errors(ev))
+    def test_prose_control_rejects_every_forbidden_listed_status(self):
+        spec = {'verification_controls': [{
+            'name': 'control_trunc.json', 'expected_level': 'syntax',
+            'allowed_status': ['failed', 'error'], 'forbid_status': ['partial', 'complete']}]}
+        for statuses in ('failed/error, partial', 'failed, complete',
+                         'failed and partial', 'error or complete',
+                         'failed / ERROR / partial (unverified)'):
+            with self.subTest(statuses=statuses):
+                report = 'control_trunc.json\nverification: syntax\nstatus: ' + statuses
+                errors = verification_errors(Transcript([{'type': 'result', 'result': report}]), spec, {})
+                self.assertTrue(errors)
+                self.assertEqual(errors[0][0], 'verification_control')
+        self.assertEqual(report_fields('verification: syntax\nstatus: failed/error, partial'),
+                         ({'syntax'}, {'failed', 'error', 'partial'}))
+    def test_prose_status_explanations_are_not_additional_claims(self):
+        for value in ('failed/error', 'failed (partial output was rejected)',
+                      'failed; partial recovery remains unverified',
+                      'failed, partial recovery remains unverified',
+                      'failed. A partial artifact is retained.'):
+            with self.subTest(value=value):
+                statuses = report_fields('verification: syntax\nstatus: ' + value)[1]
+                self.assertEqual(statuses, {'failed', 'error'} if value == 'failed/error' else {'failed'})
+    def test_prose_level_lists_preserve_every_claim_but_not_explanations(self):
+        for value in ('syntax/requirements', 'syntax, requirements', 'syntax and requirements'):
+            with self.subTest(value=value):
+                self.assertEqual(report_fields('verification: ' + value)[0], {'syntax', 'requirements'})
+                self.report = ('config.json verification: ' + value + ' status: partial\n'
+                               'fence.md verification: minimal status: partial')
+                self.assertTrue(self.errors(self.events()))
+        for value in ('syntax (requirements remain unchecked)',
+                      'syntax; requirements remain unchecked',
+                      'syntax, requirements remain unchecked'):
+            self.assertEqual(report_fields('verification: ' + value)[0], {'syntax'})
     def test_claim_without_execution(self):
         self.assertTrue(self.errors(self.events()[-1:]))
     def test_complete_for_generated_artifact(self):

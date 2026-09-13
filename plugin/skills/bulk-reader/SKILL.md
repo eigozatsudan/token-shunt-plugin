@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Use when a file whose size you have checked is too large to read in the parent, when a Read or Bash hook blocked an oversized file, or when the needed I/O exceeds the small-task budget. Check size from metadata and pick the route before searching an oversized file's contents. Keep small targeted reads in the parent; file count alone is not a trigger. Do not use for debugging, architectural decisions, or edits that need exact contents in the parent context. Do not @-mention large files.
+description: Use before content search when metadata shows a needed whole file exceeds 350 lines or 65536 bytes (default hook thresholds), total needed I/O exceeds 16384 bytes, or a Read/Bash hook denies it. A single 68KB line exceeds the byte threshold. Decide the route before Grep output_mode=content. Keep known ranges totaling at most 16384 bytes in the parent only if each Read passes the hook; file count alone is not a trigger. Not for debugging, architectural decisions, or edits needing exact parent context. Do not @-mention large files.
 ---
 
 # bulk-reader
@@ -54,13 +54,26 @@ Examples:
    paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,
    never a bare `bulk-reader`. Always pass `model` per --worker-model
-   (auto starts with haiku).
+   (auto starts with haiku). Before invoking, resolve the flag to a literal
+   `haiku` or `sonnet`: never send `model="auto"` or omit model. An invalid
+   Agent argument is a launch error, not evidence for model escalation.
 
    Pass this response contract in every invocation, including retries and
    boundary checks: "One bullet per fact: confirmed: <path> — <symbol>:
    <fact/value>; unconfirmed for missing evidence. Return only facts and
    requested scalar values, no source lines, function bodies, or code
    fences. Include status and stop_reason within 4000 characters."
+
+   **Parent final answer, for every delegated question:** retain a
+   `confirmed: <absolute source path> — <fact>` bullet for each confirmed
+   fact. You may translate the fact, but preserve the literal `confirmed:`
+   label and absolute path in the same item. Do not replace them with
+   basename-only citations or prose. Preserve `unconfirmed` for missing
+   evidence. This also applies to one invocation, not only batch merging.
+   Before sending, check each evidence bullet starts with `confirmed:`
+   immediately after the bullet marker, followed by the absolute path and
+   the fact. A trailing `(confirmed: basename)` citation does not satisfy
+   this contract.
 
 3. **Batching.** One invocation = at most 3 explicit paths. Questions about
    relationships between files MUST pass those paths in the same invocation
@@ -90,9 +103,19 @@ Examples:
    batches. partial never counts as a correct-answer success.
 
 4. **Child contract.** The child reads each specified region at most
-   once — one Read per path normally, and when the Read tool refuses a
-   whole file on its own token cap, consecutive non-overlapping ranges
-   derived from the line count the parent passed. It never re-reads a
+   once — one Read per path normally. A token-cap refusal or a successful
+   result ending before the supplied EOF requires consecutive,
+   non-overlapping ranges. Read can silently stop early: use the last
+   returned line number, not the requested limit, to choose the next
+   offset (last returned line + 1). After a refusal, narrow the unread
+   range without skipping ahead. At most **6 Read calls per invocation**,
+   including refused calls, shared across all paths; stop partial when
+   exhausted. Pass this budget and continuation rule in the child prompt:
+   "Maintain next_line per path; offset is inclusive. After success set it
+   to the last returned line + 1. After refusal keep it unchanged, halve
+   limit (minimum 1), and retry there. Never sample ahead or backfill.
+   Stop partial if one line is refused or 6 calls are spent."
+   It never re-reads a
    range, does not explore related files, does not Grep/Glob/resume, and
    answers only the question. If the specified paths are
    insufficient it reports the shortage; deciding which paths to add is a

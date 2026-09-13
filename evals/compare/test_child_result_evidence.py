@@ -76,6 +76,55 @@ class ChildResultEvidenceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertFalse(verdict['checks']['child_result_evidence'])
 
+    def async_events(self, summary='status: complete'):
+        launch = copy.deepcopy(self.reply)
+        launch['message']['content'][0]['content'] = (
+            'Async agent launched successfully. ' + 'internal metadata ' * 300)
+        launch['tool_use_result'] = {
+            'isAsync': True, 'status': 'async_launched', 'agentId': 'task-1'}
+        notification = {'type': 'system', 'subtype': 'task_notification',
+                        'tool_use_id': 'worker', 'task_id': 'task-1',
+                        'status': 'completed', 'summary': summary}
+        return launch, notification
+
+    def test_async_completion_measures_returned_summary(self):
+        launch, notification = self.async_events()
+        verdict, ok = self.evaluate([self.call, launch, notification, self.final])
+        self.assertTrue(ok, verdict['reasons'])
+        for summary, failed in [('x' * 4001, 'child_msg_cap'),
+                                ('```python\nprint(1)\n```', 'child_no_body')]:
+            with self.subTest(summary=summary[:20]):
+                launch, notification = self.async_events(summary)
+                verdict, ok = self.evaluate([self.call, launch, notification, self.final])
+                self.assertFalse(ok)
+                self.assertTrue(verdict['checks']['child_result_evidence'])
+                self.assertFalse(verdict['checks'][failed])
+
+    def test_async_launch_needs_matching_completed_parent_notification(self):
+        launch, notification = self.async_events()
+        cases = {
+            'missing': [self.call, launch, self.final],
+            'early': [self.call, notification, launch, self.final],
+            'late': [self.call, launch, self.final, notification],
+            'child-only': [self.call, launch, {
+                'type': 'assistant', 'parent_tool_use_id': 'worker',
+                'message': {'content': [{'type': 'text', 'text': 'done'}]}}, self.final],
+        }
+        for key, value in [('tool_use_id', 'other'), ('task_id', 'other'),
+                           ('status', 'running'), ('status', 'failed'),
+                           ('parent_tool_use_id', 'worker'), ('summary', '')]:
+            cases[key + str(value)] = [self.call, launch,
+                                      dict(notification, **{key: value}), self.final]
+        no_metadata = copy.deepcopy(launch)
+        no_metadata.pop('tool_use_result')
+        cases['metadata-missing'] = [self.call, no_metadata, notification, self.final]
+        for label, events in cases.items():
+            with self.subTest(label=label):
+                verdict, ok = self.evaluate(events)
+                self.assertFalse(ok)
+                for check in ('child_result_evidence', 'child_msg_cap', 'child_no_body'):
+                    self.assertFalse(verdict['checks'][check])
+
 
 if __name__ == '__main__':
     unittest.main()

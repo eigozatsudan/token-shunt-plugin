@@ -14,7 +14,7 @@ according to --worker-model. auto starts with haiku.
 Examples:
 
 ```text
-/token-shunt:code-writer --worker-model haiku --reference /abs/greeter.py --target /abs/greeter_test.py --verify "python -m unittest /abs/greeter_test.py" --spec "参照に沿ったテストを生成"
+/token-shunt:code-writer --worker-model haiku --reference /abs/greeter.py --target /abs/greeter_test.py --verify "python3 -m unittest discover -s /abs -p greeter_test.py" --spec "参照に沿ったテストを生成"
 ```
 
 ## Fixed procedure
@@ -46,12 +46,14 @@ Examples:
    argument and must not print the body to stdout. If the spec does not
    name one, use the generic fallback:
 
-   - `.py`: `python -m py_compile <target>` (for tests:
-     `python -m unittest <target>`)
+   - `.py`: `python3 -m py_compile <target>` (for tests:
+     `python3 -m unittest discover -s <target-directory> -p <target-filename>`;
+     quote paths as needed). Do not assume a `python` alias exists or that
+     an absolute filename is importable as a unittest module from the cwd.
    - `.json`: `jq empty <target>`
    - `.yaml` / `.yml`: minimal contract check, same as `.md` (no PyYAML
      runtime dependency; syntax correctness not guaranteed)
-   - `.toml`: `python -c "import sys,tomllib;tomllib.load(open(sys.argv[1],'rb'))" <target>`
+   - `.toml`: `python3 -c "import sys,tomllib;tomllib.load(open(sys.argv[1],'rb'))" <target>`
      (3.11+; on ImportError fall back to minimal contract check)
    - text without a syntax checker (`.md` etc.): **minimal contract
      check** — file non-empty, no gratuitous fence wrapping the whole
@@ -88,6 +90,12 @@ Examples:
      requirements.
    - If acceptance cannot be confirmed: `status: partial`,
      `stop_reason: verification_incomplete`, plus remaining checks.
+   - A failed checker means `status: failed` for that artifact and check,
+     with the attempted verification level and failure reason. Invalid or
+     truncated JSON that fails parsing is failed, not partial. Reserve
+     partial for passed checks with acceptance still unverified; do not
+     combine failed and partial in one artifact's status. An overall task
+     summary must not obscure individual artifact failures.
    - Verification failure: the parent fixes it with a short diagnosis +
      targeted Read, or re-delegates at most once within Model escalation
      below and the remaining invocation budget. Never re-generate solely
