@@ -389,3 +389,32 @@ class MatcherOnlyHookNameTests(unittest.TestCase):
     def test_foreign_deny_is_not_counted_as_token_shunt_deny(self):
         tr = self.events([('PreToolUse:Read', OTHER_DENY)])
         self.assertEqual(judge.ts_hook_denies(tr), [])
+
+
+class QuoteLeakContiguityTests(unittest.TestCase):
+    """A run of fixture lines is a leak only when the reply actually contains
+    that contiguous block (compare-edit-dense-lines false positive, 2026-09-13)."""
+
+    DENSE = "a\n" * 21
+
+    def test_single_character_reply_is_not_21_quoted_lines(self):
+        self.assertEqual((False, ""), judge.quote_leak("a", ["f"], {"f": self.DENSE}))
+
+    def test_short_summary_over_dense_fixture_passes(self):
+        summary = "confirmed: f — mark_one: 7 (near line 12); status: complete"
+        self.assertEqual((False, ""), judge.quote_leak(summary, ["f"], {"f": self.DENSE}))
+
+    def test_real_contiguous_block_is_still_a_leak(self):
+        leaked, why = judge.quote_leak("here it is:\n" + self.DENSE, ["f"], {"f": self.DENSE})
+        self.assertTrue(leaked)
+        self.assertIn("consecutive fixture lines", why)
+
+    def test_distinct_lines_scattered_through_the_reply_are_not_a_leak(self):
+        body = "".join("line%d\n" % i for i in range(30))
+        scattered = " ... ".join("line%d" % i for i in range(30))
+        self.assertEqual((False, ""), judge.quote_leak(scattered, ["f"], {"f": body}))
+        self.assertTrue(judge.quote_leak(body, ["f"], {"f": body})[0])
+
+    def test_crlf_reply_matches_lf_fixture(self):
+        body = "".join("line%d\n" % i for i in range(30))
+        self.assertTrue(judge.quote_leak(body.replace("\n", "\r\n"), ["f"], {"f": body})[0])

@@ -518,14 +518,25 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
                 chunk = body[off:off + 2048]
                 if chunk and chunk in agent_result_text:
                     return True, f"2KiB contiguous quote from {fp}"
-        run = 0
-        for l in body.splitlines():
-            if l.strip() and l in agent_result_text:
-                run += 1
-                if run > 20:
-                    return True, f">20 consecutive fixture lines from {fp}"
-            else:
-                run = 0
+        # A run of fixture lines counts only if those lines appear as one
+        # contiguous block in the reply. Testing each line independently
+        # mistakes a reply's single "a" for 21 quoted lines of a dense
+        # fixture (observed on compare-edit-dense-lines, 2026-09-13).
+        lines = body.splitlines()
+        haystack = agent_result_text.replace("\r\n", "\n")
+        present = [bool(l.strip()) and l in haystack for l in lines]
+        start = None
+        for i in range(len(lines) + 1):
+            if i < len(lines) and present[i]:
+                if start is None:
+                    start = i
+                continue
+            if start is not None:
+                if i - start > 20:
+                    block = "\n".join(lines[start:i])
+                    if block in haystack:
+                        return True, f">20 consecutive fixture lines from {fp}"
+                start = None
     return False, ""
 
 

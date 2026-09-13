@@ -47,12 +47,18 @@ Examples:
 
 2. **Delegation prompt.** Contains only: the question, the explicit paths
    to read, each path's **size and line count** from the step 1 metadata
-   (`wc -lc`), and a short diagnosis. The child needs the line count to
-   split a file the Read tool refuses whole (see step 4). Never read or
+   (`wc -lc`), a short diagnosis, and the compact response contract below.
+   The child needs the line count to split a file the Read tool refuses whole (see step 4). Never read or
    paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,
    never a bare `bulk-reader`. Always pass `model` per --worker-model
    (auto starts with haiku).
+
+   Pass this response contract in every invocation, including retries and
+   boundary checks: "One bullet per fact: confirmed: <path> — <symbol>:
+   <fact/value>; unconfirmed for missing evidence. Return only facts and
+   requested scalar values, no source lines, function bodies, or code
+   fences. Include status and stop_reason within 4000 characters."
 
 3. **Batching.** One invocation = at most 3 explicit paths. Questions about
    relationships between files MUST pass those paths in the same invocation
@@ -71,9 +77,13 @@ Examples:
    relationship `confirmed` from name similarity or call-target guesses. If
    a relationship is missing or ambiguous, you may — at most once per
    question — run a boundary-check invocation that explicitly names the
-   boundary files to the child (each invocation still reads each path at
-   most once). If still unverifiable, mark the relationship `unconfirmed`
-   and report the parent result as partial. Distinguish aggregating
+   boundary files to the child (each invocation still reads each region at
+   most once, with the step 4 fallback). If still unverifiable, mark the
+   relationship `unconfirmed`
+   and report the parent result as partial. In the parent final answer,
+   preserve one `confirmed: <path> — <fact>` item per corroborated fact;
+   keep unconfirmed links explicit rather than dropping evidence labels
+   when summarizing. Distinguish aggregating
    independent facts from questions that require comparing bodies across
    batches. partial never counts as a correct-answer success.
 
@@ -112,9 +122,16 @@ Examples:
 - auto: first attempt haiku. Escalate to sonnet at most once, and only for:
   missing required evidence, a response-contract violation, or a failed
   post-generation verification. Never escalate on confidence alone.
-- Escalation retry carries the original question, the same explicit paths,
-  and a short note on what was missing. It does not carry the haiku
-  transcript; the child re-reads the same files (both attempts are billed).
+- Before retrying, identify the specific unmet requirement. A path-backed
+  fact with the requested value is evidence; absence of a verbatim source
+  quotation is not missing evidence. A suggestive function name alone is
+  not grounds to distrust a retrieved fact or escalate.
+- Escalation retry carries the original question, the same explicit paths
+  and metadata, the response contract, and `retry_reason:` with one of
+  `missing required evidence`, `response contract violation`, or
+  `verification failed`, followed by the concrete missing fact or failed
+  condition. Do not request verbatim source as a remedy. It does not carry
+  the haiku transcript; the child re-reads the same files (both attempts are billed).
 - No escalation on: unspecified dependencies, Read/context limits, budget
   exhaustion, auth/permission errors, missing references, unsupported
   model. Report those as partial.

@@ -20,8 +20,8 @@
         "gen/bulk_facts.py"
       ],
       "gold_file": "gen/gold-bulk-facts.json",
-      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line? Read the file and answer.",
-      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/bulk_facts.py --question \"MAGIC_TOKEN の値・定義する関数名・行番号\". Then report the worker's answer.",
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Read the file and answer.",
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/bulk_facts.py --question \"report_token() が返すトークン文字列・その文字列を返す関数名・その関数の定義開始行（return 行ではなく def 行）\". Then report the worker's answer.",
       "expect": {
         "direct": {
           "parent_reads": [
@@ -93,7 +93,7 @@
         "gen/bulk_facts.py"
       ],
       "gold_file": "gen/gold-bulk-facts.json",
-      "prompt_direct": "First use the Read tool on {FIX}/gen/bulk_facts.py with no offset or limit. Then answer: what is the value of MAGIC_TOKEN, which function defines it, and on which line?",
+      "prompt_direct": "First use the Read tool on {FIX}/gen/bulk_facts.py with no offset or limit. Then answer: what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)?",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:bulk-reader",
@@ -550,7 +550,7 @@
       "fixtures": [
         "gen/bulk_facts.py"
       ],
-      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/gen/bulk_facts.py --question \"MAGIC_TOKEN の値\". If the worker's reply lacks required evidence or violates the response contract you may retry once per the skill's escalation policy; do not retry otherwise. Report the answer and whether a retry happened. Preserve the original quoted --question in each Agent prompt. If retrying, include the concrete short diagnosis in the retry prompt.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/gen/bulk_facts.py --question \"report_token() が返すトークン文字列\". If the worker's reply lacks required evidence or violates the response contract you may retry once per the skill's escalation policy; do not retry otherwise. Report the answer and whether a retry happened. Preserve the original quoted --question in each Agent prompt. If retrying, include the concrete short diagnosis in the retry prompt.",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:bulk-reader",
@@ -607,8 +607,8 @@
         "sonnet": "sonnet",
         "auto": "haiku_then_authorized_sonnet"
       },
-      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line? Read the file and answer.",
-      "prompt_delegate": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line?{WMHINT}",
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Read the file and answer.",
+      "prompt_delegate": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)?{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
@@ -1237,8 +1237,8 @@
       "expected_resolved_model": {
         "auto": "haiku_then_authorized_sonnet"
       },
-      "prompt_direct": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report MAGIC_TOKEN value, defining function, and line. Do not Edit the file.",
-      "prompt_delegate": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report MAGIC_TOKEN value, defining function, and line. Do not Edit the file.{WMHINT}",
+      "prompt_direct": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report the token string returned by report_token(), the function supplying that string, and the line where that function definition begins (def, not return). Do not Edit the file.",
+      "prompt_delegate": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report the token string returned by report_token(), the function supplying that string, and the line where that function definition begins (def, not return). Do not Edit the file.{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {

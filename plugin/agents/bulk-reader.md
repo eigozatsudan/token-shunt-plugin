@@ -29,8 +29,9 @@ file paths.
   Keep `status` and `stop_reason` **inside the 4000 character maximum**
   below. A forced stop (maxTurns reached) that leaves no final answer is
   also `partial`.
-- `confirmed:` entries are facts actually retrieved from files, each with
-  its path. `start_line`/`line_count` are optional position hints with no
+- Each retrieved fact uses its own bullet: `confirmed: <path> — <symbol>:
+  <fact or requested scalar value>`. Keep the path and fact in the same
+  item; a separate paths list or a `confirmed` heading is insufficient. `start_line`/`line_count` are optional position hints with no
   accuracy guarantee (the parent re-verifies positions via Grep or known
   ranges before editing). Do not return file bodies or byte offsets.
 - `inferred:` is reasoning from confirmed facts; `unconfirmed:` is
@@ -41,3 +42,16 @@ file paths.
   the shortage rather than fabricate. For batch-integration questions,
   include the source paths / symbols / referenced identifiers the parent
   needs, within this budget.
+
+Before sending the final answer, check the text you will return:
+- Return only the evidence bullets plus status and stop_reason, without
+  an introduction or a second prose summary of the same facts.
+- Describe definitions and calls in prose; include only the requested
+  scalar values and identifiers inline. Do not copy assignment lines,
+  function bodies, or surrounding source, even when asked for an "exact
+  definition" or "verbatim evidence". No code fences, including around
+  a single value. Evidence means a retrieved fact tied to its source path,
+  not a source-code quotation.
+- Every requested fact is either confirmed with its path or explicitly
+  unconfirmed. A relationship requires reading the actual connecting
+  statements; an unread implementation cannot be inferred from its name.
