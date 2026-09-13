@@ -30,7 +30,7 @@ skills/code-writer/SKILL.md
 
 リポジトリのルートにある `.claude-plugin/marketplace.json` はZIPに含みません。
 
-## 読み込み
+## 一時的な読み込み
 
 ZIPを任意の空ディレクトリに展開し、プラグインのルートを指定します。以下はリポジトリのルートで実行する例です（展開には `unzip` が必要です）。
 
@@ -40,13 +40,30 @@ unzip token-shunt.zip -d /tmp/token-shunt-plugin
 claude --plugin-dir /tmp/token-shunt-plugin
 ```
 
+この `/tmp` の例は一時的な動作確認用です。セッション中はフックスクリプトを参照するため、展開先を削除しないでください。このディレクトリを参照するセッションをすべて終了した後なら削除できます。次回も同じコマンドを使う場合は、再展開するかディレクトリを残す必要があります。継続して `--plugin-dir` を使う場合は、ホーム配下などの永続ディレクトリに展開してください。
+
 ソースから直接読み込む場合は次のとおりです。
 
 ```bash
 claude --plugin-dir ./plugin
 ```
 
-ローカルマーケットプレイスとして登録する場合はリポジトリのルートを指定します。マニフェストは `name`、`owner.name`、`plugins` を持ち、プラグインの参照先 `plugins[].source` は `./plugin` です。
+## 起動時の自動読み込み
+
+リポジトリを永続的な場所に置き、そのルートから一度だけ実行します。
+
+```bash
+claude plugin marketplace add .
+claude plugin install token-shunt@token-shunt --scope user
+```
+
+以後は `claude` を通常起動すると読み込まれます。起動中なら再起動してください。ユーザースコープなので、同じユーザーの全プロジェクトで利用する設定です。[公式のインストール手順](https://code.claude.com/docs/en/discover-plugins)
+
+登録元はリポジトリのルートです。ZIPの展開先には `marketplace.json` がないため、この登録方法には使えません。マニフェストは `name`、`owner.name`、`plugins` を持ち、プラグインの参照先 `plugins[].source` は `./plugin` です。
+
+インストール後はClaude側のキャッシュにコピーされたプラグインを使います。一時展開先は、それを直接参照するセッションの終了後に削除できます。登録元のリポジトリは更新用に残してください。[配布・キャッシュの仕様](https://code.claude.com/docs/en/plugin-marketplaces)
+
+ClaudeデスクトップのCodeタブで使う場合の確認手順と制限は、[ルートREADMEの導入手順](../../README.md#claudeデスクトップで使う)を参照してください。
 
 ## 配布前の確認
 

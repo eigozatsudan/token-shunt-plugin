@@ -18,6 +18,21 @@
 
 ## 導入
 
+### 起動時に自動で読み込む
+
+継続利用する場合は、リポジトリを永続的な場所に置き、そのルートから一度だけ実行します。
+
+```bash
+claude plugin marketplace add .
+claude plugin install token-shunt@token-shunt --scope user
+```
+
+以後は通常の `claude` 起動で読み込まれます。起動中の場合は再起動してください。`--scope user` は同じユーザーの全プロジェクトで使う設定です。登録するのは `.claude-plugin/marketplace.json` があるリポジトリのルートで、`plugin/` やZIPの展開先ではありません。[公式のインストール手順](https://code.claude.com/docs/en/discover-plugins)
+
+インストールしたプラグインはClaude側のキャッシュにコピーされます。登録元のリポジトリは更新用に残してください。[配布・キャッシュの仕様](https://code.claude.com/docs/en/plugin-marketplaces)
+
+### 一時的に読み込む
+
 以下はリポジトリのルートから実行します。
 
 ```bash
@@ -30,7 +45,17 @@ scripts/build-zip.sh
 
 ZIPの展開方法と構成は[配布用README](docs/distribution/README.md)を参照してください。リポジトリのルートには `.claude-plugin/marketplace.json` もあり、ローカルマーケットプレイスの登録元として使えます。プラグインの参照先は `./plugin` です。
 
+`--plugin-dir` で指定したディレクトリは、セッション中に削除しないでください。`Read` / `Bash` の実行時にも、その中のフックスクリプトを参照します。参照しているセッションをすべて終了した後なら削除できますが、次回の起動には再配置が必要です。
+
 Spotify の `shunt@portal` とは併用しないでください。他のフックがワーカーの読み取りを拒否すると、本プラグイン側のサイズ制限を通過しても読み取れません。
+
+### Claudeデスクトップで使う
+
+**Codeタブのローカルセッション**はプラグインに対応しています。同じマシン・同じユーザー設定を使うCLIで上記のユーザースコープへのインストールを行った場合は、デスクトップを再起動し、新しいローカルセッションの入力欄で **「＋」→「Plugins」** を開いて `token-shunt` が表示・有効化されているか確認してください。[公式のデスクトップ手順](https://code.claude.com/docs/en/desktop#install-plugins)
+
+Chat / Coworkへの反映はこのCLIインストール手順の対象外です。特にCoworkはCLIの `~/.claude` ではなく、アカウントに同期されるCustomize設定を使います。別PCやコンテナ内のCLIへのインストールも、デスクトップ側には自動で反映されません。[デスクトップの設定と拡張](https://code.claude.com/docs/en/desktop#extend-claude-code)
+
+token-shunt自体のデスクトップ実機検証は未実施です。プラグインの表示に加えて、実行環境でBash・`jq` が利用できることと、フック入力のトップレベルに `agent_type` が渡されることを確認する必要があります。
 
 ## 使い方
 
