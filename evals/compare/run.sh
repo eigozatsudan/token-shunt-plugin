@@ -11,6 +11,8 @@ SOURCE_FIX=$CMP/fixtures
 RUN_ROOT=''
 LASTRUN=$CMP/last-run.json
 TIMEOUT=${TOKEN_SHUNT_CASE_TIMEOUT:-600}
+# One case id, or a comma-separated list of ids (limited re-check of a
+# previous run's failures). Empty = every case.
 ONLY=${1:-}
 SUITE=${SUITE:-}
 
@@ -41,8 +43,9 @@ setup_run() {
   MANIFEST=$RUN_ROOT/manifest.json
   mkdir -p "$VRD" "$SPD" "$TRD" "$SNAP"
   jq --arg only "$ONLY" --arg suite "$SUITE" '
+    ($only | split(",") | map(select(length > 0))) as $ids |
     def pairs: [.[] | .id as $id | .modes[] | {case:$id,mode:.}];
-    {planned:(.cases | map(select(($only == "" or .id == $only)
+    {planned:(.cases | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
       and ($suite == "" or .suite == $suite))) | pairs),
      required:(.cases | pairs)}' "$CMP/cases.json" >"$MANIFEST" || return 1
   if ! jq -e '.planned | length > 0' "$MANIFEST" >/dev/null; then
@@ -418,7 +421,7 @@ CASE_N=0
 while IFS= read -r case; do
   id=$(jq -r .id <<<"$case")
   suite=$(jq -r .suite <<<"$case")
-  [[ -n $ONLY && $id != "$ONLY" ]] && continue
+  [[ -n $ONLY ]] && [[ ,$ONLY, != *,$id,* ]] && continue
   [[ -n $SUITE && $suite != "$SUITE" ]] && continue
   for mode in $(jq -r '.modes[]' <<<"$case"); do
     CASE_N=$((CASE_N+1))
