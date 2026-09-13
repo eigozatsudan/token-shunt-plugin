@@ -114,6 +114,13 @@ class SplitReadTests(unittest.TestCase):
 
     def check(self, reads):
         tr=split_read_transcript(reads)
+        # Native Read responses establish their actual endpoint with line labels.
+        for i, (offset, limit, is_error) in enumerate(reads):
+            if not is_error:
+                start = offset or 1
+                end = start + limit - 1 if limit else 519
+                tr.result_of('a0r' + str(i))['text'] = '\n'.join(
+                    '%s\tsource' % n for n in range(start, end + 1))
         return check_reader_reads(tr,{'child_reads_once':['/a.py']},tr.agent_uses())
 
     def test_rejected_whole_read_then_partition_is_allowed(self):
@@ -215,6 +222,20 @@ class SilentTruncationTests(unittest.TestCase):
                 [text, self.lines(4,10)]))
         self.assertTrue(self.check([(None,None,False),(4,7,False)],
             [self.lines(1,3), self.lines(4,10)], exists=False))
+
+    def test_refusal_does_not_authorize_cursor_from_requested_limit(self):
+        for text in ['source', '1\tsource\n3\tsource', '2\tsource',
+                     '1\tsource\n1\tsource']:
+            with self.subTest(text=text):
+                self.assertTrue(self.check(
+                    [(None, None, True), (1, 3, False), (4, 7, False)],
+                    [None, text, self.lines(4, 10)]))
+                # A worker may stop after obtaining enough information.
+                self.assertEqual([], self.check(
+                    [(None, None, True), (1, 3, False)], [None, text]))
+        self.assertEqual([], self.check(
+            [(None, None, True), (1, 5, False), (4, 7, False)],
+            [None, self.lines(1, 3), self.lines(4, 10)]))
 
     def test_silent_continuation_preserves_six_read_budget(self):
         for count in [6, 7]:

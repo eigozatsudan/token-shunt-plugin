@@ -155,6 +155,10 @@ def check_reader_reads(tr, exp, agents):
                 returned = _returned_range(result, span, total_lines)
                 incomplete = (returned is not None and total_lines is not None
                               and returned[1] < total_lines)
+                # A refusal permits partitioning, but only actual returned
+                # line labels establish the cursor for another successful read.
+                # An unknown endpoint may be enough to answer and stop.
+                partition = partition and returned is not None
                 actual = returned if returned is not None else span
                 next_line = actual[1] + 1 if actual[1] is not None else None
                 got.append((c, actual))

@@ -76,29 +76,78 @@ def input_text(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def parent_bash_contains(command, needle):
-    """Recognize the supported unittest invocation, including Python 3.
-
-    Keep this exception to a simple command (optionally `cd PATH && ...`),
-    so quoted commands, echo, conditional branches, and failure masking cannot
-    supply apparent execution evidence.
-    """
-    if needle not in ("python -m unittest", "python3 -m unittest"):
-        return needle in command
+def unittest_arguments(command):
+    """Parse a literal unittest call, optionally after a single cd."""
     if any(c in command for c in ('\n', '`', '$', '<', '>')):
-        return False
+        return None
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()')
         lexer.whitespace_split = True
         argv = list(lexer)
     except ValueError:
-        return False
+        return None
     if len(argv) >= 3 and argv[0] == 'cd' and argv[2] == '&&':
         argv = argv[3:]
-    return (len(argv) >= 3 and argv[0] in ('python', 'python3')
-            and argv[1:3] == ['-m', 'unittest']
-            and not any(token and all(c in ';&|()' for c in token)
-                        for token in argv[3:]))
+    if (len(argv) < 3 or argv[0] not in ('python', 'python3')
+            or argv[1:3] != ['-m', 'unittest']
+            or any(token and all(c in ';&|()' for c in token) for token in argv[3:])):
+        return None
+    return argv[3:]
+
+
+def unittest_targets(argv):
+    """Extract test names or discovery patterns, excluding option values."""
+    discovery = bool(argv and argv[0] == 'discover')
+    args = argv[1:] if discovery else argv
+    targets = []
+    positionals = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        option, sep, value = arg.partition('=')
+        if option in ('-s', '--start-directory', '-t', '--top-level-directory',
+                      '-p', '--pattern', '-k'):
+            if not sep:
+                i += 1
+                if i >= len(args):
+                    return []
+                value = args[i]
+            if discovery and option in ('-p', '--pattern'):
+                targets[:] = [value]
+        elif arg.startswith(('-s', '-t', '-p', '-k')) and not arg.startswith('--') and len(arg) > 2:
+            if discovery and arg.startswith('-p'):
+                targets[:] = [arg[2:]]
+        elif arg in ('-v', '--verbose', '-q', '--quiet', '-f', '--failfast',
+                     '-c', '--catch', '-b', '--buffer', '--locals'):
+            pass
+        elif arg.startswith('-'):
+            return []
+        else:
+            positionals.append(arg)
+        i += 1
+    if discovery:
+        # unittest discover [start-directory [pattern [top-level-directory]]]
+        if len(positionals) > 3 or (targets and len(positionals) >= 2):
+            return []
+        if len(positionals) >= 2:
+            targets.append(positionals[1])
+    else:
+        targets.extend(positionals)
+    return targets
+
+
+def parent_bash_contains(command, needle, require_unittest=False):
+    """Match unittest evidence against executable arguments, not comments."""
+    argv = unittest_arguments(command)
+    if needle in ("python -m unittest", "python3 -m unittest"):
+        return argv is not None
+    if argv is not None or require_unittest:
+        if argv is None:
+            return False
+        # A case's module stem may also be a .py path or a dotted test name.
+        return any(needle == target or needle in os.path.basename(target).removesuffix('.py').split('.')
+                   for target in unittest_targets(argv))
+    return needle in command
 
 
 class Transcript:
@@ -270,6 +319,19 @@ class Transcript:
                 continue
             seen.add(key)
             parts.append(text_of(m.get("content")))
+        # Count only delivered async completions recognized by the same
+        # identity/order checks as child-return evidence. Launch text above is
+        # also parent context; it is not a substitute for the returned summary.
+        for use in self.parent_tool_uses():
+            if use["name"] not in AGENT_TOOL_NAMES:
+                continue
+            reply = self.child_return_of(use)
+            if not reply or reply is self.result_of(use["id"]):
+                continue
+            key = ("completion", use["id"], reply["position"])
+            if key not in seen:
+                seen.add(key)
+                parts.append(reply["text"])
         return "\n".join(parts)
 
     def metrics(self):
@@ -421,7 +483,7 @@ def confirmed_items(text):
         i += 1
     if not items:
         for m in re.finditer(
-                r"confirmed:\s*(.+?)(?=confirmed:|inferred:|unconfirmed:|$)",
+                r"\bconfirmed:\s*(.+?)(?=\b(?:confirmed|inferred|unconfirmed):|$)",
                 text or "", re.I | re.S):
             items.append(m.group(1).strip())
     return items
@@ -1180,7 +1242,9 @@ def judge(transcript_path, spec, ctx):
         hit = False
         for u in tr.parent_tool_uses("Bash"):
             cmd = u["input"].get("command", "")
-            if all(parent_bash_contains(cmd, n) for n in pb.get("contains", [])):
+            needles = pb.get("contains", [])
+            require_unittest = any(n in ("python -m unittest", "python3 -m unittest") for n in needles)
+            if all(parent_bash_contains(cmd, n, require_unittest) for n in needles):
                 r = tr.result_of(u["id"])
                 if r and not r["is_error"]:
                     out = r["text"]

@@ -77,7 +77,7 @@ token-shunt自体のデスクトップ実機検証は未実施です。プラグ
 ### 定型コードの生成
 
 ```text
-/token-shunt:code-writer --worker-model haiku --reference /abs/greeter.py --target /abs/greeter_test.py --verify "python -m unittest /abs/greeter_test.py" --spec "参照に沿ったテストを生成"
+/token-shunt:code-writer --worker-model haiku --reference /abs/greeter.py --target /abs/greeter_test.py --verify "python3 -m unittest discover -s /abs -p greeter_test.py" --spec "参照に沿ったテストを生成"
 ```
 
 参照ファイルから大部分を予測できるテスト、設定、型スタブなどが対象です。新しいロジックの設計、デバッグ、安全性が重要なコードの生成には使いません。

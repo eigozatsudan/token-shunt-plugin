@@ -1,4 +1,4 @@
-"""Run the real catalog disk verification under dotted run directories."""
+"""Run the real catalog disk verification under dotted run directories containing spaces."""
 import json
 import os
 from pathlib import Path
@@ -24,7 +24,7 @@ class WriterDiscoveryDiskTests(unittest.TestCase):
 
     def test_real_disk_check_passes_and_rejects_unrelated_tests(self):
         for cid in ('compare-code-writer-ok', 'auto-large-writer'):
-            with self.subTest(case=cid), tempfile.TemporaryDirectory(prefix='run.writer.') as directory:
+            with self.subTest(case=cid), tempfile.TemporaryDirectory(prefix='run.writer with spaces.') as directory:
                 root = Path(directory)
                 for path in ('fixtures/codegen/out', 'verdicts', 'snap', 'cwd'):
                     (root / path).mkdir(parents=True)

@@ -90,6 +90,25 @@ class VerificationEvidenceTest(unittest.TestCase):
         self.assertEqual([], self.errors(self.events()))
         self.report = self.report.replace('partial (JSON', 'complete (JSON')
         self.assertTrue(self.errors(self.events()))
+    def test_table_does_not_hide_later_explicit_redeclarations(self):
+        original = self.report
+        for claim in ('config.json verification: requirements status: complete',
+                      'config.json status: complete',
+                      'config.json verification: requirements',
+                      'fence.md verification: requirements status: complete',
+                      'fence.md status: complete',
+                      'fence.md verification: requirements'):
+            with self.subTest(claim=claim):
+                self.report = original + '\n' + claim
+                self.assertTrue(self.errors(self.events()))
+        for claim in ('config.json status: partial',
+                      'config.json verification: syntax',
+                      'fence.md verification: minimal status: partial',
+                      'Notes: config.json is valid JSON; fence.md remains unverified.'):
+            with self.subTest(claim=claim):
+                self.report = original + '\n' + claim
+                self.assertEqual([], self.errors(self.events()))
+
     def test_table_status_must_be_a_complete_word(self):
         for status in ('partially', 'not partial', 'partial_failure'):
             self.report = '| config.json | syntax | ' + status + ' |\n| fence.md | minimal | partial |'

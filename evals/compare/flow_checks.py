@@ -95,8 +95,8 @@ def artifact_sections(final, names):
     for i, match in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(final)
         sections.setdefault(match.group(), []).append(final[match.end():end])
-    # A table row is a complete artifact report. Later prose mentions are
-    # explanations, not additional rows with missing verification fields.
+    # Table rows are complete reports. Keep later explicit declarations too;
+    # prose that merely mentions an artifact does not make a fresh claim.
     for name in names:
         rows = []
         for line in final.splitlines():
@@ -104,7 +104,21 @@ def artifact_sections(final, names):
             if len(cells) >= 5 and cells[0] == '' and cells[1].strip().strip('`*') == name:
                 rows.append('|' + '|'.join(cells[2:]))
         if rows:
-            sections[name] = rows
+            declarations = []
+            for section in sections.get(name, []):
+                cleaned = section.replace('`', '').replace('*', '')
+                explicit = {field for field in ('verification', 'status')
+                            if re.search(r'\b' + field + r'\s*:', cleaned, re.I)}
+                if not explicit:
+                    continue
+                # A status-only or level-only update inherits the table's
+                # other field, so contradictions remain visible to validation.
+                levels, statuses = report_fields(rows[0])
+                for field, values in [('verification', levels), ('status', statuses)]:
+                    if field not in explicit:
+                        section += '\n' + field + ': ' + '/'.join(sorted(values))
+                declarations.append(section)
+            sections[name] = rows + declarations
     return sections
 
 

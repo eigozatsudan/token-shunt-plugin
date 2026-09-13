@@ -184,13 +184,13 @@
         "codegen/greeter.py"
       ],
       "target": "{FIX}/codegen/out/greeter_test.py",
-      "verify_cmd": "python3 -m unittest discover -s {FIX}/codegen/out -p greeter_test.py",
+      "verify_cmd": "python3 -m unittest discover -s '{FIX}/codegen/out' -p greeter_test.py",
       "mutation": {
         "file": "codegen/greeter.py",
         "find": "Hello, {name}!",
         "replace": "Goodbye, {name}."
       },
-      "prompt_delegate": "Invoke the skill token-shunt:code-writer with these arguments: --worker-model {WM} --reference {FIX}/codegen/greeter.py --target {FIX}/codegen/out/greeter_test.py --verify \"python3 -m unittest discover -s {FIX}/codegen/out -p greeter_test.py\" --spec \"greeter.py の greet に沿った unittest を生成\". Then run the verification command yourself and report the result. This is a mechanism test of the delegation path: run the code-writer worker via Agent for the generation even if the output looks small, and do not generate the body in the parent.",
+      "prompt_delegate": "Invoke the skill token-shunt:code-writer with these arguments: --worker-model {WM} --reference {FIX}/codegen/greeter.py --target {FIX}/codegen/out/greeter_test.py --verify \"python3 -m unittest discover -s '{FIX}/codegen/out' -p greeter_test.py\" --spec \"greeter.py の greet に沿った unittest を生成\". Then run the verification command yourself and report the result. This is a mechanism test of the delegation path: run the code-writer worker via Agent for the generation even if the output looks small, and do not generate the body in the parent.",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:code-writer",
@@ -886,7 +886,7 @@
         "codegen/greeter.py"
       ],
       "target": "{TMP}/large_test.py",
-      "verify_cmd": "python3 -m unittest discover -s {TMP} -p large_test.py",
+      "verify_cmd": "python3 -m unittest discover -s '{TMP}' -p large_test.py",
       "mutation": {
         "file": "codegen/greeter.py",
         "find": "Hello, {name}!",
@@ -901,8 +901,8 @@
         "sonnet": "sonnet",
         "auto": "haiku_then_authorized_sonnet"
       },
-      "prompt_direct": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python3 -m unittest discover -s {TMP} -p large_test.py.",
-      "prompt_delegate": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python3 -m unittest discover -s {TMP} -p large_test.py.{WMHINT}",
+      "prompt_direct": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python3 -m unittest discover -s '{TMP}' -p large_test.py.",
+      "prompt_delegate": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python3 -m unittest discover -s '{TMP}' -p large_test.py.{WMHINT}",
       "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
