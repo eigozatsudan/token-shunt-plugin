@@ -146,6 +146,9 @@ python3 "$ROOT/evals/test_symlink_hooks.py" \
 echo "== cd regression checks =="
 python3 "$ROOT/evals/test_cd_hooks.py" \
   && record cd-regressions 0 "" || record cd-regressions 1 "cd regression failed"
+echo "== scan budget regression checks =="
+python3 "$ROOT/evals/test_scan_budget_hooks.py" \
+  && record scan-budget-regressions 0 "" || record scan-budget-regressions 1 "scan budget regression failed"
 
 # --- special: marketplace schema (§13 marketplace-schema) ---
 echo "== marketplace-schema =="

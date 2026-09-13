@@ -56,29 +56,32 @@ file_size() {
   local s
   s=$(stat -L -c %s -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
   s=$(stat -L -f %z -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
-  s=$(wc -c <"$1" 2>/dev/null) && printf '%s' "$((s))" || printf '0'
+  return 1  # Never fall back to an unbounded content read.
 }
 
 # range_scan(path, start_line, line_count) -> "exceeded undetermined lines bytes read_bytes elapsed_ms"
 # Interval [start, start+count); per-line bytes = content + its newline byte.
-# Budget covers bytes read including the skip to start_line (awk feeds the file
-# via stdin so every consumed record counts). elapsed_ms is measured around the
-# scan and applied after it: the byte budget already bounds the work, and a slow
-# FS is the documented residual (design §8.6, §15).
+# Bound raw input before awk can buffer a record. The producer emits at most
+# budget + 1 bytes, including skipped lines; the extra byte detects overflow.
+# A truncated final record necessarily crosses the budget and cannot pass.
+# Keep draining after a verdict so pipefail distinguishes read errors from SIGPIPE.
+# Elapsed time is checked after the bounded scan; a slow FS remains a residual.
 range_scan() {
   local path=$1 start=$2 count=$3 st t0 t1 elapsed res ex un rl rby rb
-  st=$(file_size "$path")
+  st=$(file_size "$path") && [[ $st =~ ^[0-9]+$ ]] || { printf '1 1 0 0 0 0'; return; }
   t0=$(now_ms)
-  res=$(awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
-    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+  res=$(set -o pipefail
+    head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" |
+    awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    BEGIN { if (st>bb+1) st=bb+1 }
+    !f { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
       if (NR>=start && NR<start+cnt) { rl++; rby+=lb+nl
-        if (rl>ml || rby>mb) { printf "1 0 %d %d %d", rl, rby, rb; f=1; exit } }
-      if (rb>bb)             { printf "1 1 %d %d %d", rl, rby, rb; f=1; exit }
-      if (NR==start+cnt-1)   { printf "0 0 %d %d %d", rl, rby, rb; f=1; exit } }
-    END { if(!f) printf "0 0 %d %d %d", rl, rby, rb }' <"$path")
+        if (rl>ml || rby>mb) { printf "1 0 %d %d %d", rl, rby, rb; f=1; next } }
+      if (rb>bb)             { printf "1 1 %d %d %d", rl, rby, rb; f=1; next }
+      if (NR==start+cnt-1)   { printf "0 0 %d %d %d", rl, rby, rb; f=1; next } }
+    END { if(!f) printf "0 0 %d %d %d", rl, rby, rb }') || res="1 1 0 0 0"
   t1=$(now_ms); elapsed=$((t1-t0))
-  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
-  # failure in evals without mocking awk globally.
+  # Pipeline failures and malformed output are undetermined deny (§8.6).
   [[ $res =~ ^[01]\ [01]\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || res="1 1 0 0 0"
   read -r ex un rl rby rb <<<"$res"
   if (( elapsed > SCAN_BUDGET_MS )); then ex=1; un=1; fi
@@ -88,19 +91,21 @@ range_scan() {
 # full_file_verdict(path) -> "OK|EXCEEDED|UNDETERMINED lines bytes read_bytes elapsed_ms"
 full_file_verdict() {
   local path=$1 st t0 t1 elapsed res v nl rb
-  st=$(file_size "$path")
+  st=$(file_size "$path") && [[ $st =~ ^[0-9]+$ ]] || { printf 'UNDETERMINED 0 0 0 0'; return; }
   if (( st > MIN_BYTES )); then
     printf 'EXCEEDED -1 %s %s 0' "$st" "$st"; return
   fi
   t0=$(now_ms)
-  res=$(awk -v ml="$MIN_LINES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
-    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
-      if (NR>ml) { printf "EXCEEDED %d %d %d", NR, rb, rb; f=1; exit }
-      if (rb>bb) { printf "UNDETERMINED %d %d %d", NR, rb, rb; f=1; exit } }
-    END { if(!f) printf "OK %d %d %d", NR, rb, rb }' <"$path")
+  res=$(set -o pipefail
+    head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" |
+    awk -v ml="$MIN_LINES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    BEGIN { if (st>bb+1) st=bb+1 }
+    !f { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+      if (NR>ml) { printf "EXCEEDED %d %d %d", NR, rb, rb; f=1; next }
+      if (rb>bb) { printf "UNDETERMINED %d %d %d", NR, rb, rb; f=1; next } }
+    END { if(!f) printf "OK %d %d %d", NR, rb, rb }') || res="UNDETERMINED 0 0 0"
   t1=$(now_ms); elapsed=$((t1-t0))
-  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
-  # failure in evals without mocking awk globally.
+  # Pipeline failures and malformed output are undetermined deny (§8.6).
   [[ $res =~ ^(OK|EXCEEDED|UNDETERMINED)\ -?[0-9]+\ [0-9]+\ [0-9]+$ ]] || res="UNDETERMINED 0 0 0"
   read -r v nl rb _ <<<"$res"
   if [[ $v == OK ]] && (( elapsed > SCAN_BUDGET_MS )); then v=UNDETERMINED; fi

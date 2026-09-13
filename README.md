@@ -100,9 +100,18 @@ reads; multiple PreToolUse denies merge as deny).
 |---|---|---|
 | `TOKEN_SHUNT_MIN_LINES` | 350 | line threshold |
 | `TOKEN_SHUNT_MIN_BYTES` | 65536 | byte threshold |
-| `TOKEN_SHUNT_SCAN_BUDGET_BYTES` | 8388608 | scan read cap (incl. offset skip) |
-| `TOKEN_SHUNT_SCAN_BUDGET_MS` | 2000 | scan time cap; exceeded -> deny |
+| `TOKEN_SHUNT_SCAN_BUDGET_BYTES` | 8388608 | scan byte budget (incl. offset skip; bounded lookahead as below) |
+| `TOKEN_SHUNT_SCAN_BUDGET_MS` | 2000 | elapsed scan check; exceeded -> deny |
 | `TOKEN_SHUNT_HOOK_LOG` | unset | eval fallback only; appends 1-line JSON per decision. Not for production |
+
+Line scans bound input before parsing lines, so a huge single line cannot
+force the parser to buffer the whole file. Each forward scan supplies at most
+the byte budget plus one lookahead byte. Tail scans limit the suffix to the
+same size before selecting lines, plus a separate one-byte newline probe.
+These limits bound parser input; system utilities and the OS may read ahead
+internally. A prefix cut off before the requested range is complete is denied.
+The elapsed-time check runs after the bounded scan; it does not interrupt a
+blocked filesystem read.
 
 ## Known limits (v0.1)
 
