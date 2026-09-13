@@ -546,6 +546,9 @@ claude --bare $COMMON --plugin-dir plugin/ "<prompt>"
   2. 設定ソース: `--setting-sources` を空（user / project / local をロードしない。SDK の `settingSources: []` に相当）。空を受け付けない CLI なら比較 eval は **fail**（`CLAUDE_CONFIG_DIR` だけに落とさない）。
   3. cwd: `.claude/` も `CLAUDE.md` も無い一時ディレクトリ。fixture は `--add-dir` で絶対パスを足す。リポジトリルートを cwd にしない。
   4. 検出: `system/init.plugins` に token-shunt が無いことだけでは他フックは分からない。`--include-hook-events` の `hook_started` / `hook_response` で、token-shunt の 3 本（`hooks/check-file-size` / `check-bash-read` / `check-jq`）以外の command hook が 1 件でもあればそのケースは fail。直接モードは PreToolUse の hook_response が 0 件。managed settings は公式に切れない（既知の限界。managed のフックが混ざったら fail）。
+     - **実機で判明した制約（2026-09-13, CLI 2.1.270）:** この CLI の `hook_response` の `hook_name` は**マッチャ名だけ**（`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup`）で、コマンドパスを含まない。上のコマンドパスによる識別はそのままでは実装できない。代替として**隔離契約で識別する**: (a) 直接モードは `--plugin-dir` を渡さないので、PreToolUse の `hook_response` が 1 件でもあれば fail。(b) 委譲モードは `--setting-sources ""`・クリーン cwd・`--plugin-dir plugin/` のみなので、登録され得る command hook は token-shunt の 3 本だけであり、`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup` 以外の hook_event が出れば fail。(c) 出力が非空なのに `token-shunt` を含まない `hook_response` は、上記マッチャ上でも外来として fail（他プラグインの deny を捕まえる）。
+     - deny の識別も `hook_name` ではなく `permissionDecisionReason` に `token-shunt` が含まれることで行う（§13 の `compare-hook-deny-route` の一次証拠）。
+     - **残る穴（§15）:** 同じ `PreToolUse:Read` / `Bash` マッチャに載った**外来の通過フック**は出力が空なので、この CLI では token-shunt の通過と区別できない。コマンドパスが `hook_name` に載る CLI が出たら (b) をコマンドパス識別へ戻す。
 - `system/init` の `plugins`: 直接モードに `token-shunt` がいたらそのケースは fail（隔離失敗）。委譲モードに `token-shunt` が無ければ fail（ロード失敗）。`plugin_errors` に token-shunt があれば委譲は fail。
 - `stream-json` は `--verbose` と併用する（公式の stream 例）。
 - `--include-hook-events` が PreToolUse の `hook_response` を stream に出す（SessionStart / Setup はフラグ無しでも出る）。フック deny の**一次証拠**。直接モードでは token-shunt の deny が無いこと。

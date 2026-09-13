@@ -325,3 +325,67 @@ class JudgeIntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def hook_response(name, output=''):
+    return {'type': 'system', 'subtype': 'hook_response',
+            'hook_name': name, 'hook_event': name.split(':')[0],
+            'output': output, 'stdout': '', 'stderr': '', 'exit_code': 0}
+
+
+TS_DENY = json.dumps({'hookSpecificOutput': {
+    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+    'permissionDecisionReason': 'File exceeds token-shunt thresholds '
+                                '(bytes=70000/65536). Use /token-shunt:bulk-reader.'}})
+OTHER_DENY = json.dumps({'hookSpecificOutput': {
+    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+    'permissionDecisionReason': 'blocked by some other plugin'}})
+
+
+class MatcherOnlyHookNameTests(unittest.TestCase):
+    """CLI 2.1.x reports only the matcher in hook_name, never the command path.
+
+    Attribution therefore comes from the isolation contract plus the payload
+    (design §13). These lock in that a delegate run is not failed for its own
+    hooks, while genuinely foreign responses still fail.
+    """
+
+    def events(self, names_and_outputs):
+        class T:
+            hook_events = [hook_response(n, o) for n, o in names_and_outputs]
+        return T()
+
+    def test_own_matcher_only_hooks_are_not_foreign_when_plugin_loaded(self):
+        tr = self.events([('SessionStart:startup', ''),
+                          ('PreToolUse:Read', TS_DENY),
+                          ('PreToolUse:Read', ''),
+                          ('PreToolUse:Bash', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True), [])
+
+    def test_same_hooks_are_foreign_in_direct_mode(self):
+        tr = self.events([('PreToolUse:Read', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=False), ['PreToolUse:Read'])
+
+    def test_other_event_scopes_are_foreign(self):
+        tr = self.events([('PostToolUse:Write', ''), ('UserPromptSubmit', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True),
+                         ['PostToolUse:Write', 'UserPromptSubmit'])
+
+    def test_foreign_deny_on_our_matcher_is_detected(self):
+        tr = self.events([('PreToolUse:Read', OTHER_DENY)])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True),
+                         ['PreToolUse:Read(non-token-shunt output)'])
+
+    def test_legacy_command_path_hook_names_still_attributed(self):
+        tr = self.events([('PreToolUse:check-file-size', TS_DENY)])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True), [])
+
+    def test_deny_detected_from_matcher_only_name(self):
+        tr = self.events([('PreToolUse:Read', TS_DENY)])
+        denies = judge.ts_hook_denies(tr)
+        self.assertEqual(len(denies), 1)
+        self.assertIn('bulk-reader', denies[0]['reason'])
+
+    def test_foreign_deny_is_not_counted_as_token_shunt_deny(self):
+        tr = self.events([('PreToolUse:Read', OTHER_DENY)])
+        self.assertEqual(judge.ts_hook_denies(tr), [])

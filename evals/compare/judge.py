@@ -21,6 +21,12 @@ BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
 TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq")
 # CLI-internal bootstrap hook that fires in every session; not a settings hook.
 BUILTIN_HOOKS = {"SessionStart:startup"}
+# This CLI reports only the matcher in `hook_name` ("PreToolUse:Read"), never
+# the command path, so token-shunt's own hooks cannot be recognised by name
+# (design §13). Foreign hooks are identified by the isolation contract instead:
+# a delegate run loads token-shunt and nothing else, so these are the only
+# hook responses it may produce. See `foreign_hooks` for the residual gap.
+TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
@@ -523,8 +529,20 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
     return False, ""
 
 
-def foreign_hooks(tr):
-    """Non-token-shunt command hooks observed in the stream."""
+def foreign_hooks(tr, plugin_loaded=True):
+    """Command hooks that cannot be attributed to token-shunt (design §13).
+
+    `hook_name` carries only the matcher on this CLI, so attribution is by the
+    isolation contract: a direct run loads no plugin and must produce no
+    PreToolUse hook response at all; a delegate run loads only token-shunt and
+    may therefore produce only its two PreToolUse matchers. Any response whose
+    payload is non-empty but never names token-shunt is foreign even on those
+    matchers, which catches a foreign deny.
+
+    Residual gap (§15): a foreign *passing* hook registered on the same
+    PreToolUse:Read/Bash matcher emits an empty payload and is indistinguishable
+    from token-shunt's pass on this CLI.
+    """
     bad = []
     for e in tr.hook_events:
         if e.get("subtype") != "hook_response":
@@ -532,30 +550,53 @@ def foreign_hooks(tr):
         name = e.get("hook_name") or ""
         if name in BUILTIN_HOOKS:
             continue
+        # Older CLIs did report the command path; keep honouring it.
         if any(h in name for h in TS_HOOKS):
             continue
-        bad.append(name)
+        if not plugin_loaded or name not in TS_HOOK_NAMES:
+            bad.append(name)
+            continue
+        payload = "%s%s" % (e.get("output") or "", e.get("stdout") or "")
+        if payload.strip() and "token-shunt" not in payload:
+            bad.append("%s(non-token-shunt output)" % name)
     return bad
+
+
+def ts_deny_payload(e):
+    """hookSpecificOutput of a deny attributable to token-shunt, else None.
+
+    A deny carries its origin in the reason text, so attribution does not
+    depend on `hook_name` (which is matcher-only on this CLI). The hook name
+    must still be one token-shunt registers, whichever form the CLI reports.
+    """
+    if e.get("subtype") != "hook_response":
+        return None
+    name = e.get("hook_name") or ""
+    if not (any(h in name for h in TS_HOOKS) or name in TS_HOOK_NAMES):
+        return None
+    out_s = e.get("output") or e.get("stdout") or ""
+    try:
+        j = json.loads(out_s) if isinstance(out_s, str) else out_s
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(j, dict):
+        return None
+    hso = j.get("hookSpecificOutput", {})
+    if hso.get("permissionDecision") != "deny":
+        return None
+    if "token-shunt" not in hso.get("permissionDecisionReason", ""):
+        return None
+    return hso
 
 
 def ts_hook_denies(tr):
     """token-shunt deny responses, in order."""
     out = []
     for e in tr.hook_events:
-        if e.get("subtype") != "hook_response":
-            continue
-        name = e.get("hook_name") or ""
-        if not any(h in name for h in TS_HOOKS):
-            continue
-        out_s = e.get("output") or e.get("stdout") or ""
-        try:
-            j = json.loads(out_s) if isinstance(out_s, str) else out_s
-        except (json.JSONDecodeError, TypeError):
-            j = None
-        if isinstance(j, dict):
-            hso = j.get("hookSpecificOutput", {})
-            if hso.get("permissionDecision") == "deny":
-                out.append({"hook": name, "reason": hso.get("permissionDecisionReason", "")})
+        hso = ts_deny_payload(e)
+        if hso is not None:
+            out.append({"hook": e.get("hook_name") or "",
+                        "reason": hso.get("permissionDecisionReason", "")})
     return out
 
 
@@ -623,8 +664,9 @@ def judge(transcript_path, spec, ctx):
         else:
             passed("plugin_absent")
 
-    # foreign command hooks (PreToolUse scope + any non-builtin response)
-    fh = foreign_hooks(tr)
+    # foreign command hooks. Direct runs load no plugin, so any PreToolUse
+    # hook response there is foreign; delegate runs may only show token-shunt's.
+    fh = foreign_hooks(tr, plugin_loaded=want_plugin)
     if fh:
         fail("foreign_hooks", ",".join(fh))
     else:
@@ -825,18 +867,9 @@ def judge(transcript_path, spec, ctx):
                                 read_pos = i
             if deny_pos is None and e.get("type") == "system" \
                     and e.get("subtype") == "hook_response":
-                name = e.get("hook_name") or ""
-                if any(h in name for h in TS_HOOKS):
-                    out_s = e.get("output") or e.get("stdout") or ""
-                    try:
-                        j = json.loads(out_s) if isinstance(out_s, str) else out_s
-                    except (json.JSONDecodeError, TypeError):
-                        j = None
-                    hso = (j or {}).get("hookSpecificOutput", {})
-                    if hso.get("permissionDecision") == "deny" \
-                            and "token-shunt" in hso.get("permissionDecisionReason", "") \
-                            and "bulk-reader" in hso.get("permissionDecisionReason", ""):
-                        deny_pos = i
+                hso = ts_deny_payload(e) or {}
+                if "bulk-reader" in hso.get("permissionDecisionReason", ""):
+                    deny_pos = i
             if agent_pos is None and e.get("type") == "assistant" \
                     and e.get("parent_tool_use_id") is None:
                 for b in e.get("message", {}).get("content", []) or []:
