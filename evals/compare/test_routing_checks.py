@@ -81,5 +81,55 @@ class RoutingTests(unittest.TestCase):
         self.assertTrue(check_reader_reads(tr,{'child_reads_once':['/a.py']},tr.agent_uses()))
 
 
+
+def split_read_transcript(reads):
+    """One bulk-reader invocation whose child issues `reads`:
+    (offset, limit, is_error) tuples against /a.py."""
+    aid='a0'
+    events=[{'type':'assistant','message':{'id':aid,'content':[{'type':'tool_use','id':aid,'name':'Agent',
+        'input':{'subagent_type':'token-shunt:bulk-reader','model':'haiku',
+                 'prompt':'/a.py (519 lines) --question "What is TOKEN?"'}}]}}]
+    for i,(offset,limit,is_error) in enumerate(reads):
+        rid=aid+'r'+str(i)
+        inp={'file_path':'/a.py'}
+        if offset: inp['offset']=offset
+        if limit: inp['limit']=limit
+        result={'type':'tool_result','tool_use_id':rid,'content':'source'}
+        if is_error: result['is_error']=True
+        events.extend([
+            {'type':'assistant','parent_tool_use_id':aid,'message':{'model':'claude-haiku','content':[{'type':'tool_use','id':rid,'name':'Read','input':inp}]}},
+            {'type':'user','parent_tool_use_id':aid,'message':{'content':[result]}}])
+    events.append({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':aid,'content':'done'}]}})
+    events.append({'type':'result','result':'done'})
+    return Transcript(events)
+
+
+class SplitReadTests(unittest.TestCase):
+    """The Read tool refuses whole files in exactly the size class we delegate,
+    so the child may partition a path into consecutive non-overlapping ranges."""
+
+    def check(self, reads):
+        tr=split_read_transcript(reads)
+        return check_reader_reads(tr,{'child_reads_once':['/a.py']},tr.agent_uses())
+
+    def test_rejected_whole_read_then_partition_is_allowed(self):
+        self.assertEqual([], self.check([(None,None,True),(1,200,False),(201,200,False),(401,119,False)]))
+
+    def test_overlapping_ranges_still_fail(self):
+        self.assertTrue(self.check([(None,None,True),(175,344,False),(400,119,False)]))
+        self.assertTrue(self.check([(1,200,False),(200,10,False)]))
+
+    def test_open_ended_range_overlaps_anything_after_it(self):
+        self.assertTrue(self.check([(175,None,False),(400,10,False)]))
+        self.assertEqual([], self.check([(1,100,False),(101,None,False)]))
+
+    def test_only_failed_reads_is_not_coverage(self):
+        self.assertTrue(self.check([(None,None,True)]))
+
+    def test_read_budget_is_bounded(self):
+        self.assertEqual([], self.check([(None,None,True)]+[(1+100*i,100,False) for i in range(5)]))
+        self.assertTrue(self.check([(None,None,True)]+[(1+100*i,100,False) for i in range(6)]))
+
+
 if __name__=='__main__':
     unittest.main()

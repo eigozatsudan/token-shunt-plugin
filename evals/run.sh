@@ -149,6 +149,9 @@ python3 "$ROOT/evals/test_cd_hooks.py" \
 echo "== scan budget regression checks =="
 python3 "$ROOT/evals/test_scan_budget_hooks.py" \
   && record scan-budget-regressions 0 "" || record scan-budget-regressions 1 "scan budget regression failed"
+echo "== Bash operational regression checks =="
+python3 "$ROOT/evals/test_bash_operational_hooks.py" \
+  && record bash-operational-regressions 0 "" || record bash-operational-regressions 1 "Bash operational regression failed"
 
 # --- special: marketplace schema (§13 marketplace-schema) ---
 echo "== marketplace-schema =="

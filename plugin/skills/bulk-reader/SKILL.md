@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Use when a Read or Bash hook blocked an oversized file or the needed I/O exceeds the small-task budget. Keep small targeted reads in the parent; file count alone is not a trigger. Do not use for debugging, architectural decisions, or edits that need exact contents in the parent context. Do not @-mention large files.
+description: Use when a file whose size you have checked is too large to read in the parent, when a Read or Bash hook blocked an oversized file, or when the needed I/O exceeds the small-task budget. Check size from metadata and pick the route before searching an oversized file's contents. Keep small targeted reads in the parent; file count alone is not a trigger. Do not use for debugging, architectural decisions, or edits that need exact contents in the parent context. Do not @-mention large files.
 ---
 
 # bulk-reader
@@ -33,11 +33,32 @@ Examples:
    full Read, a range-unknown full read over budget, or files over the
    small-task budget → delegate.
 
+   **Route before searching (§26.5).** Decide the route from metadata
+   *before* running a content search on the file. Grep with
+   `output_mode=content` (and `-o`, `-A`/`-B`, `head -c`, ...) is not
+   hooked, so it can pull body text out of an oversized file and make
+   the routing decision moot. On a file already known to be over the
+   small-task budget, do not use content search to locate the answer:
+   delegate, and let the child read. Content search on such a file stays
+   allowed only for the two purposes the parent genuinely needs it for —
+   establishing *positions* for the §11.6 edit contract, and confirming
+   a known range — with `output_mode=files_with_matches` or a short
+   `head_limit`.
+
 2. **Delegation prompt.** Contains only: the question, the explicit paths
-   to read, and a short diagnosis. Never read or paste file bodies into it.
+   to read, each path's **size and line count** from the step 1 metadata
+   (`wc -lc`), a short diagnosis, and the compact response contract below.
+   The child needs the line count to split a file the Read tool refuses whole (see step 4). Never read or
+   paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,
    never a bare `bulk-reader`. Always pass `model` per --worker-model
    (auto starts with haiku).
+
+   Pass this response contract in every invocation, including retries and
+   boundary checks: "One bullet per fact: confirmed: <path> — <symbol>:
+   <fact/value>; unconfirmed for missing evidence. Return only facts and
+   requested scalar values, no source lines, function bodies, or code
+   fences. Include status and stop_reason within 4000 characters."
 
 3. **Batching.** One invocation = at most 3 explicit paths. Questions about
    relationships between files MUST pass those paths in the same invocation
@@ -56,15 +77,22 @@ Examples:
    relationship `confirmed` from name similarity or call-target guesses. If
    a relationship is missing or ambiguous, you may — at most once per
    question — run a boundary-check invocation that explicitly names the
-   boundary files to the child (each invocation still reads each path at
-   most once). If still unverifiable, mark the relationship `unconfirmed`
-   and report the parent result as partial. Distinguish aggregating
+   boundary files to the child (each invocation still reads each region at
+   most once, with the step 4 fallback). If still unverifiable, mark the
+   relationship `unconfirmed`
+   and report the parent result as partial. In the parent final answer,
+   preserve one `confirmed: <path> — <fact>` item per corroborated fact;
+   keep unconfirmed links explicit rather than dropping evidence labels
+   when summarizing. Distinguish aggregating
    independent facts from questions that require comparing bodies across
    batches. partial never counts as a correct-answer success.
 
-4. **Child contract.** The child reads each specified path at most once
-   (<=3 Reads total), does not explore related files, does not Grep/Glob/
-   resume, and answers only the question. If the specified paths are
+4. **Child contract.** The child reads each specified region at most
+   once — one Read per path normally, and when the Read tool refuses a
+   whole file on its own token cap, consecutive non-overlapping ranges
+   derived from the line count the parent passed. It never re-reads a
+   range, does not explore related files, does not Grep/Glob/resume, and
+   answers only the question. If the specified paths are
    insufficient it reports the shortage; deciding which paths to add is a
    separate parent task, not an auto-exploration loop.
 
@@ -94,9 +122,21 @@ Examples:
 - auto: first attempt haiku. Escalate to sonnet at most once, and only for:
   missing required evidence, a response-contract violation, or a failed
   post-generation verification. Never escalate on confidence alone.
-- Escalation retry carries the original question, the same explicit paths,
-  and a short note on what was missing. It does not carry the haiku
-  transcript; the child re-reads the same files (both attempts are billed).
+- Before retrying, identify the specific unmet requirement. A path-backed
+  fact with the requested value is evidence; absence of a verbatim source
+  quotation is not missing evidence. A suggestive function name alone is
+  not grounds to distrust a retrieved fact or escalate.
+- Escalation retry carries the original question, the same explicit paths
+  and metadata, the response contract, and `retry_reason:` with one of
+  `missing required evidence`, `response contract violation`, or
+  `verification failed`, followed by the concrete missing fact or failed
+  condition. Do not request verbatim source as a remedy. It does not carry
+  the haiku transcript; the child re-reads the same files (both attempts are billed).
 - No escalation on: unspecified dependencies, Read/context limits, budget
   exhaustion, auth/permission errors, missing references, unsupported
   model. Report those as partial.
+- Shared cap: Agent invocations for one user question (both workers,
+  batches, boundary checks, retries) total at most 4. The cap also binds
+  after work has started: once it is reached, do not escalate and do not
+  start another batch — report partial plus the unfinished paths and
+  range. Do not bypass via another agent name or resume.

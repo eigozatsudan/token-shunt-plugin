@@ -62,21 +62,67 @@ class JudgeIntegrationTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertFalse(bad['checks']['edit_flow'])
 
-    def test_actual_writer_case_requires_parent_execution_and_honest_report(self):
-        spec = self.case('writer-verification-levels')
-        agent = tool('a', 'Agent', {'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
-                                   'prompt': 'generate the requested artifacts'}, 'status: complete')
-        artifacts = spec['expect']['delegate']['verification_artifacts']
-        report = '\n'.join(Path(c['path']).name + ': verification: ' + c['level'] + '; status: partial'
-                           for c in artifacts)
-        final = [{'type': 'result', 'result': report}]
+    WRITER_AGENT = {'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
+                    'prompt': 'generate the requested artifacts'}
+
+    def _writer_status(self, artifact):
+        # Acceptance conditions actually checked -> requirements + complete.
+        return 'complete' if artifact['level'] == 'requirements' else 'partial'
+
+    def _writer_report(self, artifacts, overrides=None):
+        overrides = overrides or {}
+        lines = []
+        for c in artifacts:
+            name = Path(c['path']).name
+            level, status = overrides.get(name, (c['level'], self._writer_status(c)))
+            lines.append('%s: verification: %s; status: %s' % (name, level, status))
+        return '\n'.join(lines)
+
+    def _writer_commands(self, artifacts):
         commands = []
         for i, c in enumerate(artifacts):
             command = 'python3 %s --verify %s %s' % (c['checker'], c['level'], c['path'])
             if c.get('expected_lines'):
                 command += ' --expected-lines ' + str(c['expected_lines'])
+            for key in c.get('require_keys') or []:
+                command += ' --require-key ' + key
             evidence = {'path': c['path'], 'verification': c['level'], 'ok': c.get('ok', True)}
-            commands += tool('v' + str(i), 'Bash', {'command': command}, json.dumps(evidence), not evidence['ok'])
+            commands += tool('v' + str(i), 'Bash', {'command': command},
+                             json.dumps(evidence), not evidence['ok'])
+        return commands
+
+    def test_requirements_positive_and_false_rejection_and_false_completion(self):
+        spec = self.case('writer-verification-levels')
+        artifacts = spec['expect']['delegate']['verification_artifacts']
+        req = [c for c in artifacts if c['level'] == 'requirements']
+        self.assertTrue(req, 'case must carry a requirements positive example')
+        self.assertTrue(all(c.get('require_keys') for c in req))
+        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete')
+        commands = self._writer_commands(artifacts)
+        name = Path(req[0]['path']).name
+        # GREEN: acceptance keys checked -> requirements + complete is accepted.
+        good, ok = self.run_judge(
+            agent + commands + [{'type': 'result', 'result': self._writer_report(artifacts)}], spec)
+        self.assertTrue(ok, good['reasons'])
+        # RED (false rejection): the same successful check reported as syntax.
+        under = self._writer_report(artifacts, {name: ('syntax', 'partial')})
+        bad, ok = self.run_judge(agent + commands + [{'type': 'result', 'result': under}], spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['verification_control'])
+        # RED (false completion): requirements claimed without running that check.
+        without = self._writer_commands([c for c in artifacts if c['level'] != 'requirements'])
+        bad, ok = self.run_judge(
+            agent + without + [{'type': 'result', 'result': self._writer_report(artifacts)}], spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['verification_execution'])
+
+    def test_actual_writer_case_requires_parent_execution_and_honest_report(self):
+        spec = self.case('writer-verification-levels')
+        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete')
+        artifacts = spec['expect']['delegate']['verification_artifacts']
+        report = self._writer_report(artifacts)
+        final = [{'type': 'result', 'result': report}]
+        commands = self._writer_commands(artifacts)
         good, ok = self.run_judge(agent + commands + final, spec)
         self.assertTrue(ok, good['reasons'])
         bad, ok = self.run_judge(agent + final, spec)
@@ -86,6 +132,83 @@ class JudgeIntegrationTests(unittest.TestCase):
         bad, ok = self.run_judge(agent + commands + inflated, spec)
         self.assertFalse(ok)
         self.assertFalse(bad['checks']['verification_level'])
+
+    def _ambiguous_fixture(self, spec):
+        path = spec['expect']['direct']['fixture_unchanged']['path']
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        body = ['# module header'] + ['PADA%03d = %d' % (i, i) for i in range(9, 60)]
+        for cls in ('AlphaView', 'BetaView', 'GammaView'):
+            body += ['', 'class %s:' % cls, '    def render_header(self):',
+                     "        HDR_MODE = 'off'", '        return HDR_MODE']
+        Path(path).write_text('\n'.join(body) + '\n')
+        return path
+
+    def test_ambiguous_grep_control_expects_no_edit(self):
+        spec = self.case('auto-edit-grep-ambiguous')
+        path = self._ambiguous_fixture(spec)
+        grep = tool('g', 'Grep', {'path': path, 'pattern': "HDR_MODE = 'off'"},
+                    "53:        HDR_MODE = 'off'\n58:        HDR_MODE = 'off'\n63:        HDR_MODE = 'off'")
+        report = [{'type': 'result', 'result':
+                   'render_header is defined three times with identical bodies; the target is '
+                   'ambiguous, so I made no edit. Tell me which class to change.'}]
+        good, ok = self.run_judge(grep + report, spec, 'direct')
+        self.assertTrue(ok, good['reasons'])
+        self.assertTrue(good['checks']['fixture_unchanged'])
+        self.assertTrue(good['checks']['agent_zero'])
+
+    def test_ambiguous_grep_control_fails_when_the_parent_edits(self):
+        spec = self.case('auto-edit-grep-ambiguous')
+        path = self._ambiguous_fixture(spec)
+        grep = tool('g', 'Grep', {'path': path, 'pattern': "HDR_MODE = 'off'"},
+                    "53:        HDR_MODE = 'off'")
+        edit = tool('e', 'Edit', {'file_path': path, 'old_string': "HDR_MODE = 'off'",
+                                  'new_string': "HDR_MODE = 'on'"}, 'updated')
+        report = [{'type': 'result', 'result': 'Edited the ambiguous marker anyway.'}]
+        # The judge must fail on the transcript alone...
+        bad, ok = self.run_judge(grep + edit + report, spec, 'direct')
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['no_parent_edit'])
+        # ...and on the bytes the edit would leave behind.
+        Path(path).write_text(Path(path).read_text().replace("HDR_MODE = 'off'",
+                                                             "HDR_MODE = 'on'", 1))
+        bad, ok = self.run_judge(grep + report, spec, 'direct')
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['fixture_unchanged'])
+
+    def test_ambiguous_control_is_separate_from_the_correct_edit_case(self):
+        cases = json.loads(Path(judge.__file__).with_name('cases.json').read_text())
+        ids = [c['id'] for c in cases['cases']]
+        self.assertIn('auto-edit-grep-location', ids)
+        self.assertIn('auto-edit-grep-ambiguous', ids)
+        amb = next(c for c in cases['cases'] if c['id'] == 'auto-edit-grep-ambiguous')
+        self.assertEqual(amb['suite'], 'B')
+        self.assertEqual(amb['modes'], ['direct', 'haiku', 'sonnet', 'auto'])
+        # Cost aggregation covers only the four delta cases (§26.5: outside cost totals).
+        self.assertNotIn('auto-edit-grep-ambiguous',
+                         ('auto-bulk-facts', 'auto-one-line', 'auto-explicit-multifile',
+                          'auto-large-writer'))
+
+    def test_writer_bounds_enforces_sixteen_unique_files(self):
+        spec = self.case('writer-bounds')
+        self.assertEqual(spec['expect']['delegate']['child_file_budget'], 16)
+
+        def events(n_files):
+            agent = tool('a', 'Agent', {
+                'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
+                'prompt': 'generate the artifact'}, 'wrote target; 12 lines')
+            reads = []
+            for i in range(n_files):
+                reads += child_read('a', 'r%d' % i, '/repo/file%02d.py' % i)
+            return agent[:1] + reads + agent[1:] + [{'type': 'result', 'result': 'done'}]
+
+        good, ok = self.run_judge(events(16), spec)
+        self.assertTrue(ok, good['reasons'])
+        self.assertTrue(good['checks']['child_file_budget'])
+        bad, ok = self.run_judge(events(17), spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['child_file_budget'])
+        # The pre-existing 20-call budget is untouched by the file ceiling.
+        self.assertTrue(bad['checks']['child_tool_budget'])
 
     def test_retry_reread_and_resume_through_judge(self):
         spec = {'id': 'retry-control', 'expect': {'delegate': {
@@ -202,3 +325,96 @@ class JudgeIntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def hook_response(name, output=''):
+    return {'type': 'system', 'subtype': 'hook_response',
+            'hook_name': name, 'hook_event': name.split(':')[0],
+            'output': output, 'stdout': '', 'stderr': '', 'exit_code': 0}
+
+
+TS_DENY = json.dumps({'hookSpecificOutput': {
+    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+    'permissionDecisionReason': 'File exceeds token-shunt thresholds '
+                                '(bytes=70000/65536). Use /token-shunt:bulk-reader.'}})
+OTHER_DENY = json.dumps({'hookSpecificOutput': {
+    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+    'permissionDecisionReason': 'blocked by some other plugin'}})
+
+
+class MatcherOnlyHookNameTests(unittest.TestCase):
+    """CLI 2.1.x reports only the matcher in hook_name, never the command path.
+
+    Attribution therefore comes from the isolation contract plus the payload
+    (design §13). These lock in that a delegate run is not failed for its own
+    hooks, while genuinely foreign responses still fail.
+    """
+
+    def events(self, names_and_outputs):
+        class T:
+            hook_events = [hook_response(n, o) for n, o in names_and_outputs]
+        return T()
+
+    def test_own_matcher_only_hooks_are_not_foreign_when_plugin_loaded(self):
+        tr = self.events([('SessionStart:startup', ''),
+                          ('PreToolUse:Read', TS_DENY),
+                          ('PreToolUse:Read', ''),
+                          ('PreToolUse:Bash', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True), [])
+
+    def test_same_hooks_are_foreign_in_direct_mode(self):
+        tr = self.events([('PreToolUse:Read', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=False), ['PreToolUse:Read'])
+
+    def test_other_event_scopes_are_foreign(self):
+        tr = self.events([('PostToolUse:Write', ''), ('UserPromptSubmit', '')])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True),
+                         ['PostToolUse:Write', 'UserPromptSubmit'])
+
+    def test_foreign_deny_on_our_matcher_is_detected(self):
+        tr = self.events([('PreToolUse:Read', OTHER_DENY)])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True),
+                         ['PreToolUse:Read(non-token-shunt output)'])
+
+    def test_legacy_command_path_hook_names_still_attributed(self):
+        tr = self.events([('PreToolUse:check-file-size', TS_DENY)])
+        self.assertEqual(judge.foreign_hooks(tr, plugin_loaded=True), [])
+
+    def test_deny_detected_from_matcher_only_name(self):
+        tr = self.events([('PreToolUse:Read', TS_DENY)])
+        denies = judge.ts_hook_denies(tr)
+        self.assertEqual(len(denies), 1)
+        self.assertIn('bulk-reader', denies[0]['reason'])
+
+    def test_foreign_deny_is_not_counted_as_token_shunt_deny(self):
+        tr = self.events([('PreToolUse:Read', OTHER_DENY)])
+        self.assertEqual(judge.ts_hook_denies(tr), [])
+
+
+class QuoteLeakContiguityTests(unittest.TestCase):
+    """A run of fixture lines is a leak only when the reply actually contains
+    that contiguous block (compare-edit-dense-lines false positive, 2026-09-13)."""
+
+    DENSE = "a\n" * 21
+
+    def test_single_character_reply_is_not_21_quoted_lines(self):
+        self.assertEqual((False, ""), judge.quote_leak("a", ["f"], {"f": self.DENSE}))
+
+    def test_short_summary_over_dense_fixture_passes(self):
+        summary = "confirmed: f — mark_one: 7 (near line 12); status: complete"
+        self.assertEqual((False, ""), judge.quote_leak(summary, ["f"], {"f": self.DENSE}))
+
+    def test_real_contiguous_block_is_still_a_leak(self):
+        leaked, why = judge.quote_leak("here it is:\n" + self.DENSE, ["f"], {"f": self.DENSE})
+        self.assertTrue(leaked)
+        self.assertIn("consecutive fixture lines", why)
+
+    def test_distinct_lines_scattered_through_the_reply_are_not_a_leak(self):
+        body = "".join("line%d\n" % i for i in range(30))
+        scattered = " ... ".join("line%d" % i for i in range(30))
+        self.assertEqual((False, ""), judge.quote_leak(scattered, ["f"], {"f": body}))
+        self.assertTrue(judge.quote_leak(body, ["f"], {"f": body})[0])
+
+    def test_crlf_reply_matches_lf_fixture(self):
+        body = "".join("line%d\n" % i for i in range(30))
+        self.assertTrue(judge.quote_leak(body.replace("\n", "\r\n"), ["f"], {"f": body})[0])

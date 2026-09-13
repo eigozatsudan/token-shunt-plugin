@@ -21,6 +21,12 @@ BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
 TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq")
 # CLI-internal bootstrap hook that fires in every session; not a settings hook.
 BUILTIN_HOOKS = {"SessionStart:startup"}
+# This CLI reports only the matcher in `hook_name` ("PreToolUse:Read"), never
+# the command path, so token-shunt's own hooks cannot be recognised by name
+# (design §13). Foreign hooks are identified by the isolation contract instead:
+# a delegate run loads token-shunt and nothing else, so these are the only
+# hook responses it may produce. See `foreign_hooks` for the residual gap.
+TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
@@ -512,19 +518,42 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
                 chunk = body[off:off + 2048]
                 if chunk and chunk in agent_result_text:
                     return True, f"2KiB contiguous quote from {fp}"
-        run = 0
-        for l in body.splitlines():
-            if l.strip() and l in agent_result_text:
-                run += 1
-                if run > 20:
-                    return True, f">20 consecutive fixture lines from {fp}"
-            else:
-                run = 0
+        # A run of fixture lines counts only if those lines appear as one
+        # contiguous block in the reply. Testing each line independently
+        # mistakes a reply's single "a" for 21 quoted lines of a dense
+        # fixture (observed on compare-edit-dense-lines, 2026-09-13).
+        lines = body.splitlines()
+        haystack = agent_result_text.replace("\r\n", "\n")
+        present = [bool(l.strip()) and l in haystack for l in lines]
+        start = None
+        for i in range(len(lines) + 1):
+            if i < len(lines) and present[i]:
+                if start is None:
+                    start = i
+                continue
+            if start is not None:
+                if i - start > 20:
+                    block = "\n".join(lines[start:i])
+                    if block in haystack:
+                        return True, f">20 consecutive fixture lines from {fp}"
+                start = None
     return False, ""
 
 
-def foreign_hooks(tr):
-    """Non-token-shunt command hooks observed in the stream."""
+def foreign_hooks(tr, plugin_loaded=True):
+    """Command hooks that cannot be attributed to token-shunt (design §13).
+
+    `hook_name` carries only the matcher on this CLI, so attribution is by the
+    isolation contract: a direct run loads no plugin and must produce no
+    PreToolUse hook response at all; a delegate run loads only token-shunt and
+    may therefore produce only its two PreToolUse matchers. Any response whose
+    payload is non-empty but never names token-shunt is foreign even on those
+    matchers, which catches a foreign deny.
+
+    Residual gap (§15): a foreign *passing* hook registered on the same
+    PreToolUse:Read/Bash matcher emits an empty payload and is indistinguishable
+    from token-shunt's pass on this CLI.
+    """
     bad = []
     for e in tr.hook_events:
         if e.get("subtype") != "hook_response":
@@ -532,30 +561,53 @@ def foreign_hooks(tr):
         name = e.get("hook_name") or ""
         if name in BUILTIN_HOOKS:
             continue
+        # Older CLIs did report the command path; keep honouring it.
         if any(h in name for h in TS_HOOKS):
             continue
-        bad.append(name)
+        if not plugin_loaded or name not in TS_HOOK_NAMES:
+            bad.append(name)
+            continue
+        payload = "%s%s" % (e.get("output") or "", e.get("stdout") or "")
+        if payload.strip() and "token-shunt" not in payload:
+            bad.append("%s(non-token-shunt output)" % name)
     return bad
+
+
+def ts_deny_payload(e):
+    """hookSpecificOutput of a deny attributable to token-shunt, else None.
+
+    A deny carries its origin in the reason text, so attribution does not
+    depend on `hook_name` (which is matcher-only on this CLI). The hook name
+    must still be one token-shunt registers, whichever form the CLI reports.
+    """
+    if e.get("subtype") != "hook_response":
+        return None
+    name = e.get("hook_name") or ""
+    if not (any(h in name for h in TS_HOOKS) or name in TS_HOOK_NAMES):
+        return None
+    out_s = e.get("output") or e.get("stdout") or ""
+    try:
+        j = json.loads(out_s) if isinstance(out_s, str) else out_s
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(j, dict):
+        return None
+    hso = j.get("hookSpecificOutput", {})
+    if hso.get("permissionDecision") != "deny":
+        return None
+    if "token-shunt" not in hso.get("permissionDecisionReason", ""):
+        return None
+    return hso
 
 
 def ts_hook_denies(tr):
     """token-shunt deny responses, in order."""
     out = []
     for e in tr.hook_events:
-        if e.get("subtype") != "hook_response":
-            continue
-        name = e.get("hook_name") or ""
-        if not any(h in name for h in TS_HOOKS):
-            continue
-        out_s = e.get("output") or e.get("stdout") or ""
-        try:
-            j = json.loads(out_s) if isinstance(out_s, str) else out_s
-        except (json.JSONDecodeError, TypeError):
-            j = None
-        if isinstance(j, dict):
-            hso = j.get("hookSpecificOutput", {})
-            if hso.get("permissionDecision") == "deny":
-                out.append({"hook": name, "reason": hso.get("permissionDecisionReason", "")})
+        hso = ts_deny_payload(e)
+        if hso is not None:
+            out.append({"hook": e.get("hook_name") or "",
+                        "reason": hso.get("permissionDecisionReason", "")})
     return out
 
 
@@ -623,8 +675,9 @@ def judge(transcript_path, spec, ctx):
         else:
             passed("plugin_absent")
 
-    # foreign command hooks (PreToolUse scope + any non-builtin response)
-    fh = foreign_hooks(tr)
+    # foreign command hooks. Direct runs load no plugin, so any PreToolUse
+    # hook response there is foreign; delegate runs may only show token-shunt's.
+    fh = foreign_hooks(tr, plugin_loaded=want_plugin)
     if fh:
         fail("foreign_hooks", ",".join(fh))
     else:
@@ -694,6 +747,24 @@ def judge(transcript_path, spec, ctx):
                 fail("child_tool_budget", "child of Agent %s used %d Read/Grep/Glob > %d"
                      % (u["id"], n, ctb))
         v["checks"].setdefault("child_tool_budget", True)
+
+    # unique files a child touched with Read/Grep/Glob (§26.3: at most 16)
+    cfb = exp.get("child_file_budget")
+    if cfb is not None:
+        for u in parent_agents:
+            files = set()
+            for c in tr.child_tool_uses(u["id"]):
+                if c["name"] not in ("Read", "Grep", "Glob"):
+                    continue
+                for k in ("file_path", "path", "notebook_path"):
+                    val = c["input"].get(k)
+                    if isinstance(val, str) and val:
+                        files.add(norm_path(val))
+            if len(files) > cfb:
+                fail("child_file_budget",
+                     "child of Agent %s touched %d unique files > %d"
+                     % (u["id"], len(files), cfb))
+        v["checks"].setdefault("child_file_budget", True)
 
     # --- child read contract ---
     sip = exp.get("single_invocation_paths")
@@ -807,18 +878,9 @@ def judge(transcript_path, spec, ctx):
                                 read_pos = i
             if deny_pos is None and e.get("type") == "system" \
                     and e.get("subtype") == "hook_response":
-                name = e.get("hook_name") or ""
-                if any(h in name for h in TS_HOOKS):
-                    out_s = e.get("output") or e.get("stdout") or ""
-                    try:
-                        j = json.loads(out_s) if isinstance(out_s, str) else out_s
-                    except (json.JSONDecodeError, TypeError):
-                        j = None
-                    hso = (j or {}).get("hookSpecificOutput", {})
-                    if hso.get("permissionDecision") == "deny" \
-                            and "token-shunt" in hso.get("permissionDecisionReason", "") \
-                            and "bulk-reader" in hso.get("permissionDecisionReason", ""):
-                        deny_pos = i
+                hso = ts_deny_payload(e) or {}
+                if "bulk-reader" in hso.get("permissionDecisionReason", ""):
+                    deny_pos = i
             if agent_pos is None and e.get("type") == "assistant" \
                     and e.get("parent_tool_use_id") is None:
                 for b in e.get("message", {}).get("content", []) or []:
@@ -916,6 +978,34 @@ def judge(transcript_path, spec, ctx):
             fail("edit_flow", error)
         if not errors:
             passed("edit_flow")
+
+    # Control cases that must not edit: the fixture on disk stays as generated.
+    fu = exp.get("fixture_unchanged")
+    if fu:
+        fpath = resolve_fixture_path(fu["path"], spec)
+        try:
+            with open(fpath, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError as exc:
+            fail("fixture_unchanged", "unreadable fixture %s: %s" % (fu["path"], exc))
+            body = None
+        if body is not None:
+            bad = False
+            for needle, want in (fu.get("occurrences") or {}).items():
+                got = body.count(needle)
+                if got != int(want):
+                    bad = True
+                    fail("fixture_unchanged",
+                         "%s: %r occurs %d times, want %d" % (fu["path"], needle, got, want))
+            for needle in fu.get("absent") or []:
+                if needle in body:
+                    bad = True
+                    fail("fixture_unchanged", "%s: %r appeared" % (fu["path"], needle))
+            if fu.get("bytes") is not None and len(body.encode("utf-8")) != int(fu["bytes"]):
+                bad = True
+                fail("fixture_unchanged", "%s: byte length changed" % fu["path"])
+            if not bad:
+                passed("fixture_unchanged")
 
     # parent must have run a Bash command containing all needles, succeeded
     pb = exp.get("parent_bash")
@@ -1275,6 +1365,60 @@ def selftest():
         token_evs({"input_tokens": 0, "cache_read_input_tokens": 0,
                    "cache_creation_input_tokens": 0, "output_tokens": 0}),
         tok_spec, "direct", True)
+
+    # --- §13 skills/agents RED vs GREEN: the child_no_body detector itself ---
+    # RED: a child with no "do not return the body" contract quotes the file.
+    # GREEN: the contracted child returns only a located summary.
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tf:
+        body = "".join("LINE%03d = %d  # %s\n" % (i, i, "c" * 60) for i in range(40))
+        body = "MARKER_NB = 'nb-7c1'\n" + body
+        tf.write(body)
+        nb_path = tf.name
+    try:
+        def nb_evs(child_text, subagent):
+            return [
+                ev_init(),
+                ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
+                                "input": {"subagent_type": subagent,
+                                          "prompt": nb_path}}]),
+                ev_tool_result("a1", child_text),
+                ev_result("MARKER_NB = 'nb-7c1'", usage=usage_ok),
+            ]
+
+        def nb_spec(agent_type=None, fixtures=True):
+            exp = {"child_no_body": True}
+            if agent_type:
+                exp["agent_type"] = agent_type
+            spec = {"id": "selftest-child-no-body", "expect": {"delegate": exp}}
+            if fixtures:
+                spec["fixtures"] = [os.path.basename(nb_path)]
+                spec["fixtures_abs"] = [nb_path]
+            return spec
+
+        fenced = "Here is the file:\n```python\n" + body + "```\n"
+        run("child_no_body-RED-no-contract-child-quotes-body",
+            nb_evs(fenced, "general-purpose"), nb_spec(), "delegate", False,
+            require_reason="child_no_body")
+
+        # Same leak without a fence: >20 consecutive fixture lines still fails.
+        run("child_no_body-RED-no-contract-child-unfenced-body",
+            nb_evs(body, "general-purpose"), nb_spec(), "delegate", False,
+            require_reason="child_no_body")
+
+        # No fixture to compare against: a long generated body still fails.
+        generated = "\n".join("print(%d)" % i for i in range(25))
+        run("child_no_body-RED-no-contract-child-generated-body",
+            nb_evs(generated, "general-purpose"), nb_spec(fixtures=False),
+            "delegate", False, require_reason="child_no_body")
+
+        # GREEN: contracted child, same fixture, summary only.
+        summary = ("confirmed: MARKER_NB = 'nb-7c1' — path: %s line 1\n"
+                   "41 lines; no body returned. status: complete" % nb_path)
+        run("child_no_body-GREEN-contracted-child-summary",
+            nb_evs(summary, "token-shunt:bulk-reader"),
+            nb_spec("token-shunt:bulk-reader"), "delegate", True)
+    finally:
+        os.unlink(nb_path)
 
     if errors:
         for e in errors:

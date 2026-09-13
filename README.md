@@ -1,182 +1,199 @@
 # token-shunt
 
-Claude Code plugin that keeps large-file contents and boilerplate output out of
-the parent context. PreToolUse hooks deny oversized `Read` / `Bash` reads and
-point the parent at the `bulk-reader` / `code-writer` named subagents, which
-return short summaries instead of file bodies.
+大きなファイルの本文や定型コードの生成結果を、親エージェントのコンテキストに持ち込まないための Claude Code プラグインです。
 
-Shipping: keeps large bodies out of the parent; **cost reduction is unproven**.
-Cost claims only if §26.5 measurements are not worse than direct. Isolation
-pass and cost regression are not separate product editions.
+`PreToolUse` フックがサイズの大きい `Read` と一部の `Bash` 読み取りを拒否し、`bulk-reader` スキルの利用を案内します。スキルは専用サブエージェントに読み取りやコード生成を委譲し、親には短い要約を返します。フックが自動でサブエージェントを起動するわけではありません。
 
-Design: `docs/2026-09-12-token-shunt-design.md` (approved 2026-09-13).
+現在のバージョンは **0.1.0（開発中）** です。フック、スキル、専用エージェント、配布用ZIPの作成、ローカル評価・実機比較評価の仕組みを実装しています。**トークン・料金の削減効果は未確認**です。本文のバイト数削減とトークン削減を区別し、リリース可否は比較評価の結果で判断します。
 
-Status: **v0.1 under development.** Hooks, manifests, packaging, and hook evals
-(PR1) plus the `bulk-reader` / `code-writer` skills + named agents and the
-real-machine compare-eval machinery (PR2) are in tree. Compare evals skip if
-`claude` is missing; they fail on plugin load failure, direct-mode
-contamination, or foreign hooks. The plugin is not release-ready until those
-runs pass. Token savings are unconfirmed. Do not call body-byte cuts "token
-savings."
+設計の背景と受け入れ条件は[設計書](docs/2026-09-12-token-shunt-design.md)を参照してください。
 
-## Requirements
+## 動作要件
 
-- Claude Code (a version that puts `agent_type` on the PreToolUse hook stdin)
-- `jq` on `PATH` — required. If missing, SessionStart warns once and both
-  PreToolUse hooks fail-closed (exit 2) on every `Read` and `Bash`.
+- Claude Code：`PreToolUse` の入力JSONのトップレベルに `agent_type` を渡す環境が必要です。最低バージョンはマニフェストで固定していません。
+- Bash 4以降と `stat`、`head`、`tail`、`awk` などのUnixコマンド。
+- `PATH` 上の `jq`。未導入の場合、`SessionStart` で案内し、両方の読み取りフックは終了コード2で処理を止めます。不正な入力JSONも終了コード2になります。
+- 評価には Python 3、実機比較評価・診断には `timeout` と、認証済みで対象モデルを利用できる `claude` が必要です。
+- ZIPの作成には `zip` または Python 3、作成後の検証には Python 3 または `zipinfo` が必要です。
 
-## Install
+## 導入
+
+### 起動時に自動で読み込む
+
+継続利用する場合は、リポジトリを永続的な場所に置き、そのルートから一度だけ実行します。
 
 ```bash
-# from source
-claude --plugin-dir plugin/
-
-# packaged zip (see docs/distribution/README.md)
-scripts/build-zip.sh        # -> token-shunt.zip
-claude --plugin-dir ./token-shunt.zip
-
-# or add the repo-root marketplace (`owner.name` required), then install
-# token-shunt from it. Zip hooks must carry Unix exec bits
-# (`scripts/build-zip.sh` sets them).
+claude plugin marketplace add .
+claude plugin install token-shunt@token-shunt --scope user
 ```
 
-Do not enable alongside Spotify `shunt@portal` (their deny would kill worker
-reads; multiple PreToolUse denies merge as deny).
+以後は通常の `claude` 起動で読み込まれます。起動中の場合は再起動してください。`--scope user` は同じユーザーの全プロジェクトで使う設定です。登録するのは `.claude-plugin/marketplace.json` があるリポジトリのルートで、`plugin/` やZIPの展開先ではありません。[公式のインストール手順](https://code.claude.com/docs/en/discover-plugins)
 
-## What the hooks do
+インストールしたプラグインはClaude側のキャッシュにコピーされます。登録元のリポジトリは更新用に残してください。[配布・キャッシュの仕様](https://code.claude.com/docs/en/plugin-marketplaces)
 
-- `check-file-size` (Read): files over `TOKEN_SHUNT_MIN_LINES` (default 350)
-  **or** `TOKEN_SHUNT_MIN_BYTES` (default 65536) are denied unless the request
-  is a targeted `offset`/`limit` read whose actual byte/line range fits.
-  `limit=1` gets no exception: a single line over `MIN_BYTES` is denied.
-  Symbolic links are measured using the target file's size (also for Bash).
-  Image / PDF / `.ipynb` paths pass (the official Read tool handles them via
-  visual/page/cell paths, not raw text). Non-regular paths pass.
-- `check-bash-read` (Bash): `cat`/`head`/`tail`/`less`/`more` on oversized
-  files are denied. Quote-aware: `|` inside quotes is not a pipe. Pipes are
-  judged by the last command (narrowing filters pass; `| head/tail` passes only
-  for interpretable `-c N` with `N <= MIN_BYTES`; `| cat`/`tee`/`less`/`more`
-  fall through to the first command). Compound commands (`;`/`&&`/`||`/newline/
-  `&`) check every segment's explicit files at full thresholds. A plain
-  `>`/`>>` stdout redirect on a single command passes.
-  Leading literal `cd <dir>` / `cd -- <dir>` chains separated by `&&`, `;`,
-  or newlines resolve subsequent file arguments from the destination.
-- Passing a hook emits **no** `permissionDecision` — it never bypasses the
-  normal permission flow or other hooks.
-- `token-shunt:bulk-reader` (Read + Bash) and `token-shunt:code-writer`
-  (Read only) `agent_type` values bypass the size gate so workers can read
-  large files; permission checks are unchanged. `agent_type` is read only
-  from the harness-set top-level field — `tool_input.agent_type` is
-  model-controlled and ignored.
+### 一時的に読み込む
 
-## Skills
+以下はリポジトリのルートから実行します。
 
-- `/token-shunt:bulk-reader --worker-model auto|haiku|sonnet <paths...> --question "..."`
-  delegates bounded reads (max 3 explicit paths per invocation, each read
-  once; child answers within a 4000-char cap, `confirmed:`/`inferred:`/
-  `unconfirmed:` + `status`/`stop_reason`). 4+ paths follow the inter-batch
-  evidence contract: integrate only corroborated facts; do not guess
-  unconfirmed relations.
-- `/token-shunt:code-writer --worker-model auto|haiku|sonnet --reference <ref> --target <t> --verify "<cmd>" --spec "..."`
-  delegates boilerplate generation; the parent runs the verify command and
-  reports `verification: minimal|syntax|requirements`. `minimal` / `syntax`
-  means generated but content-unverified — report `partial` plus remaining
-  checks. Complete only when requirements are confirmed. Unknown
-  `--worker-model` values are rejected before any worker starts.
-- Model selection and small-task policy are SKILL.md conventions, not hook
-  enforcement. Evals observe compliance; they do not defend every live call.
-- Small-task: explicit files or known needed ranges totaling <=16KiB, with
-  each Read passing the hook, stay in the parent. A few known lines on a
-  large file (still under 16KiB) use parent targeted Read. Mid-band: over
-  16KiB but under hook thresholds (e.g. 200 lines / 20KiB) is skill-judged
-  delegation; isolation is best-effort. Generation under ~50 lines with
-  <=16KiB references stays in the parent.
-- auto starts Haiku and uses Sonnet only when needed. No guarantee of
-  subscription-fee reduction or a 90% bill cut.
+```bash
+# ソースのプラグインを読み込む
+claude --plugin-dir ./plugin
 
-## Environment
+# 配布用ZIPを作成する
+scripts/build-zip.sh
+```
 
-| var | default | meaning |
+ZIPの展開方法と構成は[配布用README](docs/distribution/README.md)を参照してください。リポジトリのルートには `.claude-plugin/marketplace.json` もあり、ローカルマーケットプレイスの登録元として使えます。プラグインの参照先は `./plugin` です。
+
+`--plugin-dir` で指定したディレクトリは、セッション中に削除しないでください。`Read` / `Bash` の実行時にも、その中のフックスクリプトを参照します。参照しているセッションをすべて終了した後なら削除できますが、次回の起動には再配置が必要です。
+
+Spotify の `shunt@portal` とは併用しないでください。他のフックがワーカーの読み取りを拒否すると、本プラグイン側のサイズ制限を通過しても読み取れません。
+
+### Claudeデスクトップで使う
+
+**Codeタブのローカルセッション**はプラグインに対応しています。同じマシン・同じユーザー設定を使うCLIで上記のユーザースコープへのインストールを行った場合は、デスクトップを再起動し、新しいローカルセッションの入力欄で **「＋」→「Plugins」** を開いて `token-shunt` が表示・有効化されているか確認してください。[公式のデスクトップ手順](https://code.claude.com/docs/en/desktop#install-plugins)
+
+Chat / Coworkへの反映はこのCLIインストール手順の対象外です。特にCoworkはCLIの `~/.claude` ではなく、アカウントに同期されるCustomize設定を使います。別PCやコンテナ内のCLIへのインストールも、デスクトップ側には自動で反映されません。[デスクトップの設定と拡張](https://code.claude.com/docs/en/desktop#extend-claude-code)
+
+token-shunt自体のデスクトップ実機検証は未実施です。プラグインの表示に加えて、実行環境でBash・`jq` が利用できることと、フック入力のトップレベルに `agent_type` が渡されることを確認する必要があります。
+
+## 使い方
+
+### 大きなファイルの調査
+
+```text
+/token-shunt:bulk-reader --worker-model auto /abs/a.rb /abs/b.rb --question "設定値と定義元を確認"
+```
+
+`--worker-model` は `auto`（既定）、`haiku`、`sonnet` を指定できます。未対応の値はワーカーを起動する前に拒否するルールです。
+
+- 1回の委譲で明示的に指定するパスは最大3件です。ワーカーは各領域を1回だけ読み（通常は1ファイル1回、`Read` ツール自身が全文読取を拒否したときだけ、親が渡した行数で連続・非重複に分割）、関連ファイルの探索や `Grep` / `Glob` は行いません。
+- ワーカーの設定は `tools: Read`、`maxTurns: 6`、`effort: low` です。返答は `confirmed:`、`inferred:`、`unconfirmed:`、`status`、`stop_reason` を含めて最大4,000文字とし、本文や長い引用を返さないルールです。
+- ファイル間の関係を調べる場合は、関係するパスを同じ委譲に含めます。4件以上は最大3件ずつに分け、根拠を照合できる事実だけを統合します。不明な関係を推測で確定しません。
+- 境界ファイルの追加確認は質問ごとに最大1回です。再試行を含む委譲の合計上限は後述の4回です。開始前に上限を超えると分かる場合は、対象を絞ります。
+- 追加質問は同じパスを渡した新しい呼び出しで処理します。回答の再利用索引や `resume` は使わず、再読み取りも使用量に含めます。
+
+### 定型コードの生成
+
+```text
+/token-shunt:code-writer --worker-model haiku --reference /abs/greeter.py --target /abs/greeter_test.py --verify "python -m unittest /abs/greeter_test.py" --spec "参照に沿ったテストを生成"
+```
+
+参照ファイルから大部分を予測できるテスト、設定、型スタブなどが対象です。新しいロジックの設計、デバッグ、安全性が重要なコードの生成には使いません。
+
+- ワーカーの設定は `tools: Read, Write, Grep, Glob`、`maxTurns: 12`、`effort: low` です。書き込み先は指定したターゲットに限定し、既存ファイルは先に読みます。内容確認は最大16ファイル、`Read` / `Grep` / `Glob` の合計20回までです。
+- 返答は出力パス、行数、3〜5項目の要約、`status`、`stop_reason` を含めて最大800文字とし、生成コードを載せません。
+- 親が検証コマンドを実行します。検証コマンドが未指定の場合は拡張子に応じた構文確認または最小限の確認を使います。
+- `verification: minimal` は空ファイルなどの粗い不備の確認、`syntax` は構文確認です。どちらも内容の正しさは未確認なので、結果は `partial` として残りの確認事項を報告します。受け入れ条件を確認できた場合のみ `requirements` として完了を報告します。
+- 同じターゲットへの書き込みは直列で行います。親の `Write` を止めるフックはありません。
+
+### 小さい作業とモデル選択
+
+これらはスキル・エージェントへの指示であり、フックが機械的に強制する制限ではありません。
+
+- 指定ファイルまたは必要と分かっている範囲の合計が **16,384バイト以下**で、それぞれの `Read` がフックを通過する場合、親が直接読みます。大きなファイルでも、既知の短い範囲なら範囲指定の `Read` を使います。
+- 必要量が16KiBを超える場合は、フックのしきい値以下でもスキルが委譲を判断します。ファイル数だけでは判断しません。サイズの確認に本文を読み込まず、メタデータを使います。
+- 生成結果が50行未満、参照の合計が16KiB以下、必要な `Read` がすべて通る場合は、親が生成・検証します。
+- `auto` は Haiku で開始し、必要な根拠の不足、返答ルール違反、生成後の検証失敗がある場合に限り、最大1回 Sonnet へ切り替えます。権限・認証エラー、未指定の依存先、読み取りや予算の制限では切り替えません。
+- 1つの質問での委譲は、両ワーカー、バッチ、境界確認、再試行を合わせて **最大4回**です。
+
+## フックの動作
+
+### Read：`check-file-size`
+
+ファイル全体が行数・バイト数のどちらかのしきい値を超える場合、通常の読み取りを拒否します。既定値は **350行、65,536バイト**で、ちょうどしきい値の値は超過に含めません。
+
+`limit` を指定した読み取りは、実際の対象範囲が両しきい値と走査予算に収まれば通過できます。`offset` の省略時は1行目からです。`offset` だけでは範囲指定の例外になりません。1行だけでもバイト数のしきい値を超えれば拒否します。
+
+シンボリックリンクはリンク先のサイズで判定します。通常ファイル以外と、実装で列挙した画像拡張子、`.pdf`、`.ipynb` はサイズ判定の対象外です。
+
+### Bash：`check-bash-read`
+
+シェル全体を解釈するのではなく、対応するコマンドと明示的な入力ファイルを検査します。
+
+| コマンドの形 | 判定 |
+|---|---|
+| 単独の `cat` / `less` / `more` | 入力ファイル全体をしきい値で判定 |
+| 単独の `head` / `tail` | 解釈できる行数指定は実際の範囲、バイト数指定は出力予定バイト数を判定。引数なしは10行。不明なオプションはファイル全体で判定 |
+| パイプ末尾の `head` / `tail` | 純粋な標準入力を読む、解釈可能な `-c N` で `N` がバイトしきい値以下の場合に通過 |
+| パイプ末尾の `cat` / `tee` / `less` / `more` | 各段の対応する読み取りコマンドの明示的入力をファイル全体で判定。`tee` の引数は出力先として扱う |
+| `;` / `&&` / `||` / 改行 / `&` でつないだ複合コマンド | 各区間の対応する読み取りコマンドの明示的入力をファイル全体で判定 |
+| 単独コマンドの `>` / `>>` | すべての標準出力の転送先が通常ファイル（新規を含む）または `/dev/null` なら、入力ファイルの判定を省略 |
+
+引用符とエスケープ内の `|` や `#` を文字として扱い、シェルコメントを行末まで除外します。標準出力・標準エラーへ戻るリダイレクト先、その他の特殊ファイル、未解決の展開は、判定省略の対象になりません。リンク先はファイルの同一性と、利用可能なら `readlink -f` による正規化パスで確認します。
+
+先頭のリテラルな `cd <dir>` / `cd -- <dir>` が `&&`、`;`、改行で続く場合は、移動先を基準に後続のファイル引数を解決します。
+
+### 通過時とワーカーの扱い
+
+通過時は `permissionDecision` を出力せず、通常の権限確認や他のフックの判定を維持します。サイズ超過などによる拒否時は `permissionDecision: deny` と理由を返します。
+
+実行環境が入力JSONのトップレベルに設定した `agent_type` が完全一致する場合だけ、次のサイズ判定を免除します。
+
+| `agent_type` | Read | Bash |
 |---|---|---|
-| `TOKEN_SHUNT_MIN_LINES` | 350 | line threshold |
-| `TOKEN_SHUNT_MIN_BYTES` | 65536 | byte threshold |
-| `TOKEN_SHUNT_SCAN_BUDGET_BYTES` | 8388608 | scan byte budget (incl. offset skip; bounded lookahead as below) |
-| `TOKEN_SHUNT_SCAN_BUDGET_MS` | 2000 | elapsed scan check; exceeded -> deny |
-| `TOKEN_SHUNT_HOOK_LOG` | unset | eval fallback only; appends 1-line JSON per decision. Not for production |
+| `token-shunt:bulk-reader` | 免除 | 免除（現在のエージェント定義ではBashを付与していません） |
+| `token-shunt:code-writer` | 免除 | 免除なし |
 
-Line scans bound input before parsing lines, so a huge single line cannot
-force the parser to buffer the whole file. Each forward scan supplies at most
-the byte budget plus one lookahead byte. Tail scans limit the suffix to the
-same size before selecting lines, plus a separate one-byte newline probe.
-These limits bound parser input; system utilities and the OS may read ahead
-internally. A prefix cut off before the requested range is complete is denied.
-The elapsed-time check runs after the bounded scan; it does not interrupt a
-blocked filesystem read.
+モデルが指定できる `tool_input.agent_type` は使いません。免除対象でも `jq` と有効な入力JSONは必要です。
 
-## Known limits (v0.1)
+## 環境変数
 
-- `@file` references, `Grep` content mode, `sed`/`python -c`, and PowerShell
-  are not gated. Nested/indirect invocations (`bash -c`, `xargs`, `dd if=`,
-  `$(cat ...)`) and pipes to unknown tail commands pass (intended fail-open).
-- Bash directory tracking is limited to leading literal `cd` chains. It does
-  not interpret `||`, background lists, grouping, expansions, `cd` options
-  other than `--`, or a `cd` after another command. Relative directory operands
-  that depend on a nonempty `CDPATH` are also outside this tracking scope.
-  Use explicit absolute file paths for reliable size checks in those cases.
-- Explore / Plan / general-purpose launches themselves are not blocked; their
-  large Reads are denied. Final-message quotes can still leak.
-- code-writer Write is not hook-enforced. Completion is the parent's
-  verification step.
-- A parent can still drain a file via repeated in-budget targeted Reads
-  (`limit=350` sliding); the hook does not correlate across calls. Sequential
-  `limit=350` remains a hook limit, not a recovery path. The compare evals
-  treat that as a path violation on the delegation side.
-- PreToolUse hook timeout is fail-open (official): on a very slow FS the 10s
-  hook timeout can fire before the scan budget, letting a large Read through.
-- Edits are guaranteed only through a targeted Read of the original that
-  passes the hook. `head`/`tail` are viewing-only; do not use Bash viewing as
-  the edit-path original. byte-span / dd+temp / unread-Edit fallbacks are
-  out of scope.
-- The child's final message is the only parent boundary. Fences or quotes in
-  the child reply become parent noise; there is no script fence-strip.
-- A single huge file is one worker; do not even-split by lines.
-- Compare-eval results are pending a working Claude login on this machine;
-  until they pass, nothing here is release-validated.
+| 変数 | 既定値 | 用途 |
+|---|---|---|
+| `TOKEN_SHUNT_MIN_LINES` | `350` | 読み取りの行数しきい値 |
+| `TOKEN_SHUNT_MIN_BYTES` | `65536` | 読み取りのバイト数しきい値 |
+| `TOKEN_SHUNT_SCAN_BUDGET_BYTES` | `8388608` | 走査のバイト予算。`offset` までの読み飛ばしも含む |
+| `TOKEN_SHUNT_SCAN_BUDGET_MS` | `2000` | 走査後に確認する経過時間の上限（ミリ秒） |
+| `TOKEN_SHUNT_HOOK_LOG` | 未設定 | 評価補助用。フック名・判定・理由を1行のJSONで追記 |
+| `TOKEN_SHUNT_CASE_TIMEOUT` | `600` | 実機比較評価での各CLI呼び出しの制限時間（秒） |
+| `SUITE` | 未設定 | 実機比較評価の対象スイートを絞る。例：`A` |
 
-The article's ~90% is *parent input-token* reduction on a different harness,
-not this plugin's parent+child cost. Effect is likeliest when the parent is
-Sonnet / Opus; a parent Haiku should expect isolation only. Parent input,
-child usage, and combined estimated USD are separate metrics.
+4つのしきい値・走査予算は非負整数を受け付け、負数や不正な値は既定値に戻します。
 
-## Evals
+巨大な1行を丸ごと行解析器へ渡さないように、前方走査は予算に先読み1バイトを加えた範囲に入力を制限します。末尾走査も同じ大きさの末尾部分に制限し、別途1バイトで改行を確認します。必要な範囲を走査しきれない場合は拒否します。これは解析器への入力上限であり、OSやコマンド内部の先読みまでは制限しません。
+
+時間は走査後に確認するため、停止したファイルシステムの読み取りを中断する仕組みではありません。`Read` / `Bash` フックのタイムアウト設定は10秒で、走査予算を絶対的な遮断保証とは扱えません。
+
+## 制限事項
+
+- `@file`、`Grep` の本文出力、`sed`、`python -c`、PowerShellなどは制限しません。大きいファイルでも `Grep` の本文出力だけで答えが出てしまう場合、フックは発火しません。スキル側は「本文検索より前にメタデータで経路を決める」契約にしていますが、これは強制ではありません。`bash -c`、`xargs`、`dd if=`、コマンド置換などの間接的な読み取りや、未対応のコマンドを末尾に持つパイプも網羅しません。
+- Bashのディレクトリ追跡は先頭の限定的な `cd` 連鎖のみです。条件分岐、バックグラウンド実行、グループ化、展開、`--` 以外の `cd` オプション、他のコマンドの後の `cd`、`CDPATH` に依存する相対移動などでは絶対パスを使ってください。
+- Explore / Plan / general-purpose の起動自体は止めません。これらの大きな `Read` はサイズ判定の対象です。
+- 呼び出しをまたぐ読み取り量は集計しません。小さな範囲の反復による全文読み取りをフック単体では防げません。スキルでは禁止し、比較評価でも委譲経路の違反として扱います。
+- 編集には、親が場所を確認し、元ファイルの対象範囲を `Read` で正常に読めることが必要です。子の行番号だけでは編集せず、`head` / `tail` の閲覧結果、バイト範囲の抜き出し、一時ファイルを使った代替も編集の根拠にしません。
+- 子の最終返答を機械的に切り詰めたり、コードブロックを除去したりする処理はありません。文字数や引用の制約はエージェントへの指示です。
+- 比較評価の判定器は、CLI 2.1.x の `hook_response` からフックのコマンド名を特定できません（`hook_name` はマッチャ名のみ）。他プラグインのフック混入は、隔離条件と「`token-shunt` を名乗らない拒否理由」で検出します。同じマッチャに載った外来の**通過**フックは出力が空なため区別できません。
+- 1つの巨大ファイルを行数で均等分割しません。関連ファイル探索や回答の再利用もv0.1の対象外です。
+- 親入力トークン、子の使用量、親子合計の推定USDは別々に評価します。月額料金や一定割合の料金削減は保証しません。
+
+## 評価と診断
 
 ```bash
-evals/run.sh             # hook evals + zip + marketplace schema; no Claude CLI needed
-evals/compare/run.sh     # real-machine compare evals; requires `claude` + auth
-evals/compare/run.sh <case-id>          # single case
-SUITE=A evals/compare/run.sh            # A suite only
-python3 -m unittest discover -s evals/compare -p 'test_*.py' # offline regression checks
+# フック、回帰チェック、ZIP構成・実行権限、マーケットプレイスの検証
+# Claude CLIなしでも実行可能。CLIがあれば plugin validate も実行
+evals/run.sh
+
+# 比較評価のオフライン回帰チェック
+python3 -m unittest discover -s evals/compare -p 'test_*.py'
+
+# 実機比較評価：認証済みのClaude CLIが必要
+evals/compare/run.sh
+evals/compare/run.sh <case-id>
+SUITE=A evals/compare/run.sh
+
+# インストール・モデル解決の診断（実機呼び出しを含む）
+scripts/doctor.sh
 ```
 
-Compare evals run each case twice: direct (no plugin) vs delegated
-(`--plugin-dir plugin/`). On this CLI, isolation uses `--setting-sources ""`
-plus a clean cwd — `--bare` keeps enabled marketplace plugins and skips
-plugin-agent registration, so it is not used (the spec's OAuth alternative,
-not a contradiction). `isolation_ok` compares UTF-8 bytes vs UTF-8 bytes.
-Skip if `claude` is missing. Fail on plugin load failure, direct-mode
-token-shunt contamination, or foreign hooks. Results and the required
-parent-token measurements (`parent_input_tokens` breakdown,
-`parent_output_tokens`) land in `evals/compare/last-run.json`.
-Each invocation keeps its manifest, verdicts, and transcripts in a fresh
-`evals/compare/tmp/runs/run.*` directory. Model-visible references and targets
-are restored before every mode; evidence stays outside that reset directory.
-The aggregate requires all planned results and comparison evidence. A selected
-case or suite can pass without being a complete release evaluation; check
-`release_eligible` separately from `selected_run_valid` in the aggregate.
-Parent input, child usage, and combined estimated USD are separate
-metrics; do not treat body-byte cuts as token savings.
+比較評価は [cases.json](evals/compare/cases.json) に指定されたモードを実行します。プラグインなしの `direct` と、プラグインを読み込む `haiku` / `sonnet` / `auto` のうち、各ケースで定義された組み合わせを比較します。各ケースを必ず2回だけ実行する仕組みではありません。
 
-`scripts/doctor.sh` checks jq, prints `claude --version` when present, warns
-if `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, notes whether agents registered on
-the plugin-load stream, and explains how to confirm `agent_type` on the hook
-stdin. A missing live dump is not a doctor failure.
+CLI設定の分離には `--setting-sources ""` とクリーンな作業ディレクトリを使います。`claude` がなければスキップしますが、プラグインの読み込み失敗、`direct` への本プラグインの混入、他のフックの混入は失敗として扱います。
+
+各実行の計画、判定、トランスクリプトは `evals/compare/tmp/runs/run.*` に保存し、各モードの前にモデルが参照する入力と出力先を初期化します。証跡はその初期化対象の外に残します。集計結果は `evals/compare/last-run.json` です。
+
+`selected_run_valid` は選択したケース・スイートの実行結果、`release_eligible` はリリース評価としての可否を示します。一部のケースの成功だけではリリース検証完了になりません。全文混入の判定はUTF-8バイト数で行い、必須の親入力トークン内訳・親出力トークン、子の使用量、合計推定費用とは区別します。
+
+`doctor.sh` は `jq`、CLIバージョン、プラグインとエージェントの登録、Haiku / Sonnet の指定モデルと実際のモデル、観測可能な `effort` や終了状態を確認します。`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` の場合はモデル比較を無効として報告します。認証などにより実機確認できない項目は `unconfirmed` とし、診断項目のうち `jq` 不足を失敗として扱います。終了コード0だけで全項目の確認済みとは判断しないでください。
+
+プラグインと両エージェントの登録を確認できると、CLIバージョンなどを [doctor-last-probe.txt](docs/distribution/doctor-last-probe.txt) に記録します。これは診断の記録であり、最低バージョンや全機能の動作保証ではありません。フック入力のトップレベル `agent_type` は別途実際の入力で確認する必要があります。`TOKEN_SHUNT_HOOK_LOG` は判定ログだけを保存し、入力JSONそのものは保存しません。

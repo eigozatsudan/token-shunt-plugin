@@ -135,6 +135,8 @@ def verification_errors(tr, spec, exp):
         expected_cmd = ['python3', os.path.normpath(check['checker']), '--verify', level, path]
         if check.get('expected_lines'):
             expected_cmd += ['--expected-lines', str(check['expected_lines'])]
+        for key in check.get('require_keys') or []:
+            expected_cmd += ['--require-key', key]
         for u in tr.parent_tool_uses('Bash'):
             try:
                 argv = shlex.split(u['input'].get('command', ''))
@@ -161,13 +163,27 @@ def verification_errors(tr, spec, exp):
     return errors
 
 
-def verify_artifact(path, level, expected_lines=None):
+def verify_artifact(path, level, expected_lines=None, require_keys=None):
     """No body output; minimal deliberately makes no syntax/completeness promise."""
     try:
         with open(path, encoding='utf-8') as source:
             body = source.read()
         if level == 'syntax':
             json.loads(body)
+        elif level == 'requirements':
+            # Acceptance conditions: named keys (and optional key=value) must hold.
+            if not require_keys:
+                raise ValueError('requirements verification needs acceptance keys')
+            document = json.loads(body)
+            if not isinstance(document, dict):
+                raise ValueError('artifact is not a JSON object')
+            for requirement in require_keys:
+                key, sep, want = requirement.partition('=')
+                if key not in document:
+                    raise ValueError('missing required key: ' + key)
+                if sep and str(document[key]) != want:
+                    # Names the requirement, never the artifact body.
+                    raise ValueError('required value mismatch for key: ' + key)
         elif level == 'minimal':
             lines = body.strip().splitlines()
             if not lines:
@@ -189,10 +205,12 @@ def verify_artifact(path, level, expected_lines=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--verify', required=True, choices=['minimal', 'syntax'])
+    parser.add_argument('--verify', required=True, choices=['minimal', 'syntax', 'requirements'])
     parser.add_argument('path')
     parser.add_argument('--expected-lines', type=int)
+    parser.add_argument('--require-key', action='append', default=[],
+                        help='required key, or key=value, for --verify requirements')
     args = parser.parse_args()
-    evidence = verify_artifact(args.path, args.verify, args.expected_lines)
+    evidence = verify_artifact(args.path, args.verify, args.expected_lines, args.require_key)
     print(json.dumps(evidence))
     sys.exit(0 if evidence['ok'] else 1)

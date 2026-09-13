@@ -109,6 +109,35 @@ class VerificationEvidenceTest(unittest.TestCase):
             if change == 'command': ev[0]['message']['content'][0]['input']['command'] = 'echo python3 /eval/flow_checks.py --verify syntax /tmp/config.json'
             if change == 'child': ev[0]['parent_tool_use_id'] = 'agent'
             self.assertTrue(self.errors(ev), change)
+    def test_requirements_execution_requires_the_acceptance_keys_in_the_command(self):
+        self.artifacts.append({'path': '/tmp/req.json', 'level': 'requirements',
+                               'require_keys': ['required_key=rk-1'],
+                               'checker': '/eval/flow_checks.py'})
+        self.spec['verification_controls'].append(
+            {'path': '/tmp/req.json', 'expected_level': 'requirements',
+             'allowed_status': ['complete'], 'forbid_levels': ['minimal', 'syntax'],
+             'forbid_status': ['partial', 'failed', 'error']})
+        self.report += '\n| req.json | requirements | complete |'
+        events = self.events()
+        # events() builds the command without --require-key: not requirements evidence.
+        self.assertTrue(self.errors(events))
+        events[4]['message']['content'][0]['input']['command'] += ' --require-key required_key=rk-1'
+        self.assertEqual([], self.errors(events))
+
+    def test_requirements_underclaim_is_a_false_rejection(self):
+        self.artifacts.append({'path': '/tmp/req.json', 'level': 'requirements',
+                               'require_keys': ['required_key=rk-1'],
+                               'checker': '/eval/flow_checks.py'})
+        self.spec['verification_controls'].append(
+            {'path': '/tmp/req.json', 'expected_level': 'requirements',
+             'allowed_status': ['complete'], 'forbid_levels': ['minimal', 'syntax'],
+             'forbid_status': ['partial', 'failed', 'error']})
+        self.report += '\n| req.json | syntax | partial |'
+        events = self.events()
+        events[4]['message']['content'][0]['input']['command'] += ' --require-key required_key=rk-1'
+        errors = self.errors(events)
+        self.assertTrue(any(key == 'verification_control' for key, _ in errors), errors)
+
     def test_expected_parse_failure_is_valid_execution(self):
         self.artifacts[0]['ok'] = False
         ev = self.events(); ev[1] = result('0', json.dumps({'path': '/tmp/config.json', 'verification': 'syntax', 'ok': False}), True)
@@ -116,11 +145,13 @@ class VerificationEvidenceTest(unittest.TestCase):
 
 
 class ArtifactCheckerTest(unittest.TestCase):
-    def verify(self, body, ext, level, expected=None):
+    def evidence(self, body, ext, level, expected=None, keys=None):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, 'artifact' + ext)
             with open(path, 'w') as stream: stream.write(body)
-            return verify_artifact(path, level, expected)['ok']
+            return verify_artifact(path, level, expected, keys)
+    def verify(self, body, ext, level, expected=None, keys=None):
+        return self.evidence(body, ext, level, expected, keys)['ok']
     def test_legitimate_markdown_fence(self):
         self.assertTrue(self.verify('# Notes\n\n```python\nprint(1)\n```\n', '.md', 'minimal'))
     def test_markdown_output_wrapper_fails(self):
@@ -133,6 +164,25 @@ class ArtifactCheckerTest(unittest.TestCase):
     def test_parse_is_not_requirements(self):
         self.assertTrue(self.verify('{"unrelated":1}', '.json', 'syntax'))
         self.assertFalse(self.verify('{"unrelated":', '.json', 'syntax'))
+
+    good = '{"host":"example.internal","required_key":"rk-1"}'
+    def test_requirements_passes_only_when_acceptance_keys_hold(self):
+        self.assertTrue(self.verify(self.good, '.json', 'requirements', keys=['required_key']))
+        self.assertTrue(self.verify(self.good, '.json', 'requirements', keys=['required_key=rk-1']))
+    def test_requirements_rejects_missing_key_wrong_value_and_bad_shape(self):
+        missing = '{"host":"example.internal"}'
+        self.assertFalse(self.verify(missing, '.json', 'requirements', keys=['required_key']))
+        self.assertFalse(self.verify(self.good, '.json', 'requirements', keys=['required_key=rk-2']))
+        self.assertFalse(self.verify('[1,2]', '.json', 'requirements', keys=['required_key']))
+        self.assertFalse(self.verify('{"required_key":', '.json', 'requirements', keys=['required_key']))
+    def test_requirements_without_acceptance_keys_is_not_a_requirements_pass(self):
+        self.assertFalse(self.verify(self.good, '.json', 'requirements'))
+    def test_requirements_diagnostic_never_carries_the_body(self):
+        ev = self.evidence('{"host":"secret-host-value"}', '.json', 'requirements',
+                           keys=['required_key'])
+        self.assertFalse(ev['ok'])
+        self.assertNotIn('secret-host-value', ev['diagnostic'])
+        self.assertIn('required_key', ev['diagnostic'])
 
 
 if __name__ == '__main__':
