@@ -128,6 +128,21 @@ class VerificationEvidenceTest(unittest.TestCase):
         block = ev[1]['message']['content'][0]
         block['content'] = block['content'].replace('"ok": true', '"ok": false', 1)
         self.assertEqual([], self.errors(ev))
+    def test_batch_allows_echo_exit_status(self):
+        ev = self.batch_events()
+        inp = ev[0]['message']['content'][0]['input']
+        inp['command'] = inp['command'].replace(
+            'config.json\n', 'config.json\necho "exit: $?"\n')
+        inp['command'] += '\necho "exit: $?"'
+        self.assertEqual([], self.errors(ev))
+    def test_batch_still_rejects_other_expansions(self):
+        for label in ('echo "$VALUE"', 'echo "$(true)"', 'echo "`true`"',
+                      'echo "${value:=changed}"', 'echo "$((1 + 1))"',
+                      'echo "$?" > /tmp/result', 'echo "$?"; false',
+                      'python3 /eval/flow_checks.py --verify syntax "$?"'):
+            ev = self.batch_events()
+            ev[0]['message']['content'][0]['input']['command'] += '\n' + label
+            self.assertTrue(self.errors(ev), label)
     def test_batch_rejects_unexecuted_or_unmatched_evidence(self):
         for variant in ('echo', 'conditional', 'missing', 'reordered', 'wrong_path', 'late'):
             ev = self.batch_events()

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # token-shunt real-machine compare eval (design §13, §26.5).
 # Direct mode never loads token-shunt; delegate modes load --plugin-dir.
-# Isolation on this CLI: --setting-sources "" + clean cwd (NOT --bare: 2.1.x
-# keeps enabled marketplace plugins and skips plugin-agent registration).
+# Use --setting-sources "" + clean cwd, and fail probes if marketplace
+# plugins are still inherited (their hooks may only fire on compaction).
+# NOT --bare: 2.1.x skips plugin-agent registration.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 CMP=$PWD
@@ -403,7 +404,7 @@ for line in open(sys.argv[1], encoding="utf-8"):
 plugins = [p.get("name") for p in init.get("plugins", []) or []]
 agents = init.get("agents", []) or []
 errs = init.get("plugin_errors")
-ok = ("token-shunt" in plugins and not errs
+ok = (plugins == ["token-shunt"] and not errs
       and "token-shunt:bulk-reader" in agents and "token-shunt:code-writer" in agents)
 print("ok" if ok else "fail:%s agents=%s errs=%s" % (plugins, agents, errs))
 PY
@@ -420,8 +421,7 @@ if sys.argv[2] != "ok":
     print(sys.argv[2])
     sys.exit(0)
 # Match judge.py foreign_hooks(): subtype==hook_response + hook_name.
-# Direct mode: any non-builtin PreToolUse hook_response fails (token-shunt
-# hooks are also foreign here because the plugin must not be loaded).
+# Direct mode: reject loaded plugins even if their hooks have not fired.
 BUILTIN = {"SessionStart:startup"}
 init = {}; foreign = []
 for line in open(sys.argv[1], encoding="utf-8"):
@@ -436,14 +436,15 @@ for line in open(sys.argv[1], encoding="utf-8"):
         continue
     he = e.get("hook_event") or ""
     # live events may only have subtype + hook_name (no hook_event)
-    if he == "PreToolUse" or "PreToolUse" in name or (
-            not he and name and not name.startswith("SessionStart")):
+    if name or he:
         foreign.append(name or he or "unnamed")
 plugins = [p.get("name") for p in init.get("plugins", []) or []]
-if "token-shunt" in plugins:
-    print("fail:token-shunt in direct plugins")
+if plugins:
+    print("fail:plugins in direct mode %s" % plugins)
+elif init.get("plugin_errors"):
+    print("fail:plugin errors %s" % init["plugin_errors"])
 elif foreign:
-    print("fail:foreign PreToolUse hooks %s" % foreign)
+    print("fail:foreign hooks %s" % foreign)
 else:
     print("ok")
 PY

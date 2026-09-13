@@ -93,13 +93,17 @@ if not probe:
 if failure == 'empty':
     sys.exit(0)
 print(json.dumps({'type':'system','subtype':'init',
-    'plugins':[{'name':'token-shunt'}] if loaded or failure == 'loaded-direct' else [],
+    'plugins':([{'name':'token-shunt'}] if loaded or failure == 'loaded-direct' else [])
+        + ([{'name':'superpowers'}] if failure == 'dormant-plugin' else []),
     'agents':['token-shunt:bulk-reader','token-shunt:code-writer'] if loaded else []}))
 if failure == 'init-only':
     sys.exit(0)
 if failure == 'foreign-hook':
     print(json.dumps({'type':'system','subtype':'hook_response',
         'hook_name':'foreign:PreToolUse'}))
+if failure == 'compact-hook':
+    print(json.dumps({'type':'system','subtype':'hook_response',
+        'hook_name':'SessionStart:compact','hook_event':'SessionStart'}))
 if failure == '429':
     print(json.dumps({'type':'result','subtype':'success','is_error':True,
         'result':'Rate limit reached','terminal_reason':'api_error','api_error_status':429}))
@@ -182,7 +186,7 @@ sys.exit(17 if failure == 'nonzero' else 0)
                     self.assertFalse(verdict["release_eligible"])
 
     def test_isolation_checks_still_reject_loaded_plugin_and_foreign_hooks(self):
-        for failure in ("loaded-direct", "foreign-hook"):
+        for failure in ("loaded-direct", "foreign-hook", "dormant-plugin", "compact-hook"):
             with self.subTest(failure=failure):
                 calls = Path(self.temp.name) / "calls.log"
                 calls.write_text("")
@@ -194,6 +198,14 @@ sys.exit(17 if failure == 'nonzero' else 0)
                 verdict = json.loads((self.compare / "last-run.json").read_text())
                 self.assertTrue(verdict["probe_failure"])
                 self.assertFalse(verdict["environment_failure"])
+
+    def test_load_probe_rejects_dormant_foreign_plugin(self):
+        result = self.run_with_cli_double(FAIL_PROBE="load",
+                                          PROBE_FAILURE="dormant-plugin")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("superpowers", result.stdout)
+        calls = (Path(self.temp.name) / "calls.log").read_text().splitlines()
+        self.assertNotIn("case", calls)
 
 
 if __name__ == "__main__":

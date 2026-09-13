@@ -146,9 +146,10 @@ def verification_commands(command, cwd):
     """Recognize literal verification batches; never execute shell input.
 
     Only newline-separated cd, echo labels and checker calls are supported.
-    Conditionals, pipelines, expansions and other commands are not evidence.
+    Echo labels may include the exit status ($?); other expansions,
+    conditionals, pipelines and other commands are not evidence.
     """
-    if any(c in command for c in ('$','`')):
+    if '`' in command:
         return []
     commands = []
     for line in command.splitlines():
@@ -161,6 +162,11 @@ def verification_commands(command, cwd):
             return []
         if not argv:
             continue
+        # Only the non-evidence echo label may expand the previous status.
+        # Check the raw line so shlex cannot hide substitutions or escaping.
+        expansion_text = line.replace('$?', '') if argv[0] == 'echo' else line
+        if '$' in expansion_text:
+            return []
         if any(a and all(c in ';&|<>()' for c in a) for a in argv):
             return []
         if argv[0] == 'cd' and len(argv) == 2 and not commands:
