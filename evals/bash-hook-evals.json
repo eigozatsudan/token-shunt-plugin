@@ -1,0 +1,361 @@
+[
+ {
+  "id": "bash-unrelated",
+  "cmd": "git status",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cat-large",
+  "cmd": "cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-usr-bin-cat",
+  "cmd": "/usr/bin/cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cat-stderr",
+  "cmd": "cat @FIX@/large-80k.txt 2>/dev/null",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cat-2and1",
+  "cmd": "cat @FIX@/large-80k.txt 2>&1",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe",
+  "cmd": "cat @FIX@/large-80k.txt | grep foo",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-pipe-cat",
+  "cmd": "cat @FIX@/large-80k.txt | cat",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-quoted-pipe-name",
+  "cmd": "cat '@FIX@/large|name.txt'",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-line",
+  "cmd": "cat @FIX@/oneline-70k.txt | head -n 1",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-default",
+  "cmd": "cat @FIX@/small-10.txt | head",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-bytes-pass",
+  "cmd": "cat @FIX@/large-80k.txt | head -c 100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-pipe-head-bytes-deny",
+  "cmd": "cat @FIX@/large-80k.txt | head -c 70000",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-line",
+  "cmd": "cat @FIX@/oneline-70k.txt | tail -n 1",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-bytes-pass",
+  "cmd": "cat @FIX@/large-80k.txt | tail -c 100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-pipe-tail-bytes-deny",
+  "cmd": "cat @FIX@/large-80k.txt | tail -c 70000",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-file",
+  "cmd": "cat @FIX@/small-10.txt | head -c 100 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-later-cat-semi",
+  "cmd": "echo ok; cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-later-cat-and",
+  "cmd": "echo ok && cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-pipe",
+  "cmd": "cat @FIX@/large-80k.txt; echo ok | head -c 1",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-small",
+  "cmd": "echo ok; cat @FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-compound-redirect",
+  "cmd": "cat @FIX@/large-80k.txt; echo ok > /tmp/token-shunt-eval-status",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect",
+  "cmd": "cat @FIX@/large-80k.txt > /tmp/token-shunt-eval-out",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cat-png",
+  "cmd": "cat @FIX@/img-200k.png",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-n-20",
+  "cmd": "head -n 20 @FIX@/f400-20k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-head-n-1-minify",
+  "cmd": "head -n 1 @FIX@/oneline-70k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-c-70000",
+  "cmd": "head -c 70000 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-c-100",
+  "cmd": "head -c 100 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-head-c-window",
+  "cmd": "head -c 8192 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-tail-c-window",
+  "cmd": "tail -c 8192 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-tail-n-20",
+  "cmd": "tail -n 20 @FIX@/f400-20k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-head-n-400-small",
+  "cmd": "head -n 400 @FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-tail-n-plus-1",
+  "cmd": "tail -n +1 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-n-and-c",
+  "cmd": "head -n 1 -c 70000 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-full",
+  "cmd": "head @FIX@/f400-20k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cat-two-files",
+  "cmd": "cat @FIX@/small-10.txt @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-worker-bulk-reader",
+  "cmd": "cat @FIX@/large-80k.txt",
+  "agent_type": "token-shunt:bulk-reader",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-fd1",
+  "cmd": "cat @FIX@/large-80k.txt 1>/tmp/token-shunt-eval-out1",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-fd3",
+  "cmd": "cat @FIX@/large-80k.txt 3>/tmp/token-shunt-eval-out3",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-noclobber",
+  "cmd": "cat @FIX@/large-80k.txt >| /tmp/token-shunt-eval-out4",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-head-c-huge",
+  "cmd": "head -c 10000000000000000000 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-c-huge",
+  "cmd": "cat @FIX@/large-80k.txt | head -c 10000000000000000000",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-head-ddash-operands",
+  "cmd": "head -- -n5 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cat-ddash-file",
+  "cmd": "cat -- @FIX@/-weird.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-env-min-bytes",
+  "cmd": "cat @FIX@/small-10.txt",
+  "env": {
+   "TOKEN_SHUNT_MIN_BYTES": "10"
+  },
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-unknown",
+  "cmd": "cat @FIX@/large-80k.txt | wc -l",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-pipe-tail-empty",
+  "cmd": "cat @FIX@/large-80k.txt |",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-unclosed",
+  "cmd": "cat @FIX@/large-80k.txt | head 'unclosed",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-head-varprefix",
+  "cmd": "V=1 cat @FIX@/large-80k.txt | cat",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-varprefix",
+  "cmd": "cat @FIX@/large-80k.txt | V=1 cat",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-varprefix-head",
+  "cmd": "cat @FIX@/large-80k.txt | V=1 head -c 100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-compound-subst-semicolon",
+  "cmd": "echo $(true); cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-backtick",
+  "cmd": "echo `true`; cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-arith",
+  "cmd": "echo $((1)); cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-subst-and",
+  "cmd": "true && cat @FIX@/large-80k.txt && echo $(date +%s)",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-compound-subst-tail",
+  "cmd": "cat @FIX@/large-80k.txt; echo $(true)",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-fd2-append",
+  "cmd": "cat @FIX@/large-80k.txt 2>>/tmp/ts-err",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-subst",
+  "cmd": "cat @FIX@/large-80k.txt | $(x)",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-pipe-tail-backtick",
+  "cmd": "cat @FIX@/large-80k.txt | `x`",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-subst-cat-pass",
+  "cmd": "echo $(cat @FIX@/large-80k.txt)",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-append",
+  "cmd": "cat @FIX@/large-80k.txt >>/tmp/ts-out",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-fd1-append",
+  "cmd": "cat @FIX@/large-80k.txt 1>>/tmp/ts-out",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-uninterp",
+  "cmd": "cat @FIX@/large-80k.txt $(echo x) > /tmp/token-shunt-eval-uninterp",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-bg",
+  "cmd": "cat @FIX@/large-80k.txt > /tmp/token-shunt-eval-bg &",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cd-relative-large",
+  "cmd": "cd @FIX@ && cat large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-relative-small",
+  "cmd": "cd @FIX@ && cat small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-cd-relative-head",
+  "cmd": "cd @FIX@ && head -n 400 over-351.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-literal-chain",
+  "cmd": "cd @FIX@ && cd .. && cat fixtures/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-semicolon",
+  "cmd": "cd @FIX@; cat large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-newline",
+  "cmd": "cd @FIX@\ncat large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-double-dash",
+  "cmd": "cd -- @FIX@ && cat large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cd-quoted-operand",
+  "cmd": "cd \"@FIX@\" && cat \"space name large.txt\"",
+  "expect": "deny"
+ }
+]

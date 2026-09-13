@@ -1,0 +1,7 @@
+{
+  "name": "token-shunt",
+  "displayName": "Token Shunt",
+  "version": "0.1.0",
+  "description": "Keep large-file contents and boilerplate output out of the parent context by delegating to Haiku/Sonnet subagents. Requires jq. Do not enable alongside Spotify shunt.",
+  "keywords": ["delegation", "context", "hooks"]
+}

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# token-shunt SessionStart hook (design §7).
+# Warns once when jq is missing. Cannot block SessionStart; PreToolUse hooks
+# fail-closed (exit 2) on every Read/Bash instead.
+# This script must not invoke jq: detecting its absence is the point.
+export LC_ALL=C
+
+if command -v jq >/dev/null 2>&1; then
+  exit 0
+fi
+
+printf '%s\n' '{
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "token-shunt: jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed."
+  }
+}'
+exit 0

@@ -1,0 +1,449 @@
+#!/usr/bin/env bash
+# token-shunt PreToolUse hook for Bash (design §8, §10).
+# Pass: exit 0, empty stdout. Deny: exit 0, permissionDecision JSON.
+# Fail-closed: missing jq / unreadable stdin -> stderr + exit 2.
+export LC_ALL=C
+HOOK_NAME=check-bash-read
+
+# --- common 1-2: jq required, stdin must be JSON ---
+command -v jq >/dev/null 2>&1 || { printf 'token-shunt: jq is required\n' >&2; exit 2; }
+input=$(cat)
+jq -e . >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
+
+# --- common 3: env thresholds ---
+int_env() {
+  local v=${!1-} d=$2
+  v=${v#+}
+  # >15 digits can wrap int64 arithmetic; treat as unset -> default.
+  if [[ $v =~ ^-?[0-9]+$ ]] && (( ${#v} <= 15 )); then
+    if [[ $v == -* ]]; then printf '%s' "$d"; else printf '%s' "$((10#$v))"; fi
+  else
+    printf '%s' "$d"
+  fi
+}
+MIN_LINES=$(int_env TOKEN_SHUNT_MIN_LINES 350)
+MIN_BYTES=$(int_env TOKEN_SHUNT_MIN_BYTES 65536)
+SCAN_BUDGET_BYTES=$(int_env TOKEN_SHUNT_SCAN_BUDGET_BYTES 8388608)
+SCAN_BUDGET_MS=$(int_env TOKEN_SHUNT_SCAN_BUDGET_MS 2000)
+
+now_ms() {
+  if [[ -n ${EPOCHREALTIME-} ]]; then
+    local t=${EPOCHREALTIME/./}
+    printf '%s' "$((10#${t%???}))"
+  else
+    local d
+    d=$(date +%s%3N 2>/dev/null)
+    [[ $d =~ ^[0-9]+$ ]] || d=$((SECONDS * 1000))
+    printf '%s' "$d"
+  fi
+}
+
+hook_log() {
+  [[ -n ${TOKEN_SHUNT_HOOK_LOG-} ]] || return 0
+  jq -nc --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
+    '{hook:$h,decision:$d,reason:$r}' >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
+}
+pass() { hook_log pass ""; exit 0; }
+deny() {
+  hook_log deny "$1"
+  jq -nc --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 0
+}
+
+file_size() {
+  # Match -f and the actual read: measure the target, not the symlink inode.
+  local s
+  s=$(stat -L -c %s -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
+  s=$(stat -L -f %z -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
+  s=$(wc -c <"$1" 2>/dev/null) && printf '%s' "$((s))" || printf '0'
+}
+
+# -> "exceeded undetermined lines bytes read_bytes elapsed_ms" (see check-file-size)
+range_scan() {
+  local path=$1 start=$2 count=$3 st t0 t1 elapsed res ex un rl rby rb
+  st=$(file_size "$path")
+  t0=$(now_ms)
+  res=$(awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+      if (NR>=start && NR<start+cnt) { rl++; rby+=lb+nl
+        if (rl>ml || rby>mb) { printf "1 0 %d %d %d", rl, rby, rb; f=1; exit } }
+      if (rb>bb)             { printf "1 1 %d %d %d", rl, rby, rb; f=1; exit }
+      if (NR==start+cnt-1)   { printf "0 0 %d %d %d", rl, rby, rb; f=1; exit } }
+    END { if(!f) printf "0 0 %d %d %d", rl, rby, rb }' <"$path")
+  t1=$(now_ms); elapsed=$((t1-t0))
+  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
+  # failure in evals without mocking awk globally.
+  [[ $res =~ ^[01]\ [01]\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || res="1 1 0 0 0"
+  read -r ex un rl rby rb <<<"$res"
+  if (( elapsed > SCAN_BUDGET_MS )); then ex=1; un=1; fi
+  printf '%s %s %s %s %s %s' "$ex" "$un" "$rl" "$rby" "$rb" "$elapsed"
+}
+
+# tail_scan(path, N): last-N-line interval, same 6-field output (§8.6 tail rule).
+tail_scan() {
+  local path=$1 N=$2 t0 t1 el out_bytes nl last lines ex=0 un=0
+  t0=$(now_ms)
+  out_bytes=$(tail -n "$N" -- "$path" 2>/dev/null | head -c "$((SCAN_BUDGET_BYTES+1))" | wc -c)
+  t1=$(now_ms); el=$((t1-t0))
+  if (( out_bytes > SCAN_BUDGET_BYTES )); then
+    printf '1 1 %s %s %s %s' "$N" "$out_bytes" "$out_bytes" "$el"; return
+  fi
+  nl=$(tail -n "$N" -- "$path" | wc -l)
+  last=$(tail -n "$N" -- "$path" | tail -c 1 | wc -l)
+  lines=$nl
+  (( out_bytes > 0 && last == 0 )) && lines=$((nl+1))
+  (( lines > MIN_LINES || out_bytes > MIN_BYTES )) && ex=1
+  if (( el > SCAN_BUDGET_MS )); then ex=1; un=1; fi
+  printf '%s %s %s %s %s %s' "$ex" "$un" "$lines" "$out_bytes" "$out_bytes" "$el"
+}
+
+# -> "OK|EXCEEDED|UNDETERMINED lines bytes read_bytes elapsed_ms"
+full_file_verdict() {
+  local path=$1 st t0 t1 elapsed res v nl rb
+  st=$(file_size "$path")
+  if (( st > MIN_BYTES )); then
+    printf 'EXCEEDED -1 %s %s 0' "$st" "$st"; return
+  fi
+  t0=$(now_ms)
+  res=$(awk -v ml="$MIN_LINES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+      if (NR>ml) { printf "EXCEEDED %d %d %d", NR, rb, rb; f=1; exit }
+      if (rb>bb) { printf "UNDETERMINED %d %d %d", NR, rb, rb; f=1; exit } }
+    END { if(!f) printf "OK %d %d %d", NR, rb, rb }' <"$path")
+  t1=$(now_ms); elapsed=$((t1-t0))
+  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
+  # failure in evals without mocking awk globally.
+  [[ $res =~ ^(OK|EXCEEDED|UNDETERMINED)\ -?[0-9]+\ [0-9]+\ [0-9]+$ ]] || res="UNDETERMINED 0 0 0"
+  read -r v nl rb _ <<<"$res"
+  if [[ $v == OK ]] && (( elapsed > SCAN_BUDGET_MS )); then v=UNDETERMINED; fi
+  printf '%s %s %s %s %s' "$v" "$nl" "$rb" "$rb" "$elapsed"
+}
+
+bash_reason() { # tool lines bytes read_bytes elapsed undetermined
+  local tool=$1 ln=$2 by=$3 rd=$4 el=$5 un=$6 parts
+  if [[ $ln == -1 ]]; then parts="bytes=${by}/${MIN_BYTES}"; else parts="lines=${ln}/${MIN_LINES}, bytes=${by}/${MIN_BYTES}"; fi
+  printf "Bash '%s' on a large file exceeds token-shunt thresholds (%s). Use /token-shunt:bulk-reader. For edits, use a targeted Read of the original that passes the hook." "$tool" "$parts"
+  if [[ $un == 1 ]]; then
+    printf ' Scan budget exceeded (read_bytes=%s/%s, ms=%s/%s); use /token-shunt:bulk-reader for analysis. Editing still requires a successful targeted Read of the original.' "$rd" "$SCAN_BUDGET_BYTES" "$el" "$SCAN_BUDGET_MS"
+  fi
+}
+
+# --- common 4: worker allowlist (bulk-reader only; code-writer has no Bash) ---
+# agent_type is harness-set at top level; tool_input is model-controlled.
+agent=$(jq -r '.agent_type // empty' <<<"$input")
+[[ $agent == token-shunt:bulk-reader ]] && pass
+
+cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
+cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+cmd="${cmd%"${cmd##*[![:space:]]}"}"
+[[ -z $cmd ]] && pass
+
+# --- §10-4: quote-aware operator scan ---
+# Sets: S_UNINTERP, PIPES=("pos:len"), SEPS=("pos:len"), CLEAN_GT, SPECIAL_GT
+scan_ops() {
+  local s=$1
+  local i=0 n=${#s} qs=0 c nxt prv
+  S_UNINTERP=0; PIPES=(); SEPS=(); CLEAN_GT=0; SPECIAL_GT=0
+  while (( i < n )); do
+    c=${s:i:1}
+    prv=''; (( i > 0 )) && prv=${s:i-1:1}
+    nxt=${s:i+1:1}
+    case $qs in
+      1) [[ $c == "'" ]] && qs=0 ;;
+      2) [[ $c == '"' ]] && qs=0 ;;
+      3) qs=0 ;;
+      0) case $c in
+         "\\") qs=3 ;;
+         "'")  qs=1 ;;
+         '"')  qs=2 ;;
+         '$')  [[ $nxt == \( ]] && S_UNINTERP=1 ;;
+         '`')  S_UNINTERP=1 ;;
+         '|')  if   [[ $nxt == '|' ]]; then SEPS+=("$i:2"); ((i++))
+               elif [[ $nxt == '&' ]]; then PIPES+=("$i:2"); ((i++))
+               else PIPES+=("$i:1"); fi ;;
+         '&')  if   [[ $nxt == '&' ]]; then SEPS+=("$i:2"); ((i++))
+               elif [[ $nxt == '>' ]]; then SPECIAL_GT=1; ((i++))
+               elif [[ $prv == '>' ]]; then :
+               elif (( i == n - 1 )); then :  # trailing background & is not a compound separator (§10-4)
+               else SEPS+=("$i:1"); fi ;;
+         '>')  local fdpos=$i   # scan fd digits from THIS '>', before consuming '>>' etc.
+               if   [[ $nxt == '>' || $nxt == '|' ]]; then ((i++)); fi
+               if   [[ $prv == '&' || $nxt == '&' ]]; then SPECIAL_GT=1
+               else
+                 # stdout redirect only when the fd before '>' is 1 or absent.
+                 # `2>`/`3>`/... leave stdout alone -> not an early pass.
+                 local j=$((fdpos-1)) fd=''
+                 while (( j >= 0 )) && [[ ${s:j:1} =~ [0-9] ]]; do fd=${s:j:1}$fd; ((j--)); done
+                 [[ -z $fd || $fd == 1 ]] && CLEAN_GT=1
+               fi ;;
+         ';'|$'\n') SEPS+=("$i:1") ;;
+       esac ;;
+    esac
+    ((i++))
+  done
+  (( qs == 1 || qs == 2 )) && S_UNINTERP=1
+}
+
+# tokenize: whitespace-split honoring quotes/escapes; quotes removed -> TOKS
+tokenize() {
+  local s=$1
+  local i=0 n=${#s} qs=0 c cur='' have=0
+  TOKS=()
+  while (( i < n )); do
+    c=${s:i:1}
+    case $qs in
+      1) [[ $c == "'" ]] && qs=0 || { cur+=$c; have=1; } ;;
+      2) [[ $c == '"' ]] && qs=0 || { cur+=$c; have=1; } ;;
+      3) cur+=$c; qs=0 ;;
+      0) case $c in
+         "\\") qs=3; have=1 ;;
+         "'")  qs=1; have=1 ;;
+         '"')  qs=2; have=1 ;;
+         [[:space:]]) (( have )) && { TOKS+=("$cur"); cur=''; have=0; } ;;
+         *) cur+=$c; have=1 ;;
+       esac ;;
+    esac
+    ((i++))
+  done
+  (( have )) && TOKS+=("$cur")
+}
+
+strip_vars() {
+  VTOKS=("${TOKS[@]}")
+  while ((${#VTOKS[@]})) && [[ ${VTOKS[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
+    VTOKS=("${VTOKS[@]:1}")
+  done
+}
+
+is_redirect_op()  { case $1 in '>'|'>>'|'>|'|'&>'|'&>>'|[0-9]'>'|[0-9]'>>'|[0-9]'>|'|'>&'|[0-9]'>&') return 0;; esac; return 1; }
+is_redirect_tok() { local re='^(&|[0-9]*)>{1,2}'; [[ $1 =~ $re ]]; }
+
+split_at() { # str cuts... -> SPLIT
+  local s=$1; shift; local last=0 pl p l
+  SPLIT=()
+  for pl in "$@"; do p=${pl%%:*}; l=${pl##*:}; SPLIT+=("${s:last:p-last}"); last=$((p+l)); done
+  SPLIT+=("${s:last}")
+}
+
+# FILES = regular-file args of TOKS[1:] (dash-flags and redirect targets removed).
+# `--` ends option parsing: later dash-tokens are operands.
+collect_file_args() {
+  FILES=(); local i=1 n=${#TOKS[@]} t eoo=0
+  while (( i < n )); do
+    t=${TOKS[i]}
+    if is_redirect_op "$t";  then ((i+=2)); continue; fi
+    if is_redirect_tok "$t"; then ((i+=1)); continue; fi
+    if (( !eoo )) && [[ $t == -- ]];  then eoo=1; ((i++)); continue; fi
+    if (( !eoo )) && [[ $t == -* ]];  then ((i++)); continue; fi
+    [[ -f $t ]] && FILES+=("$t")
+    ((i++))
+  done
+}
+
+check_files_full() { # toolname; deny on first exceeding/undetermined target
+  local tool=$1 f v nl rb rd el
+  for f in ${FILES[@]+"${FILES[@]}"}; do
+    read -r v nl rb rd el <<<"$(full_file_verdict "$f")"
+    [[ $v == OK ]] && continue
+    [[ $v == UNDETERMINED ]] && deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 1)"
+    deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 0)"
+  done
+}
+
+# head/tail file-arg mode (§10-7): parse TOKS[1:] -> FILES + size-opt fields
+ht_parse() {
+  FILES=(); HT_OPTS=0; HT_FORM=''; HT_VALUE=''; HT_BAD=0
+  local i=1 n=${#TOKS[@]} t eoo=0
+  while (( i < n )); do
+    t=${TOKS[i]}
+    if is_redirect_op "$t";  then ((i+=2)); continue; fi
+    if is_redirect_tok "$t"; then ((i++));  continue; fi
+    if (( !eoo )) && [[ $t == -- ]]; then eoo=1; ((i++)); continue; fi
+    if (( eoo )); then [[ -f $t ]] && FILES+=("$t"); ((i++)); continue; fi
+    case $t in
+      -q|-v|--quiet|--verbose) ;;
+      -n|--lines)      ((HT_OPTS++)); HT_FORM=line; ((i++)); HT_VALUE=${TOKS[i]-} ;;
+      -c|--bytes)      ((HT_OPTS++)); HT_FORM=byte; ((i++)); HT_VALUE=${TOKS[i]-} ;;
+      -n?*)            ((HT_OPTS++)); HT_FORM=line; HT_VALUE=${t:2} ;;
+      -c?*)            ((HT_OPTS++)); HT_FORM=byte; HT_VALUE=${t:2} ;;
+      --lines=*)       ((HT_OPTS++)); HT_FORM=line; HT_VALUE=${t#--lines=} ;;
+      --bytes=*)       ((HT_OPTS++)); HT_FORM=byte; HT_VALUE=${t#--bytes=} ;;
+      -[0-9]*)         ((HT_OPTS++)); HT_FORM=line; HT_VALUE=${t:1} ;;
+      -*)              HT_BAD=1 ;;
+      *)               [[ -f $t ]] && FILES+=("$t") ;;
+    esac
+    ((i++))
+  done
+}
+
+# head/tail at pipe end (§10-4): pass only for a single interpretable -c C,
+# C <= MIN_BYTES, reading pure stdin (no file args, no redirects)
+pipe_tail_ok() {
+  local opts=0 form='' val='' bad=0 files=0 i t eoo=0
+  local -a A=("$@")
+  for (( i=0; i<${#A[@]}; i++ )); do
+    t=${A[i]}
+    if is_redirect_tok "$t"; then bad=1; continue; fi
+    if (( !eoo )) && [[ $t == -- ]]; then eoo=1; continue; fi
+    if (( eoo )); then ((files++)); continue; fi
+    case $t in
+      -q|-v|--quiet|--verbose) ;;
+      -c|--bytes)      ((opts++)); form=byte; ((i++)); val=${A[i]-} ;;
+      -c?*)            ((opts++)); form=byte; val=${t:2} ;;
+      --bytes=*)       ((opts++)); form=byte; val=${t#--bytes=} ;;
+      -n|--lines|-n?*|--lines=*|-[0-9]*) ((opts++)); form=line ;;
+      -*)              bad=1 ;;
+      *)               ((files++)) ;;
+    esac
+  done
+  (( bad == 0 && files == 0 && opts == 1 )) || return 1
+  [[ $form == byte && $val =~ ^[0-9]+$ && ${#val} -le 15 ]] || return 1
+  (( 10#$val <= MIN_BYTES ))
+}
+
+run_head_tail() { # TOKS[0] is head|tail; per-target verdict
+  local tool=${TOKS[0]##*/} f st actual ex un rl rby rd el
+  ht_parse
+  ((${#FILES[@]})) || pass
+  if (( HT_BAD || HT_OPTS > 1 )); then
+    check_files_full "$tool"; pass
+  fi
+  if (( HT_OPTS == 0 )); then HT_FORM=line; HT_VALUE=10; fi
+  if ! [[ $HT_VALUE =~ ^[0-9]+$ ]] || (( ${#HT_VALUE} > 15 )); then
+    check_files_full "$tool"; pass   # uninterpretable -> full threshold
+  fi
+  if [[ $HT_FORM == line ]]; then
+    (( 10#$HT_VALUE < 1 )) && { check_files_full "$tool"; pass; }
+    for f in ${FILES[@]+"${FILES[@]}"}; do
+      if [[ $tool == head ]]; then
+        read -r ex un rl rby rd el <<<"$(range_scan "$f" 1 "$((10#$HT_VALUE))")"
+      else
+        read -r ex un rl rby rd el <<<"$(tail_scan "$f" "$((10#$HT_VALUE))")"
+      fi
+      (( ex )) || continue
+      (( un )) && deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 1)"
+      deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 0)"
+    done
+  else
+    for f in ${FILES[@]+"${FILES[@]}"}; do
+      st=$(file_size "$f")
+      actual=$(( 10#$HT_VALUE < st ? 10#$HT_VALUE : st ))
+      (( actual > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$actual" 0 0 0)"
+    done
+  fi
+  pass
+}
+
+# evaluate one simple command at the FULL threshold (compound segments,
+# pipeline first command after non-narrowing tail, uninterpretable commands)
+check_stage_full() {
+  local base
+  tokenize "$1"; strip_vars
+  ((${#VTOKS[@]})) || return 0
+  base=${VTOKS[0]##*/}
+  case $base in
+    cat|head|tail|less|more) TOKS=("${VTOKS[@]}"); collect_file_args; check_files_full "$base" ;;
+  esac
+}
+
+# Track only a leading chain of literal cd commands in a simple command list.
+# Never evaluate shell text. Conditional branches, background jobs, grouping,
+# expansions, and cd after another command remain outside this limited parser.
+track_literal_cd() {
+  local raw=$1 target
+  (( TRACK_CD )) || return 0
+  tokenize "$raw"
+  if (( ${#TOKS[@]} == 3 )) && [[ ${TOKS[0]} == cd && ${TOKS[1]} == -- ]]; then
+    target=${TOKS[2]}
+  elif (( ${#TOKS[@]} == 2 )) && [[ ${TOKS[0]} == cd ]]; then
+    target=${TOKS[1]}
+  else
+    TRACK_CD=0; return 0
+  fi
+  # Reject even quoted expansion characters rather than pretending to expand.
+  # Bare option operands, HOME/OLDPWD, CDPATH, and shell redirections are not
+  # inferred. Explicit relative/absolute directory operands are resolved by cd.
+  case $raw in *'$'*|*'`'*|*'\'*|*'~'*|*'*'*|*'?'*|*'['*|*'<'*|*'>'*) TRACK_CD=0; return 0;; esac
+  [[ -n $target && $target != -* ]] || { TRACK_CD=0; return 0; }
+  if [[ -n ${CDPATH-} ]]; then
+    case $target in /*|./*|../*|.|..) ;; *) TRACK_CD=0; return 0;; esac
+  fi
+  # A failed cd leaves the working directory unchanged. Following segments
+  # still receive the existing conservative full-file check.
+  CDPATH= builtin cd -- "$target" 2>/dev/null || TRACK_CD=0
+}
+
+# --- common 5-6 / §10 decision tree ---
+# Order (§10-4): compound split runs BEFORE pipe / redirect early-pass.
+# `$(...)` / backticks mark a segment uninterpretable (its own tokens are not
+# trusted) but never exempt operator scanning — other segments still get
+# checked at full thresholds.
+scan_ops "$cmd"
+
+if ((${#SEPS[@]})); then
+  TRACK_CD=1
+  # A cd in a branch/subshell/pipeline must not change the inspection cwd.
+  # Disable tracking for such lists instead of guessing their shell semantics.
+  case $cmd in *'('*|*')'*|*'{'*|*'}'*) TRACK_CD=0;; esac
+  for sep in "${SEPS[@]}"; do
+    pos=${sep%%:*}; len=${sep##*:}; op=${cmd:pos:len}
+    case $op in '||'|'&'|'|'|'|&') TRACK_CD=0;; esac
+  done
+  split_at "$cmd" "${SEPS[@]}"
+  segments=("${SPLIT[@]}")
+  for seg in ${segments[@]+"${segments[@]}"}; do
+    scan_ops "$seg"
+    ((${#PIPES[@]})) && TRACK_CD=0
+    track_literal_cd "$seg"
+    if ((${#PIPES[@]})); then
+      split_at "$seg" "${PIPES[@]}"
+      stages=("${SPLIT[@]}")
+    else
+      stages=("$seg")
+    fi
+    for stage in ${stages[@]+"${stages[@]}"}; do
+      check_stage_full "$stage"
+    done
+  done
+  pass
+fi
+
+if ((${#PIPES[@]})); then
+  split_at "$cmd" "${PIPES[@]}"
+  last_idx=$(( ${#SPLIT[@]} - 1 ))
+  scan_ops "${SPLIT[last_idx]}"
+  tail_uninterp=$S_UNINTERP
+  tokenize "${SPLIT[last_idx]}"
+  # uninterpretable or empty tail command -> fail-closed on pipeline head (§10-4)
+  if (( tail_uninterp )) || (( !${#TOKS[@]} )); then
+    check_stage_full "${SPLIT[0]}"
+    pass
+  fi
+  strip_vars
+  base=''
+  ((${#VTOKS[@]})) && base=${VTOKS[0]##*/}
+  case $base in
+    head|tail)
+      if pipe_tail_ok "${VTOKS[@]:1}"; then
+        pass
+      else
+        deny "Piped '$base' output has no byte bound; use 'head -c N file' / 'tail -c N file' with explicit bytes or /token-shunt:bulk-reader."
+      fi ;;
+    cat|tee|less|more) check_stage_full "${SPLIT[0]}"; pass ;;
+    *) pass ;;   # unknown tail command: intended fail-open (§10-4, §15)
+  esac
+fi
+
+if (( CLEAN_GT && ! SPECIAL_GT && S_UNINTERP == 0 )); then
+  pass   # single interpretable command writing stdout to a file
+fi
+
+tokenize "$cmd"; strip_vars
+((${#VTOKS[@]})) || pass
+base=${VTOKS[0]##*/}
+TOKS=("${VTOKS[@]}")
+case $base in
+  cat|less|more) collect_file_args; check_files_full "$base"; pass ;;
+  head|tail)     run_head_tail ;;
+  *)             pass ;;
+esac

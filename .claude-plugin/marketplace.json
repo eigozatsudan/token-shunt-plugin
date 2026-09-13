@@ -1,0 +1,16 @@
+{
+  "name": "token-shunt",
+  "owner": {
+    "name": "skills"
+  },
+  "metadata": {
+    "description": "Delegate large-file reads and boilerplate generation to Claude Code subagents so the parent context stays small."
+  },
+  "plugins": [
+    {
+      "name": "token-shunt",
+      "source": "./plugin",
+      "description": "Hooks block oversized Read/Bash and route to bulk-reader / code-writer subagents."
+    }
+  ]
+}

@@ -1,0 +1,1177 @@
+{
+  "suites": {
+    "A": "mechanism-forced contracts (§13 必須ケース + §26.5 A 契約)",
+    "B": "product auto routing (§26.5 B 群)"
+  },
+  "cases": [
+    {
+      "id": "compare-bulk-facts",
+      "suite": "A",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "fixture_bytes": [
+        "gen/bulk_facts.py"
+      ],
+      "gold_file": "gen/gold-bulk-facts.json",
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line? Read the file and answer.",
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/bulk_facts.py --question \"MAGIC_TOKEN の値・定義する関数名・行番号\". Then report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "compare-one-line",
+      "suite": "A",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/oneline.json"
+      ],
+      "fixture_bytes": [
+        "gen/oneline.json"
+      ],
+      "gold_file": "gen/gold-oneline.json",
+      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Read the file and answer.",
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/oneline.json --question \"payload_sha キーの値\". Then report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/oneline.json"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/gen/oneline.json"
+          ]
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "compare-hook-deny-route",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "fixture_bytes": [
+        "gen/bulk_facts.py"
+      ],
+      "gold_file": "gen/gold-bulk-facts.json",
+      "prompt_direct": "First use the Read tool on {FIX}/gen/bulk_facts.py with no offset or limit. Then answer: what is the value of MAGIC_TOKEN, which function defines it, and on which line?",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "deny_route": {
+            "path": "{FIX}/gen/bulk_facts.py"
+          },
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "isolation": "delegate_lt_fixture",
+      "note": "prompt must not contain token-shunt/bulk-reader/Agent; deny-route runs via prompt_direct"
+    },
+    {
+      "id": "compare-explicit-multifile",
+      "suite": "A",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "rails/app/models/user.rb",
+        "rails/app/models/concerns/notifiable.rb",
+        "rails/app/jobs/welcome_email_job.rb"
+      ],
+      "fixture_bytes": [
+        "rails/app/models/user.rb"
+      ],
+      "gold": [
+        "Notifiable",
+        "after_create",
+        "WelcomeEmailJob"
+      ],
+      "gold_paths": {
+        "Notifiable": [
+          "user.rb",
+          "notifiable.rb"
+        ],
+        "after_create": [
+          "user.rb"
+        ],
+        "WelcomeEmailJob": [
+          "notifiable.rb",
+          "welcome_email_job.rb"
+        ]
+      },
+      "prompt_direct": "After a User is created, what happens? Look at {FIX}/rails/app/models/user.rb, {FIX}/rails/app/models/concerns/notifiable.rb and {FIX}/rails/app/jobs/welcome_email_job.rb and answer. Name the concern and the job.",
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/rails/app/models/user.rb {FIX}/rails/app/models/concerns/notifiable.rb {FIX}/rails/app/jobs/welcome_email_job.rb --question \"User 作成後に何が起きるか。concern と job の名前を挙げよ\". Then report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "single_invocation_paths": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ],
+          "child_reads_once": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/rails/app/models/user.rb"
+          ],
+          "gold_confirmed": true
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "compare-code-writer-ok",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "codegen/greeter.py"
+      ],
+      "target": "{FIX}/codegen/out/greeter_test.py",
+      "verify_cmd": "python -m unittest {FIX}/codegen/out/greeter_test.py",
+      "mutation": {
+        "file": "codegen/greeter.py",
+        "find": "Hello, {name}!",
+        "replace": "Goodbye, {name}."
+      },
+      "prompt_delegate": "Invoke the skill token-shunt:code-writer with these arguments: --worker-model {WM} --reference {FIX}/codegen/greeter.py --target {FIX}/codegen/out/greeter_test.py --verify \"python -m unittest {FIX}/codegen/out/greeter_test.py\" --spec \"greeter.py の greet に沿った unittest を生成\". Then run the verification command yourself and report the result.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "agent_calls_max": 4,
+          "child_msg_max": 800,
+          "child_no_body": true,
+          "no_parent_write": true,
+          "child_ref_before_write": true,
+          "parent_bash": {
+            "contains": [
+              "python -m unittest",
+              "greeter_test"
+            ],
+            "stdout_contains": [
+              "OK"
+            ],
+            "stdout_forbidden": [
+              "FAIL",
+              "ERROR"
+            ],
+            "ran_tests_min": 1
+          }
+        }
+      },
+      "disk_check": "code_writer_ok",
+      "isolation": "writer_body_absent"
+    },
+    {
+      "id": "compare-code-writer-no-ref",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [],
+      "target": "{TMP}/code-writer-should-not-exist.py",
+      "prompt_delegate": "Invoke the skill token-shunt:code-writer with these arguments: --worker-model {WM} --reference {FIX}/codegen/missing_ref.py --target {TMP}/code-writer-should-not-exist.py --verify \"python -m py_compile {TMP}/code-writer-should-not-exist.py\" --spec \"参照に沿ったテストを生成\". Then report what happened.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "child_no_body": true,
+          "child_msg_max": 800,
+          "child_mentions": [
+            "missing_ref.py"
+          ]
+        }
+      },
+      "disk_check": "target_absent"
+    },
+    {
+      "id": "compare-edit-dense-lines",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/dense_edit.txt"
+      ],
+      "fixture_bytes": [
+        "gen/dense_edit.txt"
+      ],
+      "gold_file": "gen/gold-edit.json",
+      "prompt_delegate": "In {FIX}/gen/dense_edit.txt there is a line EDIT_MARK=<value> and a line KEEP_MARK=<value2>. Use the token-shunt:bulk-reader skill (--worker-model auto) to have a worker report both marks' values and locations. Then, YOURSELF, locate EDIT_MARK with a unique Grep, targeted-Read the original file at that range, and Edit the file so EDIT_MARK=<value> becomes EDIT_MARK=EDITED. Do not change KEEP_MARK. Do not read the whole file.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_no_body": true,
+          "child_msg_max": 4000,
+          "edit_flow": {
+            "path": "{FIX}/gen/dense_edit.txt",
+            "original_mark": "EDIT_MARK="
+          },
+          "parent_no_full_read": [
+            "{FIX}/gen/dense_edit.txt"
+          ]
+        }
+      },
+      "disk_check": "edit_marks",
+      "isolation": "delegate_lt_fixture"
+    },
+    {
+      "id": "worker-model-invalid",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "codegen/greeter.py"
+      ],
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model invalid {FIX}/codegen/greeter.py --question \"greet は何を返すか\". Then invoke token-shunt:code-writer with --worker-model bogus --reference {FIX}/codegen/greeter.py --target {TMP}/invalid-model-target.py --spec \"x\". Report what happened.",
+      "expect": {
+        "delegate": {
+          "expect_error": "worker-model",
+          "agent_zero": true
+        }
+      },
+      "disk_check": "target_absent:{TMP}/invalid-model-target.py"
+    },
+    {
+      "id": "writer-verification-levels",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/verify/config_ref.json",
+        "gen/verify/notes_ref.md",
+        "gen/verify/notes_ref.yaml"
+      ],
+      "prompt_delegate": "Three delegated generations. (1) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/config_ref.json --target {TMP}/vl_config.json --verify \"jq empty {TMP}/vl_config.json\" --spec \"config_ref に沿った JSON。必須キー required_key を含む\". (2) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.md --target {TMP}/vl_notes.md --spec \"notes_ref に沿った 30 行の Markdown\". (3) token-shunt:code-writer --worker-model auto --reference {FIX}/gen/verify/notes_ref.yaml --target {TMP}/vl_notes.yaml --spec \"notes_ref に沿った YAML（.md と同じ最小契約）\". Then classify these already-written samples (do not rewrite them): {FIX}/gen/verify/control_missing_key.json (syntactically valid JSON missing required_key), {FIX}/gen/verify/control_trunc.json (similar-length mid-truncation), {FIX}/gen/verify/control_fence.md (Markdown whose trailing fence is a legitimate code block). Run each verification and report status and the verification level (minimal|syntax|requirements) for each artifact. JSON parse-only is syntax + partial; Markdown/YAML minimal checks are minimal + partial; requirements only if acceptance keys were checked. For this evaluation, run a separate parent Bash verification for each artifact using exactly these commands: python3 {JUDGE_DIR}/flow_checks.py --verify syntax {TMP}/vl_config.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.md --expected-lines 30; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {TMP}/vl_notes.yaml; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_missing_key.json; python3 {JUDGE_DIR}/flow_checks.py --verify syntax {FIX}/gen/verify/control_trunc.json; python3 {JUDGE_DIR}/flow_checks.py --verify minimal {FIX}/gen/verify/control_fence.md. These checks print only verification evidence, never artifact bodies. Report each filename followed by its verification level and status on its own line or Markdown table row. The truncated JSON must be reported failed/error or partial; the legitimate Markdown control must pass minimal checks and be reported minimal + partial. Do not claim requirements verification from these checks.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "agent_calls_max": 4,
+          "verification_level": {
+            "vl_config.json": "syntax",
+            "vl_notes.md": "minimal",
+            "vl_notes.yaml": "minimal"
+          },
+          "verification_artifacts": [
+            {
+              "path": "{TMP}/vl_config.json",
+              "level": "syntax",
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{TMP}/vl_notes.md",
+              "level": "minimal",
+              "expected_lines": 30,
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{TMP}/vl_notes.yaml",
+              "level": "minimal",
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{FIX}/gen/verify/control_missing_key.json",
+              "level": "syntax",
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{FIX}/gen/verify/control_trunc.json",
+              "level": "syntax",
+              "ok": false,
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            },
+            {
+              "path": "{FIX}/gen/verify/control_fence.md",
+              "level": "minimal",
+              "checker": "{JUDGE_DIR}/flow_checks.py"
+            }
+          ]
+        }
+      },
+      "verification_controls": [
+        {
+          "path": "{FIX}/gen/verify/control_missing_key.json",
+          "forbid_levels": [
+            "requirements"
+          ],
+          "forbid_status": [
+            "complete"
+          ],
+          "allowed_status": [
+            "partial"
+          ],
+          "expected_level": "syntax"
+        },
+        {
+          "path": "{FIX}/gen/verify/control_trunc.json",
+          "forbid_levels": [
+            "requirements"
+          ],
+          "forbid_status": [
+            "complete"
+          ],
+          "allowed_status": [
+            "partial",
+            "failed",
+            "error"
+          ],
+          "expected_level": "syntax"
+        },
+        {
+          "path": "{FIX}/gen/verify/control_fence.md",
+          "forbid_levels": [
+            "requirements"
+          ],
+          "forbid_status": [
+            "complete"
+          ],
+          "allowed_status": [
+            "partial"
+          ],
+          "expected_level": "minimal"
+        }
+      ],
+      "disk_check": "verify_levels"
+    },
+    {
+      "id": "reader-batch-evidence",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "rails/app/models/user.rb",
+        "rails/app/models/concerns/notifiable.rb",
+        "rails/app/jobs/welcome_email_job.rb",
+        "rails/app/mailers/user_mailer.rb"
+      ],
+      "gold": [
+        "Notifiable",
+        "WelcomeEmailJob",
+        "UserMailer"
+      ],
+      "gold_paths": {
+        "Notifiable": [
+          "user.rb",
+          "notifiable.rb"
+        ],
+        "WelcomeEmailJob": [
+          "notifiable.rb",
+          "welcome_email_job.rb"
+        ],
+        "UserMailer": [
+          "user_mailer.rb",
+          "welcome_email_job.rb"
+        ]
+      },
+      "prompt_delegate": "Using the token-shunt:bulk-reader skill (--worker-model auto), trace what happens after User creation across these 4 explicit paths: {FIX}/rails/app/models/user.rb {FIX}/rails/app/models/concerns/notifiable.rb {FIX}/rails/app/jobs/welcome_email_job.rb {FIX}/rails/app/mailers/user_mailer.rb --question \"concern・job・mailer の名前と参照関係\". First Agent must carry the first 3 paths; a later Agent the remaining path. Report the integrated answer with confirmed: items that name matching paths.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "agent_calls_min": 2,
+          "agent_calls_max": 4,
+          "batch_invocation": [
+            [
+              "{FIX}/rails/app/models/user.rb",
+              "{FIX}/rails/app/models/concerns/notifiable.rb",
+              "{FIX}/rails/app/jobs/welcome_email_job.rb"
+            ],
+            [
+              "{FIX}/rails/app/mailers/user_mailer.rb"
+            ]
+          ],
+          "child_reads_once": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb",
+            "{FIX}/rails/app/mailers/user_mailer.rb"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "gold_confirmed": true,
+          "retry_policy": true
+        }
+      }
+    },
+    {
+      "id": "reader-batch-ambiguous",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/collide/alpha.py",
+        "rails/app/models/user.rb",
+        "rails/app/models/concerns/notifiable.rb",
+        "gen/collide/beta.py"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader --worker-model auto on these four explicit paths: {FIX}/gen/collide/alpha.py {FIX}/rails/app/models/user.rb {FIX}/rails/app/models/concerns/notifiable.rb {FIX}/gen/collide/beta.py. First Agent must carry the first three paths and a later Agent the fourth. Question: does the TOKEN defined in alpha.py refer to the TOKEN in beta.py? Same-name symbols alone do not establish a reference. Integrate only matching reference evidence. If ambiguous, either perform at most one boundary confirmation with both files in one fresh Agent, or report the relationship as unconfirmed and status: partial. Do not infer a reference from a matching name.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "agent_calls_min": 2,
+          "agent_calls_max": 4,
+          "batch_invocation": [
+            [
+              "{FIX}/gen/collide/alpha.py",
+              "{FIX}/rails/app/models/user.rb",
+              "{FIX}/rails/app/models/concerns/notifiable.rb"
+            ],
+            [
+              "{FIX}/gen/collide/beta.py"
+            ]
+          ],
+          "child_reads_once": [
+            "{FIX}/gen/collide/alpha.py",
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/gen/collide/beta.py"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "ambiguous_batch": true,
+          "retry_policy": true
+        }
+      }
+    },
+    {
+      "id": "reader-bounds",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/gen/bulk_facts.py only --question \"このファイルが呼ぶ外部サービスのホスト名\". The answer requires a file that was not listed; the worker must report partial/unconfirmed rather than read other files. Report the worker's answer.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "partial",
+        "unconfirmed"
+      ]
+    },
+    {
+      "id": "retry-policy",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/gen/bulk_facts.py --question \"MAGIC_TOKEN の値\". If the worker's reply lacks required evidence or violates the response contract you may retry once per the skill's escalation policy; do not retry otherwise. Report the answer and whether a retry happened. Preserve the original quoted --question in each Agent prompt. If retrying, include the concrete short diagnosis in the retry prompt.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "agent_calls_min": 1,
+          "agent_calls_max": 2,
+          "retry_policy": true,
+          "child_reads_once": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "writer-bounds",
+      "suite": "A",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/verify/config_ref.json"
+      ],
+      "prompt_delegate": "Use token-shunt:code-writer (--worker-model auto) --reference {FIX}/gen/verify/config_ref.json --target {TMP}/wb_out.json --verify \"jq empty {TMP}/wb_out.json\" --spec \"config_ref に沿った設定ファイル\". Report the result.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "agent_calls_max": 4,
+          "child_tool_budget": 20
+        }
+      }
+    },
+    {
+      "id": "auto-bulk-facts",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "fixture_bytes": [
+        "gen/bulk_facts.py"
+      ],
+      "gold_file": "gen/gold-bulk-facts.json",
+      "require_parent_tokens": [
+        "direct",
+        "auto"
+      ],
+      "expected_resolved_model": {
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line? Read the file and answer.",
+      "prompt_delegate": "In {FIX}/gen/bulk_facts.py, what is the value of MAGIC_TOKEN, which function defines it, and on which line?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "deny_bypass": true
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "auto-one-line",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/oneline.json"
+      ],
+      "fixture_bytes": [
+        "gen/oneline.json"
+      ],
+      "gold_file": "gen/gold-oneline.json",
+      "require_parent_tokens": [
+        "direct",
+        "auto"
+      ],
+      "expected_resolved_model": {
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Read the file and answer.",
+      "prompt_delegate": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/oneline.json"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "deny_bypass": true
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "auto-explicit-multifile",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "rails/app/models/user.rb",
+        "rails/app/models/concerns/notifiable.rb",
+        "rails/app/jobs/welcome_email_job.rb"
+      ],
+      "fixture_bytes": [
+        "rails/app/models/user.rb"
+      ],
+      "gold": [
+        "Notifiable",
+        "after_create",
+        "WelcomeEmailJob"
+      ],
+      "gold_paths": {
+        "Notifiable": [
+          "user.rb",
+          "notifiable.rb"
+        ],
+        "after_create": [
+          "user.rb"
+        ],
+        "WelcomeEmailJob": [
+          "notifiable.rb",
+          "welcome_email_job.rb"
+        ]
+      },
+      "require_parent_tokens": [
+        "direct",
+        "auto"
+      ],
+      "expected_resolved_model": {
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "After a User is created, what happens? Look at {FIX}/rails/app/models/user.rb, {FIX}/rails/app/models/concerns/notifiable.rb and {FIX}/rails/app/jobs/welcome_email_job.rb and answer. Name the concern and the job.",
+      "prompt_delegate": "After a User is created, what happens? The relevant paths are {FIX}/rails/app/models/user.rb, {FIX}/rails/app/models/concerns/notifiable.rb and {FIX}/rails/app/jobs/welcome_email_job.rb. Name the concern and the job.{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "single_invocation_paths": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ],
+          "child_reads_once": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_full_read": [
+            "{FIX}/rails/app/models/user.rb"
+          ],
+          "deny_bypass": true,
+          "gold_confirmed": true
+        }
+      },
+      "isolation": "delegate_lt_direct_and_fixture"
+    },
+    {
+      "id": "auto-small-files",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/small3/a.txt",
+        "gen/small3/b.txt",
+        "gen/small3/c.txt"
+      ],
+      "gold": [
+        "ALPHA-111",
+        "BRAVO-222",
+        "CHARLIE-333"
+      ],
+      "prompt_direct": "What are the marker values in {FIX}/gen/small3/a.txt, {FIX}/gen/small3/b.txt and {FIX}/gen/small3/c.txt? Read them and answer.",
+      "prompt_delegate": "What are the marker values in {FIX}/gen/small3/a.txt, {FIX}/gen/small3/b.txt and {FIX}/gen/small3/c.txt?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/small3/a.txt",
+            "{FIX}/gen/small3/b.txt",
+            "{FIX}/gen/small3/c.txt"
+          ],
+          "agent_zero": true
+        },
+        "delegate": {
+          "parent_reads": [
+            "{FIX}/gen/small3/a.txt",
+            "{FIX}/gen/small3/b.txt",
+            "{FIX}/gen/small3/c.txt"
+          ],
+          "agent_zero": true
+        }
+      }
+    },
+    {
+      "id": "auto-known-range",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/known_range.txt"
+      ],
+      "gold_file": "gen/gold-known-range.json",
+      "prompt_direct": "In {FIX}/gen/known_range.txt, lines 200-210 contain a marker of the form RANGE_MARK=<value>. Report the value.",
+      "prompt_delegate": "In {FIX}/gen/known_range.txt, lines 200-210 contain a marker of the form RANGE_MARK=<value>. Report the value.{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "parent_targeted_read": {
+            "path": "{FIX}/gen/known_range.txt",
+            "covers": [
+              200,
+              210
+            ]
+          }
+        },
+        "delegate": {
+          "agent_zero": true,
+          "parent_targeted_read": {
+            "path": "{FIX}/gen/known_range.txt",
+            "covers": [
+              200,
+              210
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "auto-small-writer",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/verify/config_ref.json"
+      ],
+      "prompt_direct": "Write a JSON config file at {TMP}/small_cfg.json matching the style of {FIX}/gen/verify/config_ref.json with keys host and port. Then verify it parses with jq empty.",
+      "prompt_delegate": "Write a JSON config file at {TMP}/small_cfg.json matching the style of {FIX}/gen/verify/config_ref.json with keys host and port. Then verify it parses with jq empty.{WMHINT}",
+      "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "parent_bash": {
+            "contains": [
+              "jq empty"
+            ]
+          }
+        },
+        "delegate": {
+          "agent_zero": true,
+          "parent_bash": {
+            "contains": [
+              "jq empty"
+            ]
+          }
+        }
+      },
+      "disk_check": "target_exists_json:{TMP}/small_cfg.json"
+    },
+    {
+      "id": "auto-large-writer",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "codegen/greeter.py"
+      ],
+      "target": "{TMP}/large_test.py",
+      "verify_cmd": "python -m unittest {TMP}/large_test.py",
+      "mutation": {
+        "file": "codegen/greeter.py",
+        "find": "Hello, {name}!",
+        "replace": "Goodbye, {name}."
+      },
+      "require_parent_tokens": [
+        "direct",
+        "auto"
+      ],
+      "expected_resolved_model": {
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python -m unittest {TMP}/large_test.py.",
+      "prompt_delegate": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 60 lines at {TMP}/large_test.py covering greet() normal cases, empty input, and unicode names. Then verify it with python -m unittest {TMP}/large_test.py.{WMHINT}",
+      "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "parent_bash": {
+            "contains": [
+              "python -m unittest",
+              "large_test"
+            ],
+            "stdout_contains": [
+              "OK"
+            ],
+            "stdout_forbidden": [
+              "FAIL",
+              "ERROR"
+            ],
+            "ran_tests_min": 1
+          }
+        },
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "no_parent_write": true,
+          "child_msg_max": 800,
+          "child_ref_before_write": true,
+          "parent_bash": {
+            "contains": [
+              "python -m unittest",
+              "large_test"
+            ],
+            "stdout_contains": [
+              "OK"
+            ],
+            "stdout_forbidden": [
+              "FAIL",
+              "ERROR"
+            ],
+            "ran_tests_min": 1
+          }
+        }
+      },
+      "disk_check": "code_writer_ok",
+      "isolation": "writer_body_absent"
+    },
+    {
+      "id": "auto-edit-grep-location",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/edit_hint.py"
+      ],
+      "gold_file": "gen/gold-edit-hint.json",
+      "prompt_direct": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical.",
+      "prompt_delegate": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical.{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "edit_flow": {
+            "path": "{FIX}/gen/edit_hint.py",
+            "original_mark": "HDR_MODE = 'off'"
+          }
+        },
+        "delegate": {
+          "agent_zero": true,
+          "edit_flow": {
+            "path": "{FIX}/gen/edit_hint.py",
+            "original_mark": "HDR_MODE = 'off'"
+          }
+        }
+      },
+      "disk_check": "edit_hint"
+    },
+    {
+      "id": "auto-routing-boundary-16k-minus",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bounds/b16383.txt"
+      ],
+      "gold": [
+        "KITE-7f3a91"
+      ],
+      "prompt_direct": "What marker value is in {FIX}/gen/bounds/b16383.txt? Read it and answer.",
+      "prompt_delegate": "What marker value is in {FIX}/gen/bounds/b16383.txt?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "parent_reads": [
+            "{FIX}/gen/bounds/b16383.txt"
+          ]
+        },
+        "delegate": {
+          "agent_zero": true,
+          "parent_reads": [
+            "{FIX}/gen/bounds/b16383.txt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "auto-routing-boundary-16k-equal",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bounds/b16384.txt"
+      ],
+      "gold": [
+        "LUMEN-b21c04"
+      ],
+      "prompt_direct": "What marker value is in {FIX}/gen/bounds/b16384.txt? Read it and answer.",
+      "prompt_delegate": "What marker value is in {FIX}/gen/bounds/b16384.txt?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true,
+          "parent_reads": [
+            "{FIX}/gen/bounds/b16384.txt"
+          ]
+        },
+        "delegate": {
+          "agent_zero": true,
+          "parent_reads": [
+            "{FIX}/gen/bounds/b16384.txt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "auto-routing-boundary-16k-plus",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bounds/b16385.txt"
+      ],
+      "gold": [
+        "ORBIT-9e04d2"
+      ],
+      "expected_resolved_model": {
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "What marker value is in {FIX}/gen/bounds/b16385.txt? Read it and answer.",
+      "prompt_delegate": "What marker value is in {FIX}/gen/bounds/b16385.txt?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/bounds/b16385.txt"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_msg_max": 4000,
+          "child_reads_once": [
+            "{FIX}/gen/bounds/b16385.txt"
+          ],
+          "parent_no_full_read": [
+            "{FIX}/gen/bounds/b16385.txt"
+          ]
+        }
+      }
+    },
+    {
+      "id": "auto-routing-boundary-50-lines",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bounds/l50.py"
+      ],
+      "gold": [
+        "def task_fifty"
+      ],
+      "prompt_direct": "In {FIX}/gen/bounds/l50.py, what is the name of the function defined on line 50? Read the file and answer.",
+      "prompt_delegate": "In {FIX}/gen/bounds/l50.py, what is the name of the function defined on line 50?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/bounds/l50.py"
+          ],
+          "agent_zero": true
+        },
+        "delegate": {
+          "agent_zero": true
+        }
+      },
+      "note": "read-side 50-line fixture; writer gate is auto-routing-boundary-50-lines-writer"
+    },
+    {
+      "id": "auto-routing-boundary-49-lines-writer",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "haiku",
+        "sonnet",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bounds/w49_ref.py"
+      ],
+      "prompt_direct": "Using {FIX}/gen/bounds/w49_ref.py as reference, write a 49-line Python module at {TMP}/w49.py (helpers around greet). Then python -m py_compile {TMP}/w49.py.",
+      "prompt_delegate": "Using {FIX}/gen/bounds/w49_ref.py as reference, write a 49-line Python module at {TMP}/w49.py (helpers around greet). Then python -m py_compile {TMP}/w49.py.{WMHINT}",
+      "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true
+        },
+        "delegate": {
+          "agent_zero": true
+        }
+      },
+      "disk_check": "target_exists:{TMP}/w49.py"
+    },
+    {
+      "id": "auto-routing-boundary-50-lines-writer",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "codegen/greeter.py"
+      ],
+      "expected_resolved_model": {
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 50 lines at {TMP}/w50.py covering greet(). Then python -m py_compile {TMP}/w50.py.",
+      "prompt_delegate": "Using {FIX}/codegen/greeter.py as the reference, write a unittest module of at least 50 lines at {TMP}/w50.py covering greet(). Then python -m py_compile {TMP}/w50.py.{WMHINT}",
+      "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "agent_zero": true
+        },
+        "delegate": {
+          "agent_type": "token-shunt:code-writer",
+          "no_parent_write": true,
+          "child_msg_max": 800
+        }
+      },
+      "disk_check": "target_exists:{TMP}/w50.py"
+    },
+    {
+      "id": "auto-routing-boundary-known-range-deny",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/bulk_facts.py"
+      ],
+      "gold_file": "gen/gold-bulk-facts.json",
+      "expected_resolved_model": {
+        "auto": "haiku_then_authorized_sonnet"
+      },
+      "prompt_direct": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report MAGIC_TOKEN value, defining function, and line. Do not Edit the file.",
+      "prompt_delegate": "Read {FIX}/gen/bulk_facts.py with offset 1 and limit 400 (lines 1-400) and report MAGIC_TOKEN value, defining function, and line. Do not Edit the file.{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "agent_zero": true,
+          "no_parent_edit": true
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "deny_route": {
+            "path": "{FIX}/gen/bulk_facts.py",
+            "range": true
+          },
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "no_parent_edit": true
+        }
+      }
+    }
+  ]
+}

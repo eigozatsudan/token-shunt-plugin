@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# token-shunt PreToolUse hook for Read (design §8-§9).
+# Pass: exit 0, empty stdout (no permissionDecision — permission flow untouched).
+# Deny: exit 0, hookSpecificOutput.permissionDecision = "deny".
+# Fail-closed: missing jq / unreadable stdin -> stderr + exit 2.
+export LC_ALL=C
+HOOK_NAME=check-file-size
+
+# --- common 1-2: jq required, stdin must be JSON ---
+command -v jq >/dev/null 2>&1 || { printf 'token-shunt: jq is required\n' >&2; exit 2; }
+input=$(cat)
+jq -e . >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
+
+# --- common 3: env thresholds ---
+int_env() {
+  local v=${!1-} d=$2
+  v=${v#+}
+  # >15 digits can wrap int64 arithmetic; treat as unset -> default.
+  if [[ $v =~ ^-?[0-9]+$ ]] && (( ${#v} <= 15 )); then
+    if [[ $v == -* ]]; then printf '%s' "$d"; else printf '%s' "$((10#$v))"; fi
+  else
+    printf '%s' "$d"
+  fi
+}
+MIN_LINES=$(int_env TOKEN_SHUNT_MIN_LINES 350)
+MIN_BYTES=$(int_env TOKEN_SHUNT_MIN_BYTES 65536)
+SCAN_BUDGET_BYTES=$(int_env TOKEN_SHUNT_SCAN_BUDGET_BYTES 8388608)
+SCAN_BUDGET_MS=$(int_env TOKEN_SHUNT_SCAN_BUDGET_MS 2000)
+
+now_ms() {
+  if [[ -n ${EPOCHREALTIME-} ]]; then
+    local t=${EPOCHREALTIME/./}
+    printf '%s' "$((10#${t%???}))"
+  else
+    local d
+    d=$(date +%s%3N 2>/dev/null)
+    [[ $d =~ ^[0-9]+$ ]] || d=$((SECONDS * 1000))
+    printf '%s' "$d"
+  fi
+}
+
+hook_log() {
+  [[ -n ${TOKEN_SHUNT_HOOK_LOG-} ]] || return 0
+  jq -nc --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
+    '{hook:$h,decision:$d,reason:$r}' >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
+}
+pass() { hook_log pass ""; exit 0; }
+deny() {
+  hook_log deny "$1"
+  jq -nc --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  exit 0
+}
+
+file_size() {
+  # Match -f and the actual read: measure the target, not the symlink inode.
+  local s
+  s=$(stat -L -c %s -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
+  s=$(stat -L -f %z -- "$1" 2>/dev/null) && { printf '%s' "$s"; return; }
+  s=$(wc -c <"$1" 2>/dev/null) && printf '%s' "$((s))" || printf '0'
+}
+
+# range_scan(path, start_line, line_count) -> "exceeded undetermined lines bytes read_bytes elapsed_ms"
+# Interval [start, start+count); per-line bytes = content + its newline byte.
+# Budget covers bytes read including the skip to start_line (awk feeds the file
+# via stdin so every consumed record counts). elapsed_ms is measured around the
+# scan and applied after it: the byte budget already bounds the work, and a slow
+# FS is the documented residual (design §8.6, §15).
+range_scan() {
+  local path=$1 start=$2 count=$3 st t0 t1 elapsed res ex un rl rby rb
+  st=$(file_size "$path")
+  t0=$(now_ms)
+  res=$(awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+      if (NR>=start && NR<start+cnt) { rl++; rby+=lb+nl
+        if (rl>ml || rby>mb) { printf "1 0 %d %d %d", rl, rby, rb; f=1; exit } }
+      if (rb>bb)             { printf "1 1 %d %d %d", rl, rby, rb; f=1; exit }
+      if (NR==start+cnt-1)   { printf "0 0 %d %d %d", rl, rby, rb; f=1; exit } }
+    END { if(!f) printf "0 0 %d %d %d", rl, rby, rb }' <"$path")
+  t1=$(now_ms); elapsed=$((t1-t0))
+  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
+  # failure in evals without mocking awk globally.
+  [[ $res =~ ^[01]\ [01]\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || res="1 1 0 0 0"
+  read -r ex un rl rby rb <<<"$res"
+  if (( elapsed > SCAN_BUDGET_MS )); then ex=1; un=1; fi
+  printf '%s %s %s %s %s %s' "$ex" "$un" "$rl" "$rby" "$rb" "$elapsed"
+}
+
+# full_file_verdict(path) -> "OK|EXCEEDED|UNDETERMINED lines bytes read_bytes elapsed_ms"
+full_file_verdict() {
+  local path=$1 st t0 t1 elapsed res v nl rb
+  st=$(file_size "$path")
+  if (( st > MIN_BYTES )); then
+    printf 'EXCEEDED -1 %s %s 0' "$st" "$st"; return
+  fi
+  t0=$(now_ms)
+  res=$(awk -v ml="$MIN_LINES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
+    { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
+      if (NR>ml) { printf "EXCEEDED %d %d %d", NR, rb, rb; f=1; exit }
+      if (rb>bb) { printf "UNDETERMINED %d %d %d", NR, rb, rb; f=1; exit } }
+    END { if(!f) printf "OK %d %d %d", NR, rb, rb }' <"$path")
+  t1=$(now_ms); elapsed=$((t1-t0))
+  # Malformed awk output is undetermined deny (§8.6). Cannot force awk
+  # failure in evals without mocking awk globally.
+  [[ $res =~ ^(OK|EXCEEDED|UNDETERMINED)\ -?[0-9]+\ [0-9]+\ [0-9]+$ ]] || res="UNDETERMINED 0 0 0"
+  read -r v nl rb _ <<<"$res"
+  if [[ $v == OK ]] && (( elapsed > SCAN_BUDGET_MS )); then v=UNDETERMINED; fi
+  printf '%s %s %s %s %s' "$v" "$nl" "$rb" "$rb" "$elapsed"
+}
+
+deny_reason() { # lines bytes read_bytes elapsed undetermined
+  local ln=$1 by=$2 rd=$3 el=$4 un=$5 parts=""
+  if [[ $ln == -1 ]]; then
+    parts="bytes=${by}/${MIN_BYTES}"
+  else
+    parts="lines=${ln}/${MIN_LINES}, bytes=${by}/${MIN_BYTES}"
+  fi
+  printf 'File exceeds token-shunt thresholds (%s). Use /token-shunt:bulk-reader. For edits, use a targeted Read of the original that passes the hook. If that fails, editing is outside v0.1 scope.' "$parts"
+  if [[ $un == 1 ]]; then
+    printf ' Scan budget exceeded (read_bytes=%s/%s, ms=%s/%s); use /token-shunt:bulk-reader for analysis. Editing still requires a successful targeted Read of the original.' "$rd" "$SCAN_BUDGET_BYTES" "$el" "$SCAN_BUDGET_MS"
+  fi
+}
+
+# --- common 4: worker allowlist (exact match only) ---
+# agent_type is a harness-set top-level field; tool_input is model-controlled
+# and must not be consulted (spoofing).
+agent=$(jq -r '.agent_type // empty' <<<"$input")
+case $agent in
+  token-shunt:bulk-reader|token-shunt:code-writer) pass ;;
+esac
+
+# --- §9 ---
+file_path=$(jq -r '.tool_input.file_path // empty' <<<"$input")
+[[ -z $file_path ]] && pass
+[[ -f $file_path ]] || pass
+
+# excluded extensions (ASCII-lowercased last extension)
+case ${file_path,,} in
+  *.png|*.jpg|*.jpeg|*.gif|*.webp|*.bmp|*.ico|*.tif|*.tiff|*.avif|*.heic|*.heif|*.pdf|*.ipynb) pass ;;
+esac
+
+read -r fverdict flines fbytes frb fel <<<"$(full_file_verdict "$file_path")"
+[[ $fverdict == OK ]] && pass   # whole file under both thresholds: never gate on `limit`
+
+# file exceeds at least one threshold (or could not be determined cheaply)
+limit=$(jq -r '.tool_input.limit // empty' <<<"$input")
+offset=$(jq -r '.tool_input.offset // empty' <<<"$input")
+
+if [[ -z $limit ]]; then
+  un0=0; [[ $fverdict == UNDETERMINED ]] && un0=1
+  deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" "$un0")"
+fi
+if ! [[ $limit =~ ^[0-9]+$ ]] || (( ${#limit} > 15 || 10#$limit < 1 )); then
+  deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
+fi
+start=1
+if [[ -n $offset ]]; then
+  if ! [[ $offset =~ ^[0-9]+$ ]] || (( ${#offset} > 15 || 10#$offset < 1 )); then
+    deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
+  fi
+  start=$((10#$offset))
+fi
+
+read -r ex un rl rby rd el <<<"$(range_scan "$file_path" "$start" "$((10#$limit))")"
+if (( ex )); then
+  deny "$(deny_reason "$rl" "$rby" "$rd" "$el" "$un")"
+fi
+pass

@@ -1,0 +1,204 @@
+"""Control transcripts exercise production judge wiring, not only helper functions."""
+import json
+from pathlib import Path
+import tempfile
+import unittest
+import judge
+from test_routing_checks import transcript
+
+
+def tool(tid, name, inp, result, error=False, extra=None):
+    block = {'type': 'tool_result', 'tool_use_id': tid, 'content': result, 'is_error': error}
+    if extra:
+        block.update(extra)
+    return [
+        {'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': tid, 'name': name, 'input': inp}]}},
+        {'type': 'user', 'message': {'content': [block]}}]
+
+
+def child_read(agent_id, rid, path, body='ok'):
+    return [
+        {'type': 'assistant', 'parent_tool_use_id': agent_id,
+         'message': {'content': [
+             {'type': 'tool_use', 'id': rid, 'name': 'Read',
+              'input': {'file_path': path}}]}},
+        {'type': 'user', 'parent_tool_use_id': agent_id,
+         'message': {'content': [
+             {'type': 'tool_result', 'tool_use_id': rid, 'content': body}]}}]
+
+
+class JudgeIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def case(self, cid):
+        cases = json.loads(Path(judge.__file__).with_name('cases.json').read_text())['cases']
+        raw = json.dumps(next(c for c in cases if c['id'] == cid))
+        return json.loads(raw.replace('{TMP}', str(self.root)).replace('{FIX}', str(self.root)).replace(
+            '{JUDGE_DIR}', str(Path(judge.__file__).parent)))
+
+    def run_judge(self, events, spec, mode='auto'):
+        init = {'type': 'system', 'subtype': 'init', 'plugins':
+                [] if mode == 'direct' else [{'name': 'token-shunt'}]}
+        p = self.root/'transcript.jsonl'
+        p.write_text('\n'.join(json.dumps(e) for e in [init] + events))
+        return judge.judge(str(p), spec, {'mode': mode})
+
+    def test_actual_edit_case_enforces_order(self):
+        spec = self.case('auto-edit-grep-location')
+        path = spec['expect']['direct']['edit_flow']['path']
+        Path(path).parent.mkdir(parents=True)
+        Path(path).write_text('padding\n'*100 + "HDR_MODE = 'off'\n" + 'padding\n'*100)
+        grep = tool('g', 'Grep', {'path': path, 'pattern': 'HDR_MODE'}, "101:HDR_MODE = 'off'")
+        read = tool('r', 'Read', {'file_path': path, 'offset': 100, 'limit': 3}, "100→padding\n101→HDR_MODE = 'off'\n102→padding")
+        edit = tool('e', 'Edit', {'file_path': path, 'old_string': "HDR_MODE = 'off'", 'new_string': 'HDR_MODE=on'}, 'updated')
+        final = [{'type': 'result', 'result': 'Updated HDR_MODE=on'}]
+        good, ok = self.run_judge(grep + read + edit + final, spec, 'direct')
+        self.assertTrue(ok, good['reasons'])
+        bad, ok = self.run_judge(edit + grep + read + final, spec, 'direct')
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['edit_flow'])
+
+    def test_actual_writer_case_requires_parent_execution_and_honest_report(self):
+        spec = self.case('writer-verification-levels')
+        agent = tool('a', 'Agent', {'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
+                                   'prompt': 'generate the requested artifacts'}, 'status: complete')
+        artifacts = spec['expect']['delegate']['verification_artifacts']
+        report = '\n'.join(Path(c['path']).name + ': verification: ' + c['level'] + '; status: partial'
+                           for c in artifacts)
+        final = [{'type': 'result', 'result': report}]
+        commands = []
+        for i, c in enumerate(artifacts):
+            command = 'python3 %s --verify %s %s' % (c['checker'], c['level'], c['path'])
+            if c.get('expected_lines'):
+                command += ' --expected-lines ' + str(c['expected_lines'])
+            evidence = {'path': c['path'], 'verification': c['level'], 'ok': c.get('ok', True)}
+            commands += tool('v' + str(i), 'Bash', {'command': command}, json.dumps(evidence), not evidence['ok'])
+        good, ok = self.run_judge(agent + commands + final, spec)
+        self.assertTrue(ok, good['reasons'])
+        bad, ok = self.run_judge(agent + final, spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['verification_execution'])
+        inflated = [{'type': 'result', 'result': report.replace('status: partial', 'status: complete')}]
+        bad, ok = self.run_judge(agent + commands + inflated, spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['verification_level'])
+
+    def test_retry_reread_and_resume_through_judge(self):
+        spec = {'id': 'retry-control', 'expect': {'delegate': {
+            'agent_type': 'token-shunt:bulk-reader', 'retry_policy': True,
+            'child_reads_once': ['/a.py'], 'agent_calls_max': 2}},
+            'expected_resolved_model': {'auto': 'haiku'}}
+        attempts = [('haiku', ['/a.py'], '', {}),
+                    ('sonnet', ['/a.py'], 'missing evidence: TOKEN location absent', {})]
+        good, ok = self.run_judge(transcript(attempts).events, spec)
+        self.assertTrue(ok, good['reasons'])
+        resumed = [('haiku', ['/a.py'], '', {'resume': 'previous-agent'})]
+        bad, ok = self.run_judge(transcript(resumed).events, spec)
+        self.assertFalse(ok)
+        self.assertFalse(bad['checks']['retry_policy'])
+
+    def _no_ref_events(self, spec, child_text):
+        return tool('a', 'Agent', {
+            'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
+            'prompt': spec['prompt_delegate'],
+        }, child_text) + [{'type': 'result', 'result': child_text}]
+
+    def test_no_ref_rejects_fenced_generated_code_without_fixture(self):
+        spec = self.case('compare-code-writer-no-ref')
+        leaked = '```python\n' + '\n'.join('print(%d)' % i for i in range(25)) + '\n```'
+        v, ok = self.run_judge(self._no_ref_events(spec, leaked), spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('child_no_body'))
+
+    def test_no_ref_rejects_twenty_line_body_and_requires_reason_path(self):
+        spec = self.case('compare-code-writer-no-ref')
+        body = '\n'.join('x = %d' % i for i in range(21))
+        v, ok = self.run_judge(self._no_ref_events(spec, body), spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('child_no_body'))
+        silent = 'ok'
+        v, ok = self.run_judge(self._no_ref_events(spec, silent), spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('child_mentions'))
+        good = 'reference missing_ref.py is unreadable (ENOENT). status: partial'
+        v, ok = self.run_judge(self._no_ref_events(spec, good), spec)
+        self.assertTrue(ok, v['reasons'])
+
+    def test_16k_boundary_gold_is_not_size_filename(self):
+        for cid, size in (('auto-routing-boundary-16k-minus', '16383'),
+                          ('auto-routing-boundary-16k-equal', '16384'),
+                          ('auto-routing-boundary-16k-plus', '16385')):
+            spec = self.case(cid)
+            self.assertTrue(spec.get('gold'))
+            for g in spec['gold']:
+                self.assertNotIn(size, g, cid)
+
+    def test_16k_plus_parent_full_read_fails_even_with_agent(self):
+        spec = self.case('auto-routing-boundary-16k-plus')
+        path = spec['expect']['delegate']['parent_no_full_read'][0]
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text('marker\n')
+        gold = spec['gold'][0]
+        child = child_read('a', 'cr', path, gold)
+        events = (
+            tool('r', 'Read', {'file_path': path}, gold)
+            + tool('a', 'Agent', {
+                'subagent_type': 'token-shunt:bulk-reader', 'model': 'haiku',
+                'prompt': path,
+            }, 'confirmed: ' + gold, extra={'resolvedModel': 'claude-haiku'})
+            + child
+            + [{'type': 'result', 'result': gold}]
+        )
+        v, ok = self.run_judge(events, spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('parent_no_full_read'))
+
+    def test_16k_minus_requires_parent_read(self):
+        spec = self.case('auto-routing-boundary-16k-minus')
+        path = spec['expect']['delegate']['parent_reads'][0]
+        gold = spec['gold'][0]
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text('marker=' + gold + '\n')
+        guessed = [{'type': 'result', 'result': gold}]
+        v, ok = self.run_judge(guessed, spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('parent_reads'))
+        events = tool('r', 'Read', {'file_path': path}, 'marker=' + gold) + guessed
+        v, ok = self.run_judge(events, spec)
+        self.assertTrue(ok, v['reasons'])
+
+    def test_batch_evidence_rejects_padding_quote_under_cap(self):
+        spec = self.case('reader-batch-evidence')
+        user = Path(judge.__file__).parent / 'fixtures' / 'rails' / 'app' / 'models' / 'user.rb'
+        pad_lines = [l for l in user.read_text().splitlines() if '# padding-' in l][:21]
+        self.assertEqual(len(pad_lines), 21)
+        leak = '\n'.join(pad_lines)
+        self.assertLess(len(leak), 4000)
+        b0, b1 = spec['expect']['delegate']['batch_invocation']
+        def agent(tid, paths, text):
+            prompt = ' '.join(paths) + ' --question "concern job mailer"'
+            ev = tool(tid, 'Agent', {
+                'subagent_type': 'token-shunt:bulk-reader', 'model': 'haiku',
+                'prompt': prompt,
+            }, text, extra={'resolvedModel': 'claude-haiku'})
+            for i, p in enumerate(paths):
+                ev += child_read(tid, tid + 'r' + str(i), p, 'body')
+            return ev
+        confirmed = (
+            'confirmed: Notifiable path: user.rb\n'
+            'confirmed: WelcomeEmailJob path: welcome_email_job.rb\n'
+            'confirmed: UserMailer path: user_mailer.rb'
+        )
+        final = [{'type': 'result', 'result': confirmed}]
+        events = agent('a0', b0, leak) + agent('a1', b1, confirmed) + final
+        v, ok = self.run_judge(events, spec)
+        self.assertFalse(ok)
+        self.assertFalse(v['checks'].get('child_no_body'))
+
+
+if __name__ == '__main__':
+    unittest.main()

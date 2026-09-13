@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-09-13T00:00:00",
+  "claude_code_version": "x.y.z",
+  "cases": {
+    "compare-bulk-facts": {
+      "modes": {
+        "direct": {
+          "case": "compare-bulk-facts", "mode": "direct", "verdict": "pass",
+          "checks": {"plugin_absent": true, "foreign_hooks": true, "accuracy": true, "parent_reads": true},
+          "metrics": {
+            "parent_added_chars": 0, "parent_added_utf8_bytes": 0,
+            "parent_added_tokens_est": 0,
+            "parent_input_tokens": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
+            "parent_output_tokens": 0,
+            "usage_parent": {}, "usage_tree": {},
+            "models": ["claude-sonnet-5"], "wall_ms": 0, "total_cost_usd": 0
+          },
+          "reasons": []
+        },
+        "auto": {"case": "compare-bulk-facts", "mode": "auto", "verdict": "pass", "checks": {}, "metrics": {}, "reasons": []}
+      },
+      "isolation": {"ok": true, "detail": "delegate=[n] direct=m fixture=f"}
+    }
+  },
+  "fail_count": 0,
+  "errors": [],
+  "selected_run_valid": true,
+  "release_eligible": false,
+  "parent_token_deltas": {
+    "auto-bulk-facts": {
+      "direct_input": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
+      "auto_input": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
+      "direct_output": 0,
+      "auto_output": 0,
+      "direct_io": 0,
+      "auto_io": 0,
+      "delta_input": 0,
+      "delta_output": 0,
+      "delta_io": 0
+    }
+  },
+  "skip_reason": "claude_missing (only when the claude binary is absent)"
+}
