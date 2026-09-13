@@ -87,7 +87,7 @@ class Transcript:
         self.hook_events = []    # hook_started/hook_response
         self.assistant_msgs = [] # {id,model,text,parent_tool_use_id}
         self.user_msgs = []      # parent-level user/tool_result messages
-        for e in events:
+        for event_index, e in enumerate(events):
             t = e.get("type")
             ptid = e.get("parent_tool_use_id")
             if t == "system" and e.get("subtype") in ("hook_started", "hook_response"):
@@ -97,7 +97,7 @@ class Transcript:
                 mid = m.get("id")
                 text_parts = []
                 context_parts = []
-                for b in m.get("content", []) or []:
+                for block_index, b in enumerate(m.get("content", []) or []):
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "tool_use":
@@ -109,6 +109,7 @@ class Transcript:
                             "parent_tool_use_id": ptid,
                             "msg_id": mid,
                             "model": m.get("model"),
+                            "position": (event_index, block_index),
                         })
                     elif b.get("type") == "text":
                         text_parts.append(b.get("text", ""))
@@ -122,13 +123,14 @@ class Transcript:
                 m = e.get("message", {})
                 self.user_msgs.append({"id": m.get("id"), "parent_tool_use_id": ptid,
                                        "message": m})
-                for b in m.get("content", []) or []:
+                for block_index, b in enumerate(m.get("content", []) or []):
                     if isinstance(b, dict) and b.get("type") == "tool_result":
                         rec = {
                             "text": text_of(b.get("content")),
                             "is_error": bool(b.get("is_error")),
                             "parent_tool_use_id": ptid,
                             "raw": b,
+                            "position": (event_index, block_index),
                         }
                         for k in ("resolvedModel", "resolved_model",
                                   "modelsUsed", "models_used"):
@@ -473,6 +475,47 @@ def use_targets_path(use, path):
     for k in ("file_path", "path", "notebook_path"):
         v = inp.get(k)
         if isinstance(v, str) and norm_path(v) == norm_path(path):
+            return True
+    return False
+
+
+def writer_reference_paths(spec):
+    """Resolve declared references without guessing from a matching basename."""
+    refs = list(spec.get("fixtures") or [])
+    refs = [p for p in refs if "greeter" in os.path.basename(p)] or refs
+    absolute = [p for p in spec.get("fixtures_abs", []) if isinstance(p, str)
+                and os.path.isabs(p)]
+    resolved = []
+    for ref in refs:
+        if os.path.isabs(ref):
+            resolved.append(os.path.normpath(ref))
+            continue
+        rel = os.path.normpath(ref)
+        if rel.startswith("fixtures/"):
+            rel = rel[len("fixtures/"):]
+        if spec.get("fixture_root"):
+            resolved.append(os.path.normpath(os.path.join(spec["fixture_root"], rel)))
+        else:
+            matches = [p for p in absolute if os.path.normpath(p).endswith("/" + rel)]
+            resolved.append(os.path.normpath(matches[0]) if len(matches) == 1
+                            else os.path.normpath(os.path.join(FIXTURES_DIR, rel)))
+    return refs, resolved
+
+
+def writer_use_matches(use, spec, refs, resolved_refs):
+    for key in ("file_path", "path", "notebook_path"):
+        path = use["input"].get(key)
+        if not isinstance(path, str):
+            continue
+        if not os.path.isabs(path):
+            if spec.get("tool_cwd"):
+                path = os.path.join(spec["tool_cwd"], path)
+            elif not spec.get("fixture_root") and any(norm_path(path) == norm_path(r) for r in refs):
+                # Legacy specs did not retain the tool working directory.
+                return True
+            else:
+                continue
+        if os.path.normpath(path) in resolved_refs:
             return True
     return False
 
@@ -965,9 +1008,23 @@ def judge(transcript_path, spec, ctx):
     # child->parent text contract
     cap = exp.get("child_msg_max")
     if cap or exp.get("child_no_body"):
+        # Only an observed parent-side return between invocation and the final
+        # parent result proves what the worker returned. Child events and late
+        # returns cannot establish a clean, bounded parent response.
+        final_position = next(((i, 0) for i in range(len(tr.events) - 1, -1, -1)
+                               if tr.events[i].get("type") == "result"
+                               and tr.events[i].get("parent_tool_use_id") is None), None)
         for u in parent_agents:
             r = tr.result_of(u["id"])
-            if not r:
+            if (not r or r["parent_tool_use_id"] is not None
+                    or final_position is None
+                    or not (u["position"] < r["position"] < final_position)):
+                fail("child_result_evidence",
+                     "Agent %s lacks a parent result after invocation and before final result" % u["id"])
+                if cap:
+                    v["checks"]["child_msg_cap"] = False
+                if exp.get("child_no_body"):
+                    v["checks"]["child_no_body"] = False
                 continue
             txt = r["text"]
             if cap and len(txt) > cap:
@@ -983,6 +1040,7 @@ def judge(transcript_path, spec, ctx):
                 elif not any(fixture_text(fp, spec) for fp in fpaths) \
                         and long_nonempty_run(txt):
                     fail("child_no_body", ">20 consecutive non-empty child lines")
+        v["checks"].setdefault("child_result_evidence", True)
         v["checks"].setdefault("child_msg_cap", True)
         v["checks"].setdefault("child_no_body", True)
 
@@ -1102,25 +1160,28 @@ def judge(transcript_path, spec, ctx):
     # child Read of reference succeeds before child Write of target
     if spec.get("disk_check") == "code_writer_ok" or exp.get("child_ref_before_write"):
         target = spec.get("target")
-        refs = [p for p in (spec.get("fixtures") or [])
-                if "greeter" in os.path.basename(p)]
-        if not refs:
-            refs = list(spec.get("fixtures") or [])
+        refs, resolved_refs = writer_reference_paths(spec)
         if target and refs:
             for u in parent_agents:
                 children = tr.child_tool_uses(u["id"])
-                read_i = write_i = None
-                for i, c in enumerate(children):
-                    if c["name"] == "Read" and any(use_targets_path(c, r) for r in refs):
-                        rr = tr.result_of(c["id"])
-                        if rr and not rr["is_error"] and read_i is None:
-                            read_i = i
-                    if c["name"] == "Write" and use_targets_path(c, target):
-                        if write_i is None:
-                            write_i = i
-                if write_i is not None and (read_i is None or read_i > write_i):
-                    fail("child_ref_before_write",
-                         "Write of target before successful Read of greeter.py")
+                completed_reads = []
+                for c in children:
+                    if c["name"] != "Read":
+                        continue
+                    if not writer_use_matches(c, spec, refs, resolved_refs):
+                        continue
+                    rr = tr.result_of(c["id"])
+                    if (rr and not rr["is_error"]
+                            and rr["parent_tool_use_id"] == u["id"]
+                            and c["position"] < rr["position"]):
+                        completed_reads.append(rr["position"])
+                for c in children:
+                    if c["name"] == "Write" and writer_use_matches(
+                            c, spec, [target], [os.path.normpath(
+                                os.path.join(spec.get("tool_cwd", ""), target))]):
+                        if not any(pos < c["position"] for pos in completed_reads):
+                            fail("child_ref_before_write",
+                                 "Write of target before successful Read of reference")
             v["checks"].setdefault("child_ref_before_write", True)
 
     for key, reason in check_routing(
@@ -1483,8 +1544,8 @@ def leakcheck(transcript_path, target_path):
         with open(target_path, encoding="utf-8", errors="replace") as target:
             body = target.read()
     except OSError:
-        print("leakcheck: target unreadable")
-        return 1
+        print("leakcheck: target unreadable", file=sys.stderr)
+        return 2  # unverified; only 1 establishes a clean body-absence check
     reason = body_quote_reason(ptxt, body)
     if reason:
         print("leak: " + reason)

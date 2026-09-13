@@ -283,6 +283,11 @@ disk_check() { # spec_json mode -> writes $VRD/<id>.<mode>.disk.json
       if [[ ! -f $t ]]; then reason="missing target: $t"
       elif [[ ${dc%%:*} == target_exists_json ]] && ! jq empty "$t" 2>/dev/null; then reason="invalid json: $t"
       else ok=1; fi ;;
+    writer_boundary_49|writer_boundary_50)
+      local t=${dc#*:}; t=${t//\{TMP\}/$TMP}; t=${t//\{FIX\}/$FIX}
+      local boundary=${dc%%:*}; boundary=${boundary##*_}
+      if python3 -B "$CMP/flow_checks.py" --writer-boundary "$boundary" "$t" --reference "$FIX/codegen/greeter.py" >/dev/null; then ok=1
+      else reason="writer boundary artifact failed syntax, line count, or module requirements"; fi ;;
     code_writer_ok)
       local t; t=$(jq -r .target <<<"$spec" | sed "s|{TMP}|$TMP|g;s|{FIX}|$FIX|g")
       local vc; vc=$(jq -r .verify_cmd <<<"$spec" | sed "s|{TMP}|$TMP|g;s|{FIX}|$FIX|g")
@@ -496,6 +501,7 @@ while IFS= read -r case; do
     spec=${case//\{FIX\}/$FIX}
     spec=${spec//\{TMP\}/$TMP}
     spec=${spec//\{JUDGE_DIR\}/$CMP}
+    spec=$(jq -c --arg root "$FIX" --arg cwd "$CWD0" '.fixture_root = $root | .tool_cwd = $cwd' <<<"$spec")
     gf=$(jq -r '.gold_file // empty' <<<"$spec")
     if [[ -n $gf && -f $FIX/$gf ]]; then
       spec=$(jq -c --slurpfile g "$FIX/$gf" '.gold = ((.gold // []) + $g[0])' <<<"$spec")

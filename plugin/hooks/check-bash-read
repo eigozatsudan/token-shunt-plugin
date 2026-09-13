@@ -388,6 +388,94 @@ pipe_tail_ok() {
   (( 10#$val <= MIN_BYTES ))
 }
 
+# Decide whether a stage can send file contents around the final byte limiter.
+# This only tracks explicit output redirects and tee operands, never shell
+# expansion or execution. Other shell grammar keeps the existing limited scope.
+pipe_target_route() {
+  local target=$1 descriptor=''
+  case $target in
+    /dev/stdout) descriptor=1 ;;
+    /dev/stderr) descriptor=2 ;;
+    /dev/fd/*) descriptor=${target#/dev/fd/} ;;
+    /proc/self/fd/*) descriptor=${target#/proc/self/fd/} ;;
+  esac
+  if [[ $descriptor =~ ^[0-9]+$ ]]; then
+    while [[ ${#descriptor} -gt 1 && $descriptor == 0* ]]; do descriptor=${descriptor#0}; done
+    printf '%s' "${PIPE_FDS[$descriptor]-unknown}"
+  elif is_isolating_target "$target"; then
+    printf file
+  else
+    printf unknown
+  fi
+}
+
+# Reuse the existing pure-stdin byte-bound rule for an intermediate stage.
+# Output redirections change its destination, not the amount head/tail emits.
+# Keep quoted operator words and input-redirection text as operands so they
+# cannot manufacture a pure-stdin proof.
+pipe_stage_byte_bound() {
+  local base i
+  local -a bounded_toks=() bounded_kinds=()
+  tokenize "$1"; strip_vars
+  base=${VTOKS[0]-}; base=${base##*/}
+  case $base in head|tail) ;; *) return 1;; esac
+  for ((i=0; i<${#VTOKS[@]}; i++)); do
+    if [[ ${VTOK_KINDS[i]} == redirect ]]; then ((i++)); continue; fi
+    if [[ ${VTOK_KINDS[i]} == operator && ${VTOKS[i]} == '&' && ${VTOK_KINDS[i+1]-} == redirect ]]; then
+      continue
+    fi
+    bounded_toks+=("${VTOKS[i]}"); bounded_kinds+=("${VTOK_KINDS[i]}")
+  done
+  TOKS=("${bounded_toks[@]}"); TOK_KINDS=("${bounded_kinds[@]}")
+  pipe_tail_ok
+}
+
+pipe_stage_bypasses_limit() {
+  local stage=$1 connector=$2 i t rawfd fd operator target route source base both
+  local -A PIPE_FDS=([1]=pipe [2]=parent)
+  tokenize "$stage"; strip_vars
+  TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+  base=${TOKS[0]-}; base=${base##*/}
+  for ((i=0; i<${#TOKS[@]}; i++)); do
+    [[ ${TOK_KINDS[i]} == redirect ]] || continue
+    t=${TOKS[i]}; rawfd=${t%%>*}; fd=${rawfd:-1}; operator=${t#"$rawfd"}
+    while [[ ${#fd} -gt 1 && $fd == 0* ]]; do fd=${fd#0}; done
+    both=0
+    if (( i > 0 )) && [[ ${TOK_KINDS[i-1]} == operator && ${TOKS[i-1]} == '&' ]]; then both=1; fi
+    ((i++)); target=${TOKS[i]-}
+    if [[ $operator == '>&' && $target =~ ^[0-9]+-?$ ]]; then
+      source=${target%-}
+      while [[ ${#source} -gt 1 && $source == 0* ]]; do source=${source#0}; done
+      route=${PIPE_FDS[$source]-unknown}
+      [[ $target == *- ]] && PIPE_FDS[$source]=closed
+    elif [[ $operator == '>&' && $target == '-' ]]; then
+      route=closed
+    else
+      route=$(pipe_target_route "$target")
+      # Bash's >&word form without an explicit descriptor redirects both.
+      [[ $operator == '>&' && -z $rawfd ]] && both=1
+    fi
+    PIPE_FDS[$fd]=$route
+    (( both )) && PIPE_FDS[2]=$route
+  done
+  # |& duplicates the stage's final stdout onto stderr after explicit redirects.
+  [[ $connector == '|&' ]] && PIPE_FDS[2]=${PIPE_FDS[1]}
+  case ${PIPE_FDS[1]} in pipe|file|closed) ;; *) return 0;; esac
+  if [[ $base == tee ]]; then
+    local eoo=0
+    for ((i=1; i<${#TOKS[@]}; i++)); do
+      if [[ ${TOK_KINDS[i]} == redirect ]]; then ((i++)); continue; fi
+      [[ ${TOK_KINDS[i]} == word ]] || continue
+      t=${TOKS[i]}
+      if (( !eoo )) && [[ $t == -- ]]; then eoo=1; continue; fi
+      if (( !eoo )) && [[ $t == -* ]]; then continue; fi
+      route=$(pipe_target_route "$t")
+      case $route in pipe|file|closed) ;; *) return 0;; esac
+    done
+  fi
+  return 1
+}
+
 run_head_tail() { # TOKS[0] is head|tail; per-target verdict
   local tool=${TOKS[0]##*/} f st actual ex un rl rby rd el
   ht_parse
@@ -430,6 +518,26 @@ check_stage_full() {
   base=${VTOKS[0]##*/}
   case $base in
     cat|head|tail|less|more) TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$base" ;;
+  esac
+}
+
+# For an explicit side output, retain head/tail's own output bound. The
+# subshell contains run_head_tail's terminating pass without recording a
+# premature whole-hook pass; a deny keeps its normal JSON and log entry.
+check_stage_output() {
+  local base verdict
+  tokenize "$1"; strip_vars
+  ((${#VTOKS[@]})) || return 0
+  base=${VTOKS[0]##*/}
+  case $base in
+    head|tail)
+      verdict=$(
+        pass() { exit 0; }
+        TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+        run_head_tail
+      )
+      if [[ -n $verdict ]]; then printf '%s\n' "$verdict"; exit 0; fi ;;
+    *) check_stage_full "$1" ;;
   esac
 }
 
@@ -497,6 +605,8 @@ fi
 
 if ((${#PIPES[@]})); then
   split_at "$cmd" "${PIPES[@]}"
+  bounded_stages=("${SPLIT[@]}")
+  bounded_connectors=("${PIPES[@]}")
   last_idx=$(( ${#SPLIT[@]} - 1 ))
   scan_ops "${SPLIT[last_idx]}"
   tail_uninterp=$S_UNINTERP
@@ -513,6 +623,21 @@ if ((${#PIPES[@]})); then
     head|tail)
       TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
       if pipe_tail_ok; then
+        # A byte bound applies only to output that actually reaches this stage.
+        # Explicit side outputs require each source's own output-size check.
+        last_bound=-1
+        for ((stage_idx=0; stage_idx<last_idx; stage_idx++)); do
+          if pipe_stage_byte_bound "${bounded_stages[stage_idx]}"; then last_bound=$stage_idx; fi
+          cut=${bounded_connectors[stage_idx]}; pos=${cut%%:*}; len=${cut##*:}
+          if pipe_stage_bypasses_limit "${bounded_stages[stage_idx]}" "${cmd:pos:len}"; then
+            # Check each side output immediately: a later limiter must not
+            # excuse an earlier leak. A proven stdin byte bound already
+            # limits earlier sources; inspect only newer explicit inputs.
+            for ((source_idx=last_bound+1; source_idx<=stage_idx; source_idx++)); do
+              check_stage_output "${bounded_stages[source_idx]}"
+            done
+          fi
+        done
         pass
       else
         deny "Piped '$base' output has no byte bound; use 'head -c N file' / 'tail -c N file' with explicit bytes or /token-shunt:bulk-reader."

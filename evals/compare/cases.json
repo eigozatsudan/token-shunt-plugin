@@ -1187,13 +1187,15 @@
       "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
-          "agent_zero": true
+          "agent_zero": true,
+          "parent_py_compile": "{TMP}/w49.py"
         },
         "delegate": {
-          "agent_zero": true
+          "agent_zero": true,
+          "parent_py_compile": "{TMP}/w49.py"
         }
       },
-      "disk_check": "target_exists:{TMP}/w49.py"
+      "disk_check": "writer_boundary_49:{TMP}/w49.py"
     },
     {
       "id": "auto-routing-boundary-50-lines-writer",
@@ -1213,15 +1215,17 @@
       "wm_hint": " If you delegate generation to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
-          "agent_zero": true
+          "agent_zero": true,
+          "parent_py_compile": "{TMP}/w50.py"
         },
         "delegate": {
           "agent_type": "token-shunt:code-writer",
           "no_parent_write": true,
-          "child_msg_max": 800
+          "child_msg_max": 800,
+          "parent_py_compile": "{TMP}/w50.py"
         }
       },
-      "disk_check": "target_exists:{TMP}/w50.py"
+      "disk_check": "writer_boundary_50:{TMP}/w50.py"
     },
     {
       "id": "auto-routing-boundary-known-range-deny",

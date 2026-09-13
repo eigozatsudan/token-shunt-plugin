@@ -1,9 +1,14 @@
 """Ordered edit and parent verification evidence for the comparison judge."""
+import ast
 import json
 import os
 import re
 import shlex
 import sys
+import subprocess
+import tokenize
+import tempfile
+from pathlib import Path
 
 
 def timeline(tr):
@@ -106,6 +111,25 @@ def report_fields(section):
 
 def verification_errors(tr, spec, exp):
     errors = []
+    compile_target = exp.get('parent_py_compile')
+    if compile_target:
+        uses, results, report = timeline(tr)
+        found = False
+        for u in tr.parent_tool_uses('Bash'):
+            try:
+                argv = shlex.split(u['input'].get('command', ''))
+            except ValueError:
+                continue
+            if (len(argv) != 4 or argv[0] not in ('python', 'python3')
+                    or argv[1:3] != ['-m', 'py_compile']
+                    or os.path.normpath(argv[3]) != os.path.normpath(compile_target)):
+                continue
+            r = tr.result_of(u['id'])
+            if (r and not r['is_error'] and u['id'] in uses and u['id'] in results
+                    and uses[u['id']] < results[u['id']] < report):
+                found = True
+        if not found:
+            errors.append(('verification_execution', compile_target + ' lacks successful parent py_compile before report'))
     levels = exp.get('verification_level')
     if isinstance(levels, str):
         if levels not in tr.final_text():
@@ -163,6 +187,46 @@ def verification_errors(tr, spec, exp):
     return errors
 
 
+def verify_writer_boundary(path, boundary, reference=None):
+    """Check syntax/count and exercise the 50-line unittest against its reference."""
+    try:
+        with tokenize.open(path) as source:
+            body = source.read()
+        tree = ast.parse(body, filename=path)
+        compile(tree, path, 'exec')
+        lines = len(body.splitlines())
+        if (boundary == 49 and lines != 49) or (boundary == 50 and lines < 50):
+            raise ValueError('writer boundary line count not met')
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        if boundary == 49:
+            greet_names = {'greet'}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    greet_names.update(a.asname or a.name for a in node.names if a.name == 'greet')
+            greet_calls = any(isinstance(n, ast.Call) and
+                              (isinstance(n.func, ast.Name) and n.func.id in greet_names
+                               or isinstance(n.func, ast.Attribute) and n.func.attr in greet_names)
+                              for n in ast.walk(tree))
+            if not functions or not (greet_calls or any(n.name == 'greet' for n in functions)):
+                raise ValueError('missing helpers around greet')
+        else:
+            reference = reference or str(Path(__file__).parent / 'fixtures/codegen/greeter.py')
+            checker = str(Path(__file__).with_name('writer_unittest_check.py'))
+            with tempfile.TemporaryDirectory(prefix='writer-boundary-') as evidence_dir:
+                for mode in ('baseline', 'mutation'):
+                    evidence = Path(evidence_dir) / (mode + '.result')
+                    run = subprocess.run([sys.executable, '-B', checker, str(Path(path).resolve()),
+                                          str(Path(reference).resolve()), mode, str(evidence)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         timeout=15)
+                    if (run.returncode or not evidence.is_file()
+                            or evidence.read_text(encoding='utf-8') != 'writer-boundary-check:passed'):
+                        raise ValueError('unittest greet coverage failed: ' + mode)
+        return {'path': path, 'ok': True}
+    except (OSError, ValueError, SyntaxError, subprocess.TimeoutExpired) as exc:
+        return {'path': path, 'ok': False, 'diagnostic': str(exc)}
+
+
 def verify_artifact(path, level, expected_lines=None, require_keys=None):
     """No body output; minimal deliberately makes no syntax/completeness promise."""
     try:
@@ -205,12 +269,16 @@ def verify_artifact(path, level, expected_lines=None, require_keys=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--verify', required=True, choices=['minimal', 'syntax', 'requirements'])
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument('--verify', choices=['minimal', 'syntax', 'requirements'])
+    operation.add_argument('--writer-boundary', type=int, choices=[49, 50])
     parser.add_argument('path')
+    parser.add_argument('--reference', help='greet implementation for writer boundary unittest')
     parser.add_argument('--expected-lines', type=int)
     parser.add_argument('--require-key', action='append', default=[],
                         help='required key, or key=value, for --verify requirements')
     args = parser.parse_args()
-    evidence = verify_artifact(args.path, args.verify, args.expected_lines, args.require_key)
+    evidence = (verify_writer_boundary(args.path, args.writer_boundary, args.reference) if args.writer_boundary
+                else verify_artifact(args.path, args.verify, args.expected_lines, args.require_key))
     print(json.dumps(evidence))
     sys.exit(0 if evidence['ok'] else 1)

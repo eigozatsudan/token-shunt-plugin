@@ -16,7 +16,8 @@ class RunnerIsolationTests(unittest.TestCase):
         self.compare = Path(self.temp.name) / "evals" / "compare"
         self.compare.mkdir(parents=True)
         source = Path(__file__).parent
-        for name in ("run.sh", "cases.json", "judge.py", "routing_checks.py", "flow_checks.py"):
+        for name in ("run.sh", "cases.json", "judge.py", "routing_checks.py",
+                     "flow_checks.py", "writer_unittest_check.py"):
             shutil.copy2(source / name, self.compare / name)
         for name in ("rails", "codegen"):
             shutil.copytree(source / "fixtures" / name,

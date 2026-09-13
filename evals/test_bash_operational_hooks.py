@@ -196,6 +196,96 @@ class BashOperationalHooksTest(unittest.TestCase):
         self.assert_command("cat large.txt > first.txt > /dev/stdout",
                             "deny", 0)
 
+    @unittest.skipUnless(Path("/dev/stderr").exists(), "requires /dev/stderr")
+    def test_bounded_pipeline_checks_stdout_that_bypasses_limiter(self):
+        redirects = ("1>&2", "01>&02", ">&2", "3>&2 1>&3",
+                     ">/dev/stderr", ">>/dev/stderr", ">|/dev/stderr",
+                     ">/dev/fd/2", ">/proc/self/fd/2")
+        for redirect in redirects:
+            if redirect.startswith(">/") and not Path(redirect.lstrip(">|")).exists():
+                continue
+            for connector in ("|", "|&"):
+                with self.subTest(redirect=redirect, connector=connector):
+                    self.assert_command(
+                        f"cat large.txt {redirect} {connector} head -c 1",
+                        "deny", 0, len(self.large))
+        # The leaking stage need not be the first stage.
+        self.assert_command("cat small.txt | cat large.txt 1>&2 | head -c 1",
+                            "deny", 0, len(self.large))
+        self.assert_command("cat small.txt 1>&2 | head -c 1",
+                            "pass", 0, len(self.small))
+        # A stage's own supported byte/line bound still limits its side output.
+        self.assert_command("head -c 1 large.txt 1>&2 | head -c 1",
+                            "pass", 0, 1)
+        self.assert_command("tail -c 1 large.txt >/dev/stderr | head -c 1",
+                            "pass", 0, 1)
+        self.assert_command("head -n 1 large.txt 1>&2 | head -c 1",
+                            "pass", 0, 820)
+
+
+    @unittest.skipUnless(Path("/dev/stderr").exists(), "requires /dev/stderr")
+    def test_bounded_pipeline_checks_tee_side_outputs(self):
+        (self.root / "stderr-link").symlink_to("/dev/stderr")
+        for target in ("/dev/stderr", "/dev/fd/2", "stderr-link"):
+            if target.startswith("/") and not Path(target).exists():
+                continue
+            with self.subTest(target=target):
+                # tail drains its input, making the complete stderr copy
+                # deterministic rather than racing head's early SIGPIPE.
+                self.assert_command(f"cat large.txt | tee {target} | tail -c 1",
+                                    "deny", 1, len(self.large))
+        self.assert_command("cat large.txt | tee out /dev/stderr | tail -c 1",
+                            "deny", 1, len(self.large))
+
+    @unittest.skipUnless(Path("/dev/stderr").exists(), "requires /dev/stderr")
+    def test_bounded_pipeline_preserves_safe_descriptor_routes(self):
+        for redirects in ("", "2>&1", "2>&1 1>&2", "3>&1 1>&3",
+                          ">/dev/stdout", ">/dev/fd/1"):
+            if redirects.startswith(">/") and not Path(redirects[1:]).exists():
+                continue
+            with self.subTest(redirects=redirects):
+                self.assert_command(f"cat large.txt {redirects} | head -c 1",
+                                    "pass", 1)
+        for redirects in (">output.txt", ">/dev/null", "3>output.txt 1>&3"):
+            with self.subTest(redirects=redirects):
+                self.assert_command(f"cat large.txt {redirects} | head -c 1",
+                                    "pass", 0)
+        self.assert_command("cat large.txt | tee output.txt | tail -c 1",
+                            "pass", 1)
+        self.assertEqual((self.root / "output.txt").read_bytes(), self.large)
+        self.assert_command("cat large.txt | tee /dev/stderr 2>&1 | tail -c 1",
+                            "pass", 1)
+        self.assert_command("cat large.txt | tee /dev/stderr |& tail -c 1",
+                            "pass", 1)
+
+    @unittest.skipUnless(Path("/dev/stderr").exists(), "requires /dev/stderr")
+    def test_upstream_byte_bound_applies_to_each_side_output(self):
+        self.assert_command("cat large.txt | head -c 1 | tee /dev/stderr | head -c 1",
+                            "pass", 1, 1)
+        self.assert_command("cat large.txt | head -c 1 1>&2 | head -c 1",
+                            "pass", 0, 1)
+        self.assert_command("cat large.txt | tail -c 1 >/dev/stderr | head -c 1",
+                            "pass", 0, 1)
+        (self.root / "otherlarge.txt").write_bytes(self.large)
+        self.assert_command(
+            "cat large.txt | head -c 1 | cat otherlarge.txt 1>&2 | head -c 1",
+            "deny", 0, len(self.large))
+        self.assert_command(
+            "cat large.txt 1>&2 | head -c 1 | tee /dev/stderr | head -c 1",
+            "deny", 0, len(self.large))
+        # A quoted redirection-looking filename remains an explicit input,
+        # even though the preceding source has a byte bound.
+        (self.root / "1>&2").write_bytes(self.large)
+        self.assert_command(
+            "cat small.txt | head -c 1 | cat '1>&2' 1>&2 | head -c 1",
+            "deny", 0, len(self.large))
+
+    def test_bounded_pipeline_quoted_redirect_words_are_operands(self):
+        for name in ("1>&2", "2>", "&>"):
+            (self.root / name).write_bytes(b"")
+            self.assert_command("cat " + shlex.quote(name) + " large.txt | head -c 1",
+                                "pass", 1)
+
 
 if __name__ == "__main__":
     unittest.main()
