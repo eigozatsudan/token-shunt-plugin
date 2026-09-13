@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Use when a Read or Bash hook blocked an oversized file or the needed I/O exceeds the small-task budget. Keep small targeted reads in the parent; file count alone is not a trigger. Do not use for debugging, architectural decisions, or edits that need exact contents in the parent context. Do not @-mention large files.
+description: Use when a file whose size you have checked is too large to read in the parent, when a Read or Bash hook blocked an oversized file, or when the needed I/O exceeds the small-task budget. Check size from metadata and pick the route before searching an oversized file's contents. Keep small targeted reads in the parent; file count alone is not a trigger. Do not use for debugging, architectural decisions, or edits that need exact contents in the parent context. Do not @-mention large files.
 ---
 
 # bulk-reader
@@ -33,8 +33,23 @@ Examples:
    full Read, a range-unknown full read over budget, or files over the
    small-task budget → delegate.
 
+   **Route before searching (§26.5).** Decide the route from metadata
+   *before* running a content search on the file. Grep with
+   `output_mode=content` (and `-o`, `-A`/`-B`, `head -c`, ...) is not
+   hooked, so it can pull body text out of an oversized file and make
+   the routing decision moot. On a file already known to be over the
+   small-task budget, do not use content search to locate the answer:
+   delegate, and let the child read. Content search on such a file stays
+   allowed only for the two purposes the parent genuinely needs it for —
+   establishing *positions* for the §11.6 edit contract, and confirming
+   a known range — with `output_mode=files_with_matches` or a short
+   `head_limit`.
+
 2. **Delegation prompt.** Contains only: the question, the explicit paths
-   to read, and a short diagnosis. Never read or paste file bodies into it.
+   to read, each path's **size and line count** from the step 1 metadata
+   (`wc -lc`), and a short diagnosis. The child needs the line count to
+   split a file the Read tool refuses whole (see step 4). Never read or
+   paste file bodies into it.
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,
    never a bare `bulk-reader`. Always pass `model` per --worker-model
    (auto starts with haiku).
@@ -62,9 +77,12 @@ Examples:
    independent facts from questions that require comparing bodies across
    batches. partial never counts as a correct-answer success.
 
-4. **Child contract.** The child reads each specified path at most once
-   (<=3 Reads total), does not explore related files, does not Grep/Glob/
-   resume, and answers only the question. If the specified paths are
+4. **Child contract.** The child reads each specified region at most
+   once — one Read per path normally, and when the Read tool refuses a
+   whole file on its own token cap, consecutive non-overlapping ranges
+   derived from the line count the parent passed. It never re-reads a
+   range, does not explore related files, does not Grep/Glob/resume, and
+   answers only the question. If the specified paths are
    insufficient it reports the shortage; deciding which paths to add is a
    separate parent task, not an auto-exploration loop.
 

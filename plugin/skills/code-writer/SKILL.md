@@ -22,9 +22,22 @@ Examples:
 1. **Small-task check first (§26.2).** If the expected output is under 50
    lines AND the reference total is <= 16384 bytes AND each needed Read
    would pass the Read hook, the parent writes and verifies directly — no
-   delegation. Without a reference file path, do not use this skill; the
-   parent writes small output itself. Never spawn a worker just to
-   estimate output size.
+   delegation. Never spawn a worker just to estimate output size.
+
+   Two things outrank this check:
+
+   - **An explicit delegation request.** If the caller asked for the
+     worker to be run (a mechanism test, or wording such as "delegate" /
+     "worker を起動" / "親で生成しない"), delegate regardless of size.
+     Size is a default, not a veto over an explicit instruction.
+   - **A reference path that is given but unreadable.** "Without a
+     reference file path" means no path was supplied at all — then do not
+     use this skill and let the parent write the small output. A supplied
+     path that is missing, unreadable, or cannot be sized is a *different*
+     case: do not stop in the parent on the `stat` / `wc -c` failure.
+     Delegate, and let the worker apply its unreadable-reference contract
+     (report the failure, write nothing) — that is the contract the parent
+     then reports.
 
 2. **Delegation.** `subagent_type` is exactly `token-shunt:code-writer`;
    `model` per --worker-model (auto starts with haiku). Pass: the spec,

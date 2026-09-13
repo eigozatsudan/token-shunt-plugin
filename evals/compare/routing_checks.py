@@ -25,8 +25,29 @@ def _alias(model, expected):
     return bool(re.fullmatch(r'(?:claude-)?' + re.escape(expected) + r'(?:-[\w.-]+)?', str(model).lower()))
 
 
+def _read_range(call):
+    """(start, end) line range of a Read, 1-based inclusive; end None = EOF."""
+    offset = call['input'].get('offset')
+    limit = call['input'].get('limit')
+    start = int(offset) if offset else 1
+    end = start + int(limit) - 1 if limit else None
+    return start, end
+
+
+def _overlaps(a, b):
+    (a0, a1), (b0, b1) = a, b
+    return (a1 is None or b0 <= a1) and (b1 is None or a0 <= b1)
+
+
+# The Read tool refuses a whole file over its own token cap, which is exactly
+# the size class token-shunt delegates. The child may then cover the file with
+# consecutive non-overlapping ranges (plugin/agents/bulk-reader.md), so the
+# contract is "each region once", not "each path once". maxTurns is 6.
+MAX_CHILD_READS = 6
+
+
 def check_reader_reads(tr, exp, agents):
-    """Each carrier reads its own explicit paths once; retries may reread them."""
+    """Each carrier reads its own explicit paths; no region is read twice."""
     errors = []
     required = set(exp.get('child_reads_once', []))
     allowed = required | set(exp.get('required_paths', [])) | set(exp.get('single_invocation_paths', []))
@@ -42,8 +63,10 @@ def check_reader_reads(tr, exp, agents):
         expected = allowed & declared
         children = tr.child_tool_uses(agent['id'])
         reads = [c for c in children if c['name'] == 'Read']
-        if not expected or len(declared) > 3 or len(reads) > 3:
-            errors.append(('child_reads_once', 'Agent %s must carry/read 1–3 explicit paths' % agent['id']))
+        if not expected or len(declared) > 3 or len(reads) > MAX_CHILD_READS:
+            errors.append(('child_reads_once',
+                           'Agent %s must carry 1-3 explicit paths and stay within %d Reads'
+                           % (agent['id'], MAX_CHILD_READS)))
         if any(c['name'] != 'Read' for c in children):
             errors.append(('child_extra_read', 'reader used a tool other than Read'))
         for c in reads:
@@ -52,12 +75,27 @@ def check_reader_reads(tr, exp, agents):
                 errors.append(('child_extra_read', 'Read outside this invocation: %s' % path))
         for path in expected:
             matches = [c for c in reads if c['input'].get('file_path', c['input'].get('path')) == path]
-            if len(matches) != 1:
-                errors.append(('child_reads_once', '%s must be read once per invocation' % path))
-            elif not (r := tr.result_of(matches[0]['id'])) or r['is_error']:
+            if not matches:
+                errors.append(('child_reads_once', '%s must be read in this invocation' % path))
+                continue
+            # A Read the tool rejected returned no content: it cannot double-read
+            # a region, but it still costs a turn (counted above).
+            got = []
+            for c in matches:
+                result = tr.result_of(c['id'])
+                if not result or result['is_error']:
+                    continue
+                got.append((c, _read_range(c)))
+            if not got:
                 errors.append(('child_reads_once', 'Read did not succeed: %s' % path))
-            else:
-                covered.add(path)
+                continue
+            for i, (_, span) in enumerate(got):
+                for _, other in got[i + 1:]:
+                    if _overlaps(span, other):
+                        errors.append(('child_reads_once',
+                                       '%s: overlapping reads %s and %s' % (path, span, other)))
+                        break
+            covered.add(path)
     for path in required - covered:
         errors.append(('child_reads_once', 'no successful carrier Read: %s' % path))
     return errors
