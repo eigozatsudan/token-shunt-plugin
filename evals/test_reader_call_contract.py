@@ -369,6 +369,41 @@ class ScanBudgetContractTests(unittest.TestCase):
         self.assertIn('File exceeds token-shunt thresholds', reason)
 
 
+class SkillDocumentTests(unittest.TestCase):
+    SKILL = ROOT / 'plugin/skills/bulk-reader/SKILL.md'
+    AGENT = ROOT / 'plugin/agents/bulk-reader.md'
+
+    def test_description_defers_to_the_deny_for_typical_cases(self):
+        head = self.SKILL.read_text(encoding='utf-8').split('---')[1]
+        self.assertIn('Not needed when the deny already carries the call spec',
+                      head)
+        for keyword in ('explicit delegation', 'batch', 'ambiguity', 'retry'):
+            self.assertIn(keyword, head.lower())
+
+    def test_skill_no_longer_restates_the_parent_call_spec(self):
+        body = self.SKILL.read_text(encoding='utf-8')
+        for gone in ("awk 'END{print NR}'", 'One bullet per fact: confirmed:',
+                     'Maximum 4000 characters total'):
+            self.assertNotIn(gone, body)
+
+    def test_skill_keeps_the_out_of_scope_and_explicit_delegation_notes(self):
+        body = self.SKILL.read_text(encoding='utf-8')
+        self.assertIn('hooks/reader-call-contract', body)
+        self.assertIn('(size unknown)', body)
+        self.assertIn('Explicit delegation (no hook deny)', body)
+        self.assertIn('16384', body)   # multi-small-file note stays
+
+    def test_agent_keeps_its_own_execution_contract(self):
+        body = self.AGENT.read_text(encoding='utf-8')
+        for kept in ('next_line', '4000 character', 'stop_reason',
+                     'unreadable_line'):
+            self.assertIn(kept, body)
+
+    def test_skill_shrinks_below_six_kilobytes(self):
+        self.assertLess(self.SKILL.stat().st_size, 6144,
+                        self.SKILL.stat().st_size)
+
+
 # New test classes from later tasks go ABOVE this block. unittest.main() must
 # stay the last thing in this file: evals/run.sh executes this module
 # directly (python3 -B evals/test_reader_call_contract.py), so anything

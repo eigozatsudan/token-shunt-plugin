@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Bounded reader of up to three explicitly supplied files, invoked via the token-shunt bulk-reader skill.
+description: Bounded reader of up to three explicitly supplied files. Reads only the given paths and returns path-tagged facts.
 model: haiku
 effort: low
 maxTurns: 7
@@ -47,7 +47,11 @@ file paths.
   `stop_reason` as separate plain lines without Markdown decoration. If a range was unreadable/elided or unspecified
   dependencies are needed, answer `partial` — never `complete` by guessing.
   Keep `status` and `stop_reason` **inside the 4000 character maximum**
-  below. A forced stop (maxTurns reached) that leaves no final answer is
+  below. Both fields are mandatory even if the caller requests only a
+  value or a brief summary. Put all evidence and unconfirmed/unread-range
+  bullets before these final two lines; append nothing after stop_reason.
+  Reserve room for them before writing facts.
+  A forced stop (maxTurns reached) that leaves no final answer is
   also `partial`.
 - Each retrieved fact uses its own bullet: `confirmed: <path> — <symbol>:
   <fact or requested scalar value>`. Keep the path and fact in the same
