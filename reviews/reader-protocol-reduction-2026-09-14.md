@@ -134,11 +134,57 @@ not unsupported` の場合のみ `gold_confirmed_ok` を呼ぶ。`exp` は
 太字強調はあるが `confirmed:` プレフィックスは無い）。`bare` 条件も同様。
 これは実際に測定された失敗であり、確認できたことの1つとして扱う。
 
-**この失敗が Task 2〜8（reader プロトコル往復削減）由来の退行なのか、
-それ以前から存在した既知の欠落なのかは、今回のデータだけでは判定できない。**
-今回は変更後の1点しか計測しておらず、同じ訂正版チェックを変更前のコミットに
-対して回した比較が無い。よって「プロトコル変更のせいではない」とも
-「プロトコル変更のせいだ」とも結論しない。
+#### 変更前ベースラインによる決着（2026-09-14 追記）
+
+前版ではこの失敗が Task 2〜8 由来の退行か既存の欠落かを未決としていた。
+指定した次の一手をそのまま実行して決着した。**結論: 退行ではなく、
+Task 2〜8 以前から存在した既存の欠落である。**
+
+計測方法。`plugin/` を `1ad21b0`（`reader-call-contract` 導入コミット
+`0f99da5` の直前）の状態に戻したツリーを作り、`--plugin-dir` だけをそれに
+差し替えて `auto-explicit-multifile` を `bare`/`skill` × 3周＝6実行した。
+fixtures は今回と同一のツリー
+（`evals/compare/tmp/cost-probe/20260914-204044/fixtures`）をコピーして使用し、
+プロンプト・親モデル（sonnet）・ワーカーモデル（haiku）は
+`cost_probe.prompt_for` をそのまま import して生成したので差は無い。
+Tasks 2〜8 に無関係な未コミット編集（`check-jq`、`check-reader-contract`、
+code-writer 系）は元のプローブ実行時と同じ状態で保持し、
+差分が Tasks 2〜8 の変更だけになるようにした。
+判定は訂正版チェック（インライン `gold` + `gold_file` をマージし、
+`expect.<mode>.gold_confirmed` が立つケースだけに適用）を
+`judge.py` 本体に渡して行った（チェックを自作し直していない）。
+成果物は `evals/compare/tmp/cost-probe-baseline/20260914-214327/`。
+
+結果（6実行、CLI 終了コード0・`ok=True`、合計 $0.6797）:
+
+| 条件 | 変更前 `gold_confirmed` | 変更後 `gold_confirmed` |
+|---|---|---|
+| `bare` 3周 | 3/3 失敗 | 3/3 失敗 |
+| `skill` 3周 | 3/3 失敗 | 3/3 失敗 |
+
+失敗理由も両者で同一（`gold not in confirmed: + matching path:
+Notifiable, after_create, WelcomeEmailJob`）。よって
+**`missing_gold` は本プランの変更とは独立した既存のギャップ**であり、
+deny へ契約を載せた変更が壊したものではない。
+
+#### 付随して見えた差（結論は変えない）
+
+親最終回答に `confirmed:` 形式の項目が出た実行数を数えると:
+
+| 条件 | 変更前 | 変更後 |
+|---|---|---|
+| `bare` | 0/3 周 | 0/3 周 |
+| `skill` | 2/3 周（rep1=4項目, rep3=4項目） | 0/3 周 |
+
+ただし**絶対パスを伴う `confirmed:` 項目は、変更前後あわせて12実行すべてで
+0件**だった。変更前の `skill` が出した `confirmed:` 項目も引用元が
+`user.rb` / `notifiable.rb` という相対ファイル名で、
+`gold_confirmed_ok` が要求する絶対パス引用を満たしていない。
+したがってこの差は判定結果を一切動かしておらず、
+「変更前なら通っていた」ことを意味しない。
+各条件3周ずつの小標本でもあるため、**観察であって知見ではない**。
+形式保持そのものを問題にするなら、`confirmed:` 形式の出現率を
+主目的にした別プローブが要る。
 
 `routing_checks.has_confirmed_claim` は今回使わなかった。この関数は
 「`confirmed:` 行に実質的な主張が一切無いこと」を検証する専用のヘルパーで
@@ -214,11 +260,13 @@ not unsupported` の場合のみ `gold_confirmed_ok` を呼ぶ。`exp` は
   正しい（上記「gold_confirmed の内訳（訂正版）」参照）。
 - **`auto-explicit-multifile`（`gold_confirmed: true` が実際に課されている
   唯一のケース）は `bare`/`skill` 計6実行すべてで実際に失敗した。**
-  これが Task 2〜8 による退行か、変更前から存在した既知の欠落（親が
-  子エージェントの `confirmed:` 契約付き回答を受け取った後、自分の最終回答は
-  素の散文で書いてしまう、という構造）かは、**同じ訂正版チェックを
-  変更前のコミットの transcript に対して回した比較が無いため判定できない**。
-  次のセクションの未解決課題として残す。
+  **これは Task 2〜8 による退行ではなく、変更前から存在した既存の欠落である。**
+  `plugin/` を `1ad21b0`（変更前）に戻して同じ fixtures・同じプロンプトで
+  `bare`/`skill` × 3周を回し、同じ訂正版チェックを適用したところ、
+  6実行すべてが同じ理由で失敗した（上記「変更前ベースラインによる決着」）。
+  失敗の構造は、親が子の `confirmed:` 契約付き回答を受け取った後、
+  自分の最終回答では引用元を絶対パスで書かない（変更前後12実行で
+  絶対パス付き `confirmed:` 項目は0件）というもの。
 - 「未指定/`auto` → haiku に解決される」経路と「sonnet は再試行時のみ」の経路は、
   今回のプローブ設定（`--worker-model haiku` 固定・単発呼び出し）では
   一度も実際に踏まれておらず、「違反が0件だった」以上のことは言えない。
@@ -238,9 +286,9 @@ not unsupported` の場合のみ `gold_confirmed_ok` を呼ぶ。`exp` は
    `bare`/`skill` 計6実行すべて（3周とも）が失敗しており、非0。
    （`auto-bulk-facts`・`auto-one-line` にはこのチェックはそもそも適用されない
    ため対象外。訂正前の版はこの2ケースに誤って適用し、本来チェックすべき
-   `auto-explicit-multifile` を見落としていた。）この失敗が Task 2〜8 由来の
-   退行か既知の欠落かは今回のデータでは判定できないが、いずれにせよ
-   ゲート条件の文言（`missing_gold` 0件）を満たさない。
+   `auto-explicit-multifile` を見落としていた。）変更前ベースラインとの比較で
+   この失敗は Task 2〜8 由来の退行ではなく既存の欠落と判明したが、
+   ゲート条件の文言（`missing_gold` 0件）は既存の欠落であっても満たさない。
 4. 初回の定型・正常終了ケースで Skill 読み込み0回: **満たさない**。
    `skill` 条件9実行中1実行（`auto-explicit-multifile` rep1）で `Skill` ツールが
    使用された。
@@ -266,15 +314,16 @@ not unsupported` の場合のみ `gold_confirmed_ok` を呼ぶ。`exp` は
   親が直接 Read している）と突き合わせて確認する。親がなぜ deny 経由の
   埋め込みテンプレートより先に `Skill` ツールや hooks ファイルを直接読みに
   行ったのか、プロンプトの誘導が不足していないかを調べる。
-- **`auto-explicit-multifile` の `gold_confirmed` 失敗（`bare`/`skill` 計6/6）が
-  Task 2〜8 由来の退行か、それ以前から存在した既知の欠落かを切り分ける。**
-  具体的な次の一手: Task 2〜8 の変更前のコミット（`reader-call-contract`
-  0f99da5 より前のチェックアウト）を、今回と同じ fixtures
-  （`evals/compare/tmp/cost-probe/20260914-204044/fixtures`）に対して
-  `auto-explicit-multifile` の `bare`/`skill` 条件で走らせ、今回訂正した
-  同じ `gold_confirmed_ok` チェック（`gold_file` ではなくインライン `gold` +
-  `expect.delegate.gold_confirmed` を見る版）を適用する。変更前でも同じ
-  3/3 失敗が出れば既知の欠落、変更後にのみ出るなら Task 2〜8 の退行と判定できる。
+- ~~`auto-explicit-multifile` の `gold_confirmed` 失敗が Task 2〜8 由来の
+  退行か既存の欠落かを切り分ける。~~ **完了（上記「変更前ベースラインによる
+  決着」）: 既存の欠落と判明。**
+- 親が `confirmed:` 項目を出すとき引用元を相対ファイル名で書く
+  （絶対パスを伴う項目が12実行で0件）という、より根の深い問題を調べる。
+  `gold_confirmed_ok` は同一項目内の絶対パス引用を要求するので、
+  形式を出せても相対パスのままでは通らない。子の実行契約が
+  「絶対パスを省略せずに」と指示している経路で、親が要約時に
+  相対名へ落としているのか、子の時点で既に相対なのかを
+  transcript の子発話まで遡って切り分ける。
 - `cost_probe.py` のスクリプト自体を、run.sh と同じ spec 組み立て
   （`gold_file` とインライン `gold` の両方をマージし、
   `expect.delegate.gold_confirmed` を見て適用要否を判定する）に修正し、
