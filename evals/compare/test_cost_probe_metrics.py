@@ -35,6 +35,18 @@ class MetricsTests(unittest.TestCase):
             {'type': 'tool_use', 'name': 'Read',
              'input': {'file_path': '/p/plugin/skills/bulk-reader/SKILL.md'}}]}}
 
+    def read_writer_skill_md(self):
+        return {'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'name': 'Read',
+             'input': {'file_path': '/p/plugin/skills/code-writer/SKILL.md'}}]}}
+
+    def test_skill_loads_counts_other_skills_skill_md_read_too(self):
+        # A bypass-Read of any plugin skill's SKILL.md should count, not just
+        # bulk-reader's -- the metric must mean the same thing across cases.
+        path = self.write([self.read_writer_skill_md(), self.result()])
+        row = cost_probe.metrics(path)
+        self.assertEqual(row['skill_loads'], 1)
+
     def test_skill_loads_count_both_tool_and_skill_md_read(self):
         path = self.write([self.assistant('Skill'),
                            self.read_skill_md(),

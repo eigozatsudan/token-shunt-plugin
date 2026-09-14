@@ -107,6 +107,8 @@ def metrics(path, hooklog=None):
                     record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(record, dict):
+                    continue
                 if record.get("decision") == "deny":
                     deny_count += 1
                     deny_bytes += len((record.get("reason") or "").encode("utf-8"))
@@ -135,8 +137,9 @@ def metrics(path, hooklog=None):
                     elif name == "Read":
                         parent_reads += 1
                         args = block.get("input") or {}
-                        if str(args.get("file_path", "")).endswith(
-                                "skills/bulk-reader/SKILL.md"):
+                        # Any plugin skill's SKILL.md, not just bulk-reader's,
+                        # so a code-writer bypass-Read counts the same way.
+                        if str(args.get("file_path", "")).endswith("/SKILL.md"):
                             skill_loads += 1
                     elif name == "Bash":
                         parent_bash += 1
