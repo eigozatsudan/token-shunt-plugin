@@ -9,11 +9,12 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
 fi
 export LC_ALL=C
 HOOK_NAME=check-file-size
+HOOK_DIR=$(CDPATH= builtin cd -- "${BASH_SOURCE[0]%/*}" && pwd)
 
 # --- common 1-2: jq required, stdin must be JSON ---
 command -v jq >/dev/null 2>&1 || { printf 'token-shunt: jq is required\n' >&2; exit 2; }
 input=$(cat)
-jq -e . >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
+jq -se 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
 
 # --- common 3: env thresholds ---
 int_env() {
@@ -45,9 +46,10 @@ now_ms() {
 
 hook_log() {
   [[ -n ${TOKEN_SHUNT_HOOK_LOG-} ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
   jq -c --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
     '{hook:$h,decision:$d,reason:$r,tool_use_id:.tool_use_id,session_id:.session_id,
-      file_path:.tool_input.file_path}' <<<"$input" >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
+      file_path:.tool_input.file_path}' <<<"$input" | python3 "$HOOK_DIR/write-hook-log" 3>&2 2>/dev/null || true
 }
 pass() { hook_log pass ""; exit 0; }
 deny() {
@@ -148,6 +150,48 @@ deny_reason() { # lines bytes read_bytes elapsed undetermined
   fi
 }
 
+# --- reader call contract (spec 2026-09-14 §4) ---
+CONTRACT_FILE=$HOOK_DIR/reader-call-contract
+CONTRACT_PATHS=()
+
+contract_add_path() { # absolute-path size-or-empty
+  local abs=$1
+  [[ $abs == /* ]] || abs=$PWD/$abs
+  if [[ $2 =~ ^[0-9]+$ ]]; then
+    CONTRACT_PATHS+=("$abs ($2 B)")
+  else
+    CONTRACT_PATHS+=("$abs (size unknown)")
+  fi
+}
+
+# Fail closed to the current wording: a missing, unreadable, or malformed
+# source of truth must never drop the deny itself.
+render_contract() { # reason
+  local body paths
+  (( ${#CONTRACT_PATHS[@]} )) || return 1
+  body=$(cat -- "$CONTRACT_FILE" 2>/dev/null) || return 1
+  [[ $body == *'{REASON}'* && $body == *'{PATHS}'* ]] || return 1
+  printf -v paths 'paths:\n%s' "$(printf '%s\n' "${CONTRACT_PATHS[@]}")"
+  body=${body/'{REASON}'/"$1"}
+  body=${body/'{PATHS}'/"$paths"}
+  printf '%s' "$body"
+}
+
+# The template reason and the fallback reason are different texts: rendering
+# failure must return the current wording, never the shortened template reason.
+deny_contract() { # template-reason fallback-reason
+  local rendered
+  rendered=$(render_contract "$1") && deny "$rendered"
+  deny "$2"
+}
+
+contract_reason() { # lines bytes
+  local parts
+  if [[ $1 == -1 ]]; then parts="bytes=${2}/${MIN_BYTES}"
+  else parts="lines=${1}/${MIN_LINES}, bytes=${2}/${MIN_BYTES}"; fi
+  printf 'File exceeds token-shunt thresholds (%s). For edits, use a targeted Read of the original that passes the hook.' "$parts"
+}
+
 # --- common 4: worker allowlist (exact match only) ---
 # agent_type is a harness-set top-level field; tool_input is model-controlled
 # and must not be consulted (spoofing).
@@ -161,6 +205,13 @@ case $agent in
     pass ;;
   token-shunt:code-writer) pass ;;
 esac
+
+# A supplied harness cwd is authoritative for relative Read paths.
+if jq -e 'has("cwd")' >/dev/null <<<"$input"; then
+  cwd=$(jq -ejr '.cwd | select(type == "string" and startswith("/") and (contains("\u0000") | not))' <<<"$input" && printf '.') || deny 'token-shunt: Invalid hook cwd.'
+  cwd=${cwd%.}
+  CDPATH= builtin cd -- "$cwd" 2>/dev/null || deny 'token-shunt: Hook cwd is unavailable.'
+fi
 
 # --- §9 ---
 # -j omits jq's separator; the sentinel keeps command substitution from
@@ -182,23 +233,34 @@ read -r fverdict flines fbytes frb fel <<<"$(full_file_verdict "$file_path")"
 limit=$(jq -r '.tool_input.limit // empty' <<<"$input")
 offset=$(jq -r '.tool_input.offset // empty' <<<"$input")
 
+# Size-exceeded denies route to delegation; scan-budget denies keep the
+# current wording until the worker-side limit check confirms continuation.
+if [[ $fverdict == EXCEEDED ]]; then
+  contract_add_path "$file_path" "$fbytes"
+fi
 if [[ -z $limit ]]; then
   un0=0; [[ $fverdict == UNDETERMINED ]] && un0=1
-  deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" "$un0")"
+  (( un0 )) && deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 1)"
+  deny_contract "$(contract_reason "$flines" "$fbytes")" \
+                "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
 fi
 if ! [[ $limit =~ ^[0-9]+$ ]] || (( ${#limit} > 15 || 10#$limit < 1 )); then
-  deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
+  deny_contract "$(contract_reason "$flines" "$fbytes")" \
+                "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
 fi
 start=1
 if [[ -n $offset ]]; then
   if ! [[ $offset =~ ^[0-9]+$ ]] || (( ${#offset} > 15 || 10#$offset < 1 )); then
-    deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
+    deny_contract "$(contract_reason "$flines" "$fbytes")" \
+                  "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
   fi
   start=$((10#$offset))
 fi
 
 read -r ex un rl rby rd el <<<"$(range_scan "$file_path" "$start" "$((10#$limit))")"
 if (( ex )); then
-  deny "$(deny_reason "$rl" "$rby" "$rd" "$el" "$un")"
+  (( un )) && deny "$(deny_reason "$rl" "$rby" "$rd" "$el" 1)"
+  deny_contract "$(contract_reason "$rl" "$rby")" \
+                "$(deny_reason "$rl" "$rby" "$rd" "$el" 0)"
 fi
 pass
