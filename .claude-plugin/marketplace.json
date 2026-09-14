@@ -10,7 +10,7 @@
     {
       "name": "token-shunt",
       "source": "./plugin",
-      "description": "Hooks block oversized Read/Bash and route to bulk-reader / code-writer subagents."
+      "description": "Hooks block oversized Read/Bash and recommend delegation to bulk-reader / code-writer subagents."
     }
   ]
 }

@@ -17,7 +17,7 @@ class RunnerIsolationTests(unittest.TestCase):
         self.compare.mkdir(parents=True)
         source = Path(__file__).parent
         for name in ("run.sh", "cases.json", "judge.py", "routing_checks.py",
-                     "flow_checks.py", "writer_unittest_check.py"):
+                     "flow_checks.py", "report_text.py", "writer_unittest_check.py"):
             shutil.copy2(source / name, self.compare / name)
         for name in ("rails", "codegen"):
             shutil.copytree(source / "fixtures" / name,
@@ -28,6 +28,25 @@ class RunnerIsolationTests(unittest.TestCase):
             ["bash", "-c", 'source "$1"\n' + code, "review-test",
              str(self.compare / "run.sh"), *args],
             text=True, capture_output=True)
+
+    def test_startup_failure_invalidates_previous_summary(self):
+        summary = self.compare / "last-run.json"
+        summary.write_text('{"selected_run_valid":true,"release_eligible":true}')
+        # A broken fixture source fails after planning, before any CLI call.
+        shutil.rmtree(self.compare / "fixtures" / "rails")
+        bindir = Path(self.temp.name) / "bin"
+        bindir.mkdir()
+        cli = bindir / "claude"
+        cli.write_text("#!/bin/sh\nexit 99\n")
+        cli.chmod(0o755)
+        result = subprocess.run(["bash", str(self.compare / "run.sh")],
+                                env={**os.environ, "PATH": str(bindir) + os.pathsep + os.environ["PATH"]},
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        verdict = json.loads(summary.read_text())
+        self.assertFalse(verdict["selected_run_valid"])
+        self.assertFalse(verdict["release_eligible"])
+        self.assertIn("incomplete", verdict["errors"][0])
 
     def test_every_mode_starts_with_clean_targets_and_restored_references(self):
         result = self.shell('''
@@ -48,6 +67,71 @@ gen_fixtures || exit 3
 [[ -s $VRD/retained.json ]] || exit 8
 ''')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_edit_hint_gold_and_prompts_agree_with_disk_check(self):
+        result = self.shell('''
+ONLY=auto-edit-grep-location; SUITE=B; setup_run || exit 1
+gen_fixtures || exit 2
+cp "$GEN/edit_hint.py" "$SNAP/auto-edit-grep-location.edit_hint.pre"
+python3 - "$GEN" "$CMP/cases.json" <<'PY'
+import json, sys
+from pathlib import Path
+gen = Path(sys.argv[1])
+case = next(c for c in json.loads(Path(sys.argv[2]).read_text())['cases']
+            if c['id'] == 'auto-edit-grep-location')
+gold, = json.loads((gen / 'gold-edit-hint.json').read_text())
+for key in ('prompt_direct', 'prompt_delegate'):
+    assert gold in case[key]
+target = gen / 'edit_hint.py'
+body = target.read_bytes()
+old = case['expect']['direct']['edit_flow']['original_mark'].encode()
+assert body.count(old) == 1
+target.write_bytes(body.replace(old, gold.encode()))
+PY
+[[ $? == 0 ]] || exit 3
+spec=$(jq -c '.cases[] | select(.id == "auto-edit-grep-location")' "$CMP/cases.json")
+disk_check "$spec" direct || exit 4
+cat "$GEN/gold-edit-hint.json"
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["HDR_MODE = 'on'"])
+
+    def test_fifty_line_fixture_matches_question_and_gold(self):
+        result = self.shell("ONLY=''; SUITE=''; setup_run && gen_fixtures && cat \"$GEN/bounds/l50.py\"")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 50)
+        self.assertEqual(lines[49], 'def task_fifty(): return 50')
+        namespace = {}
+        exec(compile(result.stdout, 'l50.py', 'exec'), namespace)
+        self.assertEqual(namespace['task_fifty'](), 50)
+
+    def test_edit_flow_prompt_states_the_required_procedure(self):
+        # §11.6 / design row 835 requires Grep -> targeted Read -> Edit in all
+        # four modes, but `direct` loads no plugin and sees no hook guidance,
+        # so the shared prompt has to carry the procedure itself.
+        cases = json.loads((self.compare / "cases.json").read_text())["cases"]
+        for case_id in ("auto-edit-grep-location", "auto-edit-grep-ambiguous"):
+            case = next(c for c in cases if c["id"] == case_id)
+            for key in ("prompt_direct", "prompt_delegate"):
+                with self.subTest(case=case_id, prompt=key):
+                    prompt = case[key].lower()
+                    self.assertIn("grep", prompt, key)
+                    self.assertIn("targeted read", prompt, key)
+                    self.assertLess(prompt.index("grep"), prompt.index("targeted read"), key)
+                    self.assertLess(prompt.index("targeted read"), prompt.rindex("edit"), key)
+                    self.assertIn("narrow", prompt, key)
+
+    def test_rails_fixture_keeps_delegation_threshold_with_bounded_padding(self):
+        model = self.compare / 'fixtures/rails/app/models/user.rb'
+        body = model.read_bytes()
+        self.assertGreater(len(body.splitlines()), 350)
+        self.assertGreater(len(body), 16384)
+        # Leave headroom for sequential reads of user plus two related files.
+        # Native tool behavior remains a live-eval requirement.
+        self.assertLess(len(body), 24576)
+        self.assertIn(b'after_create :send_welcome_email', body)
+        self.assertIn(b'def send_welcome_email\n    deliver_notifications', body)
 
     def test_runs_have_distinct_evidence_and_manifest_selects_exact_modes(self):
         result = self.shell('''
@@ -135,6 +219,51 @@ sys.exit(17 if failure == 'nonzero' else 0)
                  "SUITE": "", "CALL_LOG": str(Path(self.temp.name) / "calls.log"),
                  **settings})
         return result
+
+    def test_cli_environment_preserves_model_overrides_but_removes_hook_settings(self):
+        result = self.shell("""
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+printf '%s\\n' "${TOKEN_SHUNT_MIN_BYTES-unset}" "${CDPATH-unset}" "$ANTHROPIC_MODEL" "$TOKEN_SHUNT_EVAL_FIXTURES"
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH" TOKEN_SHUNT_MIN_BYTES=999999 CDPATH=/unwanted ANTHROPIC_MODEL=override
+run_claude prompt "$TRD/env"
+cat "$TRD/env"
+printf '%s\\n' "$FIX"
+""")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:3], ['unset', 'unset', 'override'])
+        self.assertEqual(lines[3], lines[4])
+
+    def test_declared_gold_invalid_aborts_cases_before_cli(self):
+        catalog_path = self.compare / 'cases.json'
+        catalog = json.loads(catalog_path.read_text())
+        case = next(c for c in catalog['cases'] if c['id'] == 'auto-small-files')
+        gold = self.compare / 'fixtures/rails/test-gold.json'
+        for content in (None, 'not json', '[]', '{}', '[""]', '[1]', '["ok"] ["extra"]'):
+            with self.subTest(content=content):
+                if content is None:
+                    gold.unlink(missing_ok=True)
+                else:
+                    gold.write_text(content)
+                case['gold_file'] = 'rails/test-gold.json'
+                catalog_path.write_text(json.dumps(catalog))
+                calls = Path(self.temp.name) / 'calls.log'
+                calls.write_text('')
+                result = self.run_with_cli_double()
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn('invalid or missing declared gold_file', result.stdout)
+                self.assertNotIn('case', calls.read_text().splitlines())
+                summary = json.loads((self.compare / 'last-run.json').read_text())
+                self.assertFalse(summary['selected_run_valid'])
+                self.assertFalse(summary['release_eligible'])
+                for verdict in summary['cases']['auto-small-files']['modes'].values():
+                    self.assertIn('invalid or missing declared gold_file', verdict['reasons'])
+                    self.assertNotIn('missing or mismatched spec/verdict identity', verdict['reasons'])
 
     def test_selected_run_end_to_end_with_local_cli_double(self):
         result = self.run_with_cli_double()

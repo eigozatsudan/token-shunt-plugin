@@ -11,7 +11,9 @@ import re
 import shlex
 import sys
 
-from routing_checks import check_reader_reads, check_routing
+from routing_checks import (check_reader_reads, check_routing, unreadable_line_partial,
+                            rejected_model_launch, reader_attempt_metrics)
+from report_text import plain_report
 from flow_checks import edit_flow_errors, verification_errors
 
 COMPARE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,15 +21,17 @@ FIXTURES_DIR = os.environ.get("TOKEN_SHUNT_EVAL_FIXTURES", os.path.join(COMPARE_
 
 READ_TOOLS = {"Read"}
 BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
-TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq")
-# CLI-internal bootstrap hook that fires in every session; not a settings hook.
+TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq", "check-agent-model", "check-reader-contract")
+# Observed bootstrap matcher; the name alone cannot establish provenance.
 BUILTIN_HOOKS = {"SessionStart:startup"}
 # This CLI reports only the matcher in `hook_name` ("PreToolUse:Read"), never
 # the command path, so token-shunt's own hooks cannot be recognised by name
 # (design §13). Foreign hooks are identified by the isolation contract instead:
 # a delegate run loads token-shunt and nothing else, so these are the only
 # hook responses it may produce. See `foreign_hooks` for the residual gap.
-TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash"}
+TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash", "PreToolUse:Agent",
+                 "PreToolUse:Task", "PreToolUse:Agent|Task",
+                 "PostToolUse:Read", "PostToolUseFailure:Read"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
@@ -35,17 +39,84 @@ def token_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def requires_parent_tokens(spec, mode):
+    value = spec.get("require_parent_tokens")
+    return value is True or (isinstance(value, list) and mode in value)
+
+
+def spec_evidence_error(spec):
+    requirement = spec.get("require_parent_tokens")
+    if (requirement is not None and not isinstance(requirement, bool)
+            and not (isinstance(requirement, list)
+                     and all(isinstance(mode, str) and mode in {"direct", "auto", "haiku", "sonnet"}
+                             for mode in requirement))):
+        return "require_parent_tokens must be a boolean or list of modes"
+    if "gold_file" in spec:
+        if not isinstance(spec["gold_file"], str) or not spec["gold_file"].strip():
+            return "gold_file must be a nonempty path string"
+        gold = spec.get("gold")
+        if not isinstance(gold, list) or not gold or not all(isinstance(g, str) and g for g in gold):
+            return "declared gold_file requires a nonempty list of gold strings"
+    return None
+
+
+def validate_tool_inputs(events):
+    """Reject malformed model-controlled arguments before evidence consumers run.
+
+    Keep the original input intact: coercing invalid arguments to empty values
+    can turn a malformed attempt into successful or absent evidence.
+    """
+    string_fields = {
+        "Read": ("file_path", "path"), "Bash": ("command",),
+        "Agent": ("subagent_type", "agent_type", "type", "prompt", "model", "resume"),
+        "Task": ("subagent_type", "agent_type", "type", "prompt", "model", "resume"),
+        "Edit": ("file_path", "path", "old_string", "new_string"),
+        "Write": ("file_path", "path", "content"),
+        "Grep": ("pattern", "path", "glob", "type", "output_mode"),
+        "Glob": ("pattern", "path"),
+    }
+    for index, event in enumerate(events):
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            location = "event %d tool %r (%r)" % (index + 1, block.get("id"), name)
+            if "id" in block and not isinstance(block["id"], str):
+                raise ValueError(location + ": id must be a string")
+            if not isinstance(name, str):
+                raise ValueError(location + ": name must be a string")
+            inp = block.get("input", {})
+            if not isinstance(inp, dict):
+                raise ValueError(location + ": input must be an object")
+            for field in string_fields.get(name, ()):
+                if field in inp and not isinstance(inp[field], str):
+                    raise ValueError(location + ": input." + field + " must be a string")
+            if name == "Read":
+                for field in ("offset", "limit"):
+                    if field in inp and (type(inp[field]) is not int or inp[field] < 1):
+                        raise ValueError(location + ": input." + field + " must be a positive integer")
+
+
 def load_events(path):
     events = []
     with open(path, encoding="utf-8") as f:
-        for line in f:
+        for number, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
             try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+                value = json.loads(line)
+                if not isinstance(value, dict):
+                    raise ValueError("event must be an object")
+                events.append(value)
+            except ValueError as exc:
+                raise ValueError("invalid transcript line %d: %s" % (number, exc)) from exc
     return events
 
 
@@ -156,6 +227,7 @@ def parent_bash_contains(command, needle, require_unittest=False):
 
 class Transcript:
     def __init__(self, events):
+        validate_tool_inputs(events)
         self.events = events
         self.init = next((e for e in events if e.get("type") == "system"
                           and e.get("subtype") == "init"), {})
@@ -205,6 +277,9 @@ class Transcript:
                     elif b.get("type") == "text":
                         block_text = b.get("text", "")
                         text_parts.append(block_text)
+                        context_parts.append(block_text)
+                    elif b.get("type") == "thinking":
+                        block_text = b.get("thinking", "")
                         context_parts.append(block_text)
                     else:
                         continue
@@ -311,7 +386,7 @@ class Transcript:
 
     def agent_uses(self):
         return [u for u in self.all_tool_uses()
-                if u["name"] in AGENT_TOOL_NAMES]
+                if u["name"] in AGENT_TOOL_NAMES and not rejected_model_launch(self, u)]
 
     def agent_type_of(self, use):
         i = use["input"]
@@ -386,6 +461,15 @@ class Transcript:
         models = sorted({a["model"] for a in self.assistant_msgs
                          if a.get("model") and a["model"] != "<synthetic>"})
         return {
+            "worker_attempts": [dict(
+                tool_use_id=u["id"], agent_type=self.agent_type_of(u),
+                launch_rejected=rejected_model_launch(self, u),
+                requested_model=u["input"].get("model"),
+                **{**reader_fields((self.child_return_of(u) or {}).get("text", "")),
+                   "retry_reason": reader_fields(u["input"].get("prompt", ""))["retry_reason"]})
+                for u in self.parent_tool_uses() if u["name"] in AGENT_TOOL_NAMES],
+            "fallback_reason": reader_fields(self.final_text())["fallback_reason"],
+            "stop_reason": reader_fields(self.final_text())["stop_reason"],
             "parent_added_chars": len(ptxt),
             "parent_added_utf8_bytes": len(ptxt.encode("utf-8")),
             "parent_added_tokens_est": len(ptxt.encode("utf-8")) // 4,
@@ -399,8 +483,28 @@ class Transcript:
         }
 
 
-def norm_path(p):
-    return p.rstrip("/") if isinstance(p, str) else p
+def reader_fields(text):
+    """Only explicit, unambiguous fields are evidence; never infer a reason."""
+    text = plain_report(text)
+    result = {}
+    for key in ("status", "stop_reason", "fallback_reason", "retry_reason"):
+        values = re.findall(r"(?m)^[ \t]*(?:[-*+][ \t]+)?" + key + r":[ \t]*([^\n]+)$", text or "")
+        result[key] = values[0].strip() if len(values) == 1 else None
+    return result
+
+
+def norm_path(p, cwd=None):
+    """File identity without borrowing the evaluator's working directory.
+
+    Resolve absolute paths before lexical normalization: symlink/.. follows
+    the symlink target, not its lexical parent. Unknown relative paths stay
+    relative until the recorded tool working directory is available.
+    """
+    if not isinstance(p, str) or not p:
+        return p
+    if not os.path.isabs(p) and isinstance(cwd, str) and os.path.isabs(cwd):
+        p = os.path.join(cwd, p)
+    return os.path.realpath(p) if os.path.isabs(p) else os.path.normpath(p)
 
 
 def resolve_fixture_path(fp, spec=None):
@@ -535,46 +639,35 @@ def confirmed_items(text):
 
 
 def gold_path_needles(gold, spec):
-    gp = spec.get("gold_paths") or {}
-    if gold in gp:
-        v = gp[gold]
-        return v if isinstance(v, list) else [v]
-    needles = []
-    cache = {}
-    for fp in spec.get("fixtures") or []:
-        body = fixture_text(fp, spec, cache)
-        if body is None or gold in body:
-            base = os.path.basename(fp)
-            needles.append(base)
-            needles.append(fp)
-            needles.append(norm_path(fp))
-            rp = resolve_fixture_path(fp, spec)
-            if rp and rp not in needles:
-                needles.append(rp)
-                needles.append(os.path.basename(rp))
-    # unique
-    out = []
-    for n in needles:
-        if n and n not in out:
-            out.append(n)
-    return out
+    """Only absolute, canonical source paths can establish evidence identity."""
+    declared = (spec.get("gold_paths") or {}).get(gold)
+    if declared is not None:
+        candidates = declared if isinstance(declared, list) else [declared]
+    else:
+        cache = {}
+        candidates = [fp for fp in spec.get("fixtures") or []
+                      if (body := fixture_text(fp, spec, cache)) is None or gold in body]
+    return list(dict.fromkeys(norm_path(resolve_fixture_path(fp, spec))
+                             for fp in candidates if resolve_fixture_path(fp, spec)))
 
 
 def gold_confirmed_ok(final, golds, spec):
-    """Each gold string must appear in a confirmed: item that names a matching path."""
-    items = confirmed_items(final)
+    """A gold must have an absolute source citation in the same confirmed item."""
     missing = []
-    for g in golds:
-        needles = gold_path_needles(g, spec)
-        hit = False
-        for item in items:
-            if g not in item:
-                continue
-            if any(n and n in item for n in needles):
-                hit = True
+    for gold in golds:
+        expected = set(gold_path_needles(gold, spec))
+        for item in confirmed_items(final):
+            citations = re.findall(r"(?<![\w./-])(/[^\s`\"'<>]+)", item)
+            citations.extend(re.findall(r"[`\"'](/[^`\"']+)[`\"']", item))
+            leading = re.match(r"\s*(/.*?)\s+[—–]\s+", item)
+            if leading:
+                citations.append(leading[1])
+            paths = {norm_path(re.sub(r":\d+(?::\d+)?$", "", p.rstrip('.,;:)')))
+                     for p in citations}
+            if gold in item and paths & expected:
                 break
-        if not hit:
-            missing.append(g)
+        else:
+            missing.append(gold)
     return missing
 
 
@@ -640,13 +733,22 @@ def prompt_of_agent(use):
     return json.dumps(inp, ensure_ascii=False)
 
 
-def use_targets_path(use, path):
+def use_targets_path(use, path, spec=None):
+    """True/False for known identity, None when relative identity lacks cwd."""
     inp = use["input"]
+    cwd = (spec or {}).get("tool_cwd")
+    absolute_cwd = isinstance(cwd, str) and os.path.isabs(cwd)
+    unresolved = False
     for k in ("file_path", "path", "notebook_path"):
         v = inp.get(k)
-        if isinstance(v, str) and norm_path(v) == norm_path(path):
+        if not isinstance(v, str) or not v:
+            continue
+        if not absolute_cwd and (not os.path.isabs(v)
+                                 or not isinstance(path, str) or not os.path.isabs(path)):
+            unresolved = True
+        elif norm_path(v, cwd) == norm_path(path, cwd):
             return True
-    return False
+    return None if unresolved else False
 
 
 def writer_reference_paths(spec):
@@ -658,17 +760,17 @@ def writer_reference_paths(spec):
     resolved = []
     for ref in refs:
         if os.path.isabs(ref):
-            resolved.append(os.path.normpath(ref))
+            resolved.append(norm_path(ref))
             continue
         rel = os.path.normpath(ref)
         if rel.startswith("fixtures/"):
             rel = rel[len("fixtures/"):]
         if spec.get("fixture_root"):
-            resolved.append(os.path.normpath(os.path.join(spec["fixture_root"], rel)))
+            resolved.append(norm_path(os.path.join(spec["fixture_root"], rel)))
         else:
             matches = [p for p in absolute if os.path.normpath(p).endswith("/" + rel)]
-            resolved.append(os.path.normpath(matches[0]) if len(matches) == 1
-                            else os.path.normpath(os.path.join(FIXTURES_DIR, rel)))
+            resolved.append(norm_path(matches[0]) if len(matches) == 1
+                            else norm_path(os.path.join(FIXTURES_DIR, rel)))
     return refs, resolved
 
 
@@ -685,27 +787,113 @@ def writer_use_matches(use, spec, refs, resolved_refs):
                 return True
             else:
                 continue
-        if os.path.normpath(path) in resolved_refs:
+        if norm_path(path) in [norm_path(ref) for ref in resolved_refs]:
             return True
     return False
 
 
 def bash_mentions_path(use, path):
     cmd = use["input"].get("command", "")
-    return path in cmd or path.split("/")[-1] in cmd
+    if path in cmd or os.path.basename(path) in cmd:
+        return True
+    return False
 
 
 def bash_recovers_body(use, path):
     """Bash command that would dump (part of) the denied body to stdout."""
     cmd = use["input"].get("command", "")
-    if not bash_mentions_path(use, path):
-        return False
-    if re.search(r"\b(cat|head|tail|less|more)\b", cmd):
-        # metadata tools are fine; body readers are not, whatever follows them
-        return True
-    if "|" in cmd and re.search(r"(grep|awk|sed|cut|python|dd|xargs)\b", cmd):
+    try:
+        lexer = shlex.shlex(cmd, posix=True, punctuation_chars="|;&()<>")
+        lexer.whitespace_split = True
+        words = list(lexer)
+    except ValueError:
+        return True  # Unparseable recovery evidence is not proof of isolation.
+    command_position = True
+    wrappers = {"command", "exec", "env", "nice", "sudo", "time", "timeout", "stdbuf", "!"}
+    for index, word in enumerate(words):
+        if word and all(c in "|;&()<>" for c in word):
+            command_position = True
+            continue
+        if not command_position:
+            continue
+        name = os.path.basename(word)
+        if name in wrappers or re.match(r"^[A-Za-z_][A-Za-z_0-9]*\+?=", word):
+            continue
+        command_position = False
+        if name in {"wc", "stat", "echo", "printf", "test", "[", "true", "false", "ls", "file", "du"}:
+            continue
+        args = []
+        for arg in words[index + 1:]:
+            if arg and all(c in "|;&()" for c in arg):
+                break
+            args.append(arg)
+        def mentions(arg):
+            # First preserve the complete shell-decoded argument (spaces and
+            # punctuation can be part of a filename). Then inspect nested
+            # shell/program strings without losing quoted filenames.
+            cwd = use.get('cwd') or use.get('tool_cwd')
+            if norm_path(arg, cwd) == norm_path(path):
+                return True
+            tokens = [arg]
+            try:
+                tokens.extend(shlex.split(arg))
+            except ValueError:
+                pass
+            tokens.extend(re.findall(r"[\"']([^\"']+)[\"']", arg))
+            tokens.extend(re.findall(r"[^\s\"'();|<>]+", arg))
+            interpreter = name in {'bash', 'sh', 'zsh', 'python', 'python3',
+                                   'perl', 'ruby', 'node', 'eval'}
+            for token in tokens:
+                if norm_path(token, cwd) == norm_path(path):
+                    return True
+                # With no reliable cwd (including interpreter-local cd), a
+                # matching relative basename cannot prove isolation.
+                if (not os.path.isabs(token) and (not cwd or interpreter)
+                        and os.path.basename(os.path.normpath(token)) == os.path.basename(path)):
+                    return True
+            return False
+        if not any(mentions(arg) for arg in args):
+            continue
+        if (name == "awk" and args
+                and re.fullmatch(r"END\s*\{\s*print\s+NR\s*;?\s*\}", args[0])
+                and all(arg in {"<", "--"} or re.fullmatch(r"[\w./][\w./ -]*", arg)
+                        for arg in args[1:])):
+            # Only this count-only program is exempt, never arbitrary awk.
+            continue
+        if name in {"grep", "rg"}:
+            # Filename/count/quiet modes cannot emit matching body lines.
+            metadata = False
+            skip = False
+            for arg in args:
+                if skip:
+                    skip = False
+                    continue
+                if arg == "--":
+                    break
+                if arg in {"-e", "-f", "--regexp", "--file", "-m", "--max-count"}:
+                    skip = True
+                    continue
+                if arg in {"--files-with-matches", "--files-without-match", "--count",
+                           "--quiet", "--files", "--count-matches"}:
+                    metadata = True
+                elif arg.startswith("-") and not arg.startswith("--"):
+                    for option in arg[1:]:
+                        if option in "efm":  # Remaining characters are the option value.
+                            break
+                        if option in "lLcq":
+                            metadata = True
+            if metadata:
+                continue
         return True
     return False
+
+
+def child_model_text(text):
+    """Remove only the CLI's terminal Agent ID and numeric usage trailer."""
+    return re.sub(
+        r"\nagentId: [\w-]+ \(use SendMessage[^\n]*\)\s*"
+        r"<usage>\s*(?:(?:subagent_tokens|total_tokens|tool_uses|duration_ms):"
+        r"\s*\d+\s*)+</usage>\s*\Z", "", text)
 
 
 def has_code_fence(text):
@@ -776,7 +964,7 @@ def body_quote_reason(reply, body):
 
 
 def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
-    """Child final message must not contain the fixture body:
+    """Child final message must not contain any supplied source body:
     >20 consecutive fixture lines or >2KiB contiguous quotation -> leak."""
     spec = spec or {}
     for fp in fixture_paths:
@@ -793,13 +981,28 @@ def quote_leak(agent_result_text, fixture_paths, read_texts, spec=None):
     return False, ""
 
 
+def observed_worker_bodies(tr, agent):
+    """Use observed content even when absent from fixtures or changed on disk."""
+    bodies = []
+    for call in tr.child_tool_uses(agent['id']):
+        if call['name'] == 'Write' and isinstance(call['input'].get('content'), str):
+            bodies.append(call['input']['content'])
+        if call['name']:  # Any successful child tool can carry source text.
+            result = tr.result_of(call['id'])
+            if result and not result.get('is_error'):
+                text = result.get('text', '')
+                bodies.append(text)
+                bodies.append(re.sub(r'(?m)^\s*\d+(?:\t|→)', '', text))
+    return bodies
+
+
 def foreign_hooks(tr, plugin_loaded=True):
     """Command hooks that cannot be attributed to token-shunt (design §13).
 
     `hook_name` carries only the matcher on this CLI, so attribution is by the
     isolation contract: a direct run loads no plugin and must produce no
     PreToolUse hook response at all; a delegate run loads only token-shunt and
-    may therefore produce only its two PreToolUse matchers. Any response whose
+    may therefore produce only its registered matchers. Any response whose
     payload is non-empty but never names token-shunt is foreign even on those
     matchers, which catches a foreign deny.
 
@@ -813,9 +1016,16 @@ def foreign_hooks(tr, plugin_loaded=True):
             continue
         name = e.get("hook_name") or ""
         if name in BUILTIN_HOOKS:
+            # Matcher names are not provenance. Empty responses retain the
+            # observed bootstrap compatibility; nonempty data is untrusted.
+            payload = "%s%s%s" % (e.get("output") or "", e.get("stdout") or "",
+                                  e.get("stderr") or "")
+            if not payload.strip() and not e.get("exit_code"):
+                continue
+            bad.append(name + "(unattributed startup payload)")
             continue
         # Older CLIs did report the command path; keep honouring it.
-        if any(h in name for h in TS_HOOKS):
+        if plugin_loaded and any(h in name for h in TS_HOOKS):
             continue
         if not plugin_loaded or name not in TS_HOOK_NAMES:
             bad.append(name)
@@ -836,6 +1046,8 @@ def ts_deny_payload(e):
     if e.get("subtype") != "hook_response":
         return None
     name = e.get("hook_name") or ""
+    if name in {"PostToolUse:Read", "PostToolUseFailure:Read"}:
+        return None  # Observing a result is not evidence of a pre-execution deny.
     if not (any(h in name for h in TS_HOOKS) or name in TS_HOOK_NAMES):
         return None
     out_s = e.get("output") or e.get("stdout") or ""
@@ -865,8 +1077,27 @@ def ts_hook_denies(tr):
 
 
 def judge(transcript_path, spec, ctx):
-    tr = Transcript(load_events(transcript_path))
     v = {"case": spec["id"], "mode": ctx["mode"], "checks": {}, "reasons": []}
+    error = spec_evidence_error(spec)
+    if error:
+        v.update(verdict="fail", metrics={}, checks={"spec": False}, reasons=["spec: " + error])
+        return v, False
+    try:
+        tr = Transcript(load_events(transcript_path))
+    except (OSError, ValueError) as exc:
+        v.update(verdict="fail", metrics={}, checks={"transcript": False},
+                 reasons=["transcript: " + str(exc)])
+        return v, False
+    # Older stored specs omit tool_cwd, but the CLI init event can retain it.
+    spec = dict(spec)
+    if not spec.get("tool_cwd"):
+        for event in tr.events:
+            cwd = event.get("cwd")
+            if (event.get("type") == "system" and event.get("subtype") == "init"
+                    and not event.get("parent_tool_use_id")
+                    and isinstance(cwd, str) and os.path.isabs(cwd)):
+                spec["tool_cwd"] = cwd
+                break
     exp = spec["expect"].get(ctx["mode"], spec["expect"].get("delegate", {}))
     ok = True
 
@@ -880,14 +1111,7 @@ def judge(transcript_path, spec, ctx):
         v["checks"][check] = True
 
     def check_parent_tokens():
-        rpt = spec.get("require_parent_tokens")
-        mode = ctx["mode"]
-        need = False
-        if rpt is True:
-            need = True
-        elif isinstance(rpt, list) and mode in rpt:
-            need = True
-        if not need:
+        if not requires_parent_tokens(spec, ctx["mode"]):
             return
         m = v.get("metrics") or tr.metrics()
         if m.get("parent_input_tokens") is None:
@@ -940,15 +1164,18 @@ def judge(transcript_path, spec, ctx):
     else:
         passed("foreign_hooks")
 
-    parent_agents = [u for u in tr.parent_tool_uses() if u["name"] in AGENT_TOOL_NAMES]
+    parent_agents = [u for u in tr.agent_uses() if u["parent_tool_use_id"] is None]
 
     # --- accuracy ---
     gold = spec.get("gold", [])
     final = tr.final_text()
+    unsupported = unreadable_line_partial(tr, exp, parent_agents)
+    if unsupported:
+        passed("unsupported_input")
     missing = [g for g in gold if g not in final]
-    if gold and missing:
+    if gold and missing and not unsupported:
         fail("accuracy", "final answer missing: %s" % ", ".join(missing))
-    elif gold:
+    elif gold and not unsupported:
         passed("accuracy")
     gold_any = spec.get("gold_any", [])
     if gold_any and not any(g in final for g in gold_any):
@@ -956,7 +1183,7 @@ def judge(transcript_path, spec, ctx):
     elif gold_any:
         v["checks"]["accuracy_any"] = True
 
-    if exp.get("gold_confirmed") and gold:
+    if exp.get("gold_confirmed") and gold and not unsupported:
         missing_c = gold_confirmed_ok(final, gold, spec)
         if missing_c:
             fail("gold_confirmed",
@@ -1016,7 +1243,7 @@ def judge(transcript_path, spec, ctx):
                 for k in ("file_path", "path", "notebook_path"):
                     val = c["input"].get(k)
                     if isinstance(val, str) and val:
-                        files.add(norm_path(val))
+                        files.add(norm_path(val, spec.get("tool_cwd")))
             if len(files) > cfb:
                 fail("child_file_budget",
                      "child of Agent %s touched %d unique files > %d"
@@ -1067,7 +1294,7 @@ def judge(transcript_path, spec, ctx):
     # --- parent reads (direct contract / edit contract) ---
     for p in exp.get("parent_reads", []):
         good = any(u for u in tr.parent_tool_uses("Read")
-                   if use_targets_path(u, p)
+                   if use_targets_path(u, p, spec)
                    and (r := tr.result_of(u["id"])) and not r["is_error"])
         if not good:
             fail("parent_reads", "no successful parent Read of %s" % p)
@@ -1075,11 +1302,15 @@ def judge(transcript_path, spec, ctx):
             passed("parent_reads")
 
     for p in exp.get("parent_no_full_read", []):
-        bad = any(u for u in tr.parent_tool_uses("Read")
-                  if use_targets_path(u, p)
-                  and is_full_parent_read(u, p, spec)
-                  and (r := tr.result_of(u["id"])) and not r["is_error"])
-        if bad:
+        successful = [u for u in tr.parent_tool_uses("Read")
+                      if (r := tr.result_of(u["id"])) and not r["is_error"]]
+        unresolved = any(use_targets_path(u, p, spec) is None for u in successful)
+        bad = any(use_targets_path(u, p, spec) and is_full_parent_read(u, p, spec)
+                  for u in successful)
+        if unresolved:
+            fail("parent_no_full_read", "unresolved path identity: relative Read/path "
+                 "requires recorded absolute tool cwd")
+        elif bad:
             fail("parent_no_full_read", "parent full-Read succeeded on %s" % p)
         else:
             passed("parent_no_full_read")
@@ -1091,7 +1322,7 @@ def judge(transcript_path, spec, ctx):
         lo, hi = (covers + [None, None])[:2]
         good = False
         for u in tr.parent_tool_uses("Read"):
-            if not use_targets_path(u, p):
+            if not use_targets_path(u, p, spec):
                 continue
             r = tr.result_of(u["id"])
             if not r or r["is_error"]:
@@ -1116,72 +1347,74 @@ def judge(transcript_path, spec, ctx):
         else:
             passed("parent_targeted_read")
 
-    # deny-route ordered evidence: full Read -> hook deny -> Agent call
+    # Bind the route to the target Read's own failed result, not an
+    # unrelated matcher-only hook event elsewhere in the transcript.
     dr = exp.get("deny_route")
     if dr:
         p = dr["path"]
-        read_pos = deny_pos = agent_pos = None
-        for i, e in enumerate(tr.events):
-            if read_pos is None and e.get("type") == "assistant" \
-                    and e.get("parent_tool_use_id") is None:
-                for b in e.get("message", {}).get("content", []) or []:
-                    if isinstance(b, dict) and b.get("type") == "tool_use" \
-                            and b.get("name") == "Read":
-                        inp = b.get("input", {})
-                        if norm_path(inp.get("file_path", "")) == norm_path(p):
-                            if dr.get("range") or dr.get("allow_range"):
-                                read_pos = i
-                            elif not inp.get("offset") and not inp.get("limit"):
-                                read_pos = i
-            if deny_pos is None and e.get("type") == "system" \
-                    and e.get("subtype") == "hook_response":
-                hso = ts_deny_payload(e) or {}
-                if "bulk-reader" in hso.get("permissionDecisionReason", ""):
-                    deny_pos = i
-            if agent_pos is None and e.get("type") == "assistant" \
-                    and e.get("parent_tool_use_id") is None:
-                for b in e.get("message", {}).get("content", []) or []:
-                    if isinstance(b, dict) and b.get("type") == "tool_use" \
-                            and b.get("name") in AGENT_TOOL_NAMES \
-                            and (b.get("input", {}).get("subagent_type")
-                                 or b.get("input", {}).get("type")) == "token-shunt:bulk-reader":
-                        agent_pos = i
-        if read_pos is None:
-            fail("deny_route", "no full parent Read attempt on %s" % p)
-        elif deny_pos is None:
-            fail("deny_route", "no token-shunt deny hook_response (reason must name token-shunt + bulk-reader)")
-        elif deny_pos < read_pos:
-            fail("deny_route", "deny before the full Read")
-        elif agent_pos is None:
-            fail("deny_route", "no Agent(token-shunt:bulk-reader) after deny")
-        elif agent_pos < deny_pos:
-            fail("deny_route", "Agent before deny (pre-delegation is not this case)")
-        else:
+        read = next((u for u in tr.parent_tool_uses("Read")
+                     if use_targets_path(u, p, spec)
+                     and (dr.get("range") or dr.get("allow_range")
+                          or not u["input"].get("offset") and not u["input"].get("limit"))), None)
+        agent = next((u for u in parent_agents
+                      if tr.agent_type_of(u) == "token-shunt:bulk-reader"), None)
+        result = tr.result_of(read["id"]) if read else None
+        matched = False
+        if (read and result and result["is_error"]
+                and result["parent_tool_use_id"] is None and agent
+                and read["position"] < result["position"] < agent["position"]):
+            for i, event in enumerate(tr.events):
+                if (event.get("type") != "system"
+                        or event.get("hook_event") not in (None, "PreToolUse")
+                        or event.get("parent_tool_use_id") is not None
+                        or not read["position"] < (i, 0) < result["position"]):
+                    continue
+                name = event.get("hook_name", "")
+                if not (name == "PreToolUse:Read" or "check-file-size" in name
+                        or "check-reader-contract" in name):
+                    continue
+                if event.get("tool_use_id") not in (None, read["id"]):
+                    continue
+                payload = ts_deny_payload(event) or {}
+                reason = payload.get("permissionDecisionReason", "")
+                if "bulk-reader" in reason and reason in result["text"]:
+                    matched = True
+                    break
+        if matched:
             passed("deny_route")
+        else:
+            fail("deny_route", "target Read lacks matching token-shunt deny and failed result before reader Agent on " + p)
 
     # post-deny / B-large bypass: any successful parent Read of the path, or pipe recovery
     db_paths = deny_bypass_paths(exp)
     for p in db_paths:
         for u in tr.parent_tool_uses("Read"):
-            if use_targets_path(u, p):
-                r = tr.result_of(u["id"])
-                if r and not r["is_error"]:
+            matches = use_targets_path(u, p, spec)
+            r = tr.result_of(u["id"])
+            if r and not r["is_error"]:
+                if matches is None:
+                    fail("deny_bypass", "unresolved path identity: relative Read/path "
+                         "requires recorded absolute tool cwd")
+                elif matches:
                     fail("deny_bypass", "parent Read succeeded on denied path %s" % p)
         for u in tr.parent_tool_uses("Bash"):
-            if bash_recovers_body(u, p):
+            if bash_recovers_body(dict(u, cwd=spec.get("tool_cwd")), p):
                 fail("deny_bypass", "parent Bash recovered body of %s" % p)
     if db_paths:
         v["checks"].setdefault("deny_bypass", True)
 
     # child->parent text contract
     cap = exp.get("child_msg_max")
-    if cap or exp.get("child_no_body"):
+    plugin_workers = any(tr.agent_type_of(u) in {"token-shunt:bulk-reader", "token-shunt:code-writer"}
+                         for u in parent_agents)
+    no_body = exp.get("child_no_body") or plugin_workers
+    if cap or no_body or parent_agents:
         fpaths = list(dict.fromkeys(list(spec.get("fixtures") or [])
                                    + list(spec.get("fixtures_abs") or [])))
         fixture_cache = {}
         missing_bodies = ([fp for fp in fpaths
                            if fixture_text(fp, spec, fixture_cache) is None]
-                          if exp.get("child_no_body") else [])
+                          if no_body else [])
         # Only an observed parent-side return between invocation and the final
         # parent result proves what the worker returned. Child events and late
         # returns cannot establish a clean, bounded parent response.
@@ -1197,16 +1430,38 @@ def judge(transcript_path, spec, ctx):
                      "Agent %s lacks a parent result after invocation and before final result" % u["id"])
                 if cap:
                     v["checks"]["child_msg_cap"] = False
-                if exp.get("child_no_body"):
+                if no_body:
                     v["checks"]["child_no_body"] = False
                 continue
-            txt = r["text"]
-            if cap and len(txt) > cap:
-                fail("child_msg_cap", "agent result %d chars > %d" % (len(txt), cap))
-            if exp.get("child_no_body"):
+            txt = child_model_text(r["text"])
+            worker_type = tr.agent_type_of(u)
+            worker_cap = min(cap or 4000, 800 if worker_type == "token-shunt:code-writer" else 4000)
+            if worker_type in {"token-shunt:bulk-reader", "token-shunt:code-writer"}:
+                status_text = plain_report(txt)
+                fields = reader_fields(status_text)
+                if (fields["status"] not in {"complete", "partial"} or not fields["stop_reason"]
+                        or not re.search(r"(?:^|\n)[ \t]*(?:[-*+][ \t]+)?status:[ \t]*(?:complete|partial)[ \t]*\n"
+                                         r"(?:[ \t]*\n)*[ \t]*(?:[-*+][ \t]+)?stop_reason:[ \t]*[^\n]+\s*\Z", status_text)):
+                    fail("child_status", "worker %s lacks explicit status and stop_reason" % u["id"])
+                else:
+                    v["checks"].setdefault("child_status", True)
+            if len(txt) > worker_cap:
+                fail("child_msg_cap", "agent result %d chars > %d" % (len(txt), worker_cap))
+            if worker_type == "token-shunt:code-writer":
+                writes = [c for c in tr.child_tool_uses(u['id']) if c['name'] == 'Write']
+                paths = [c['input'].get('file_path', '') for c in writes]
+                bullets = re.findall(r'(?m)^\s*[-*+]\s+\S', txt)
+                if writes and (not all(path and path in txt for path in paths)
+                               or not re.search(r'\b\d+\s+lines?\b|\d+\s*行', txt)
+                               or not 3 <= len(bullets) <= 5):
+                    fail('child_format', 'writer return requires written paths, line count and 3-5 bullets')
+            if no_body:
                 leaked, why = quote_leak(txt, fpaths, fixture_cache, spec)
-                if leaked:
-                    fail("child_no_body", why)
+                observed = observed_worker_bodies(tr, u)
+                reason = next((reason for body in observed
+                               if (reason := body_quote_reason(txt, body))), "")
+                if leaked or reason:
+                    fail("child_no_body", why or reason)
                 elif has_code_fence(txt):
                     fail("child_no_body", "code fence in child message")
                 elif missing_bodies:
@@ -1352,8 +1607,7 @@ def judge(transcript_path, spec, ctx):
                         completed_reads.append(rr["position"])
                 for c in children:
                     if c["name"] == "Write" and writer_use_matches(
-                            c, spec, [target], [os.path.normpath(
-                                os.path.join(spec.get("tool_cwd", ""), target))]):
+                            c, spec, [target], [norm_path(target, spec.get("tool_cwd"))]):
                         if not any(pos < c["position"] for pos in completed_reads):
                             fail("child_ref_before_write",
                                  "Write of target before successful Read of reference")
@@ -1364,6 +1618,7 @@ def judge(transcript_path, spec, ctx):
         fail(key, reason)
 
     v["metrics"] = tr.metrics()
+    v["metrics"]["reader_attempts"] = reader_attempt_metrics(tr, parent_agents)
     check_parent_tokens()
     v["verdict"] = "pass" if ok else "fail"
     return v, ok
@@ -1401,7 +1656,7 @@ def selftest():
 
     def ev_tool_result(uid, text, is_error=False, ptid=None, extra=None):
         block = {"type": "tool_result", "tool_use_id": uid, "content": text,
-                 "is_error": is_error}
+                 "is_error": is_error, "resolvedModel": "claude-haiku"}
         if extra:
             block.update(extra)
         return {"type": "user",
@@ -1476,9 +1731,9 @@ def selftest():
                         "input": {"file_path": path, "offset": 351, "limit": 350}}]),
         ev_tool_result("t2", "y" * 100),
         ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                        "input": {"subagent_type": "token-shunt:bulk-reader",
+                        "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                   "prompt": path}}]),
-        ev_tool_result("a1", "short"),
+        ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
         ev_result("MAGIC", usage=usage_ok),
     ]
     run("deny-bypass-two-step-limit350", evs, spec, "delegate", False,
@@ -1501,9 +1756,9 @@ def selftest():
         return [
             ev_init(),
             ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                            "input": {"subagent_type": "token-shunt:bulk-reader",
+                            "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                       "prompt": "user.rb notifiable.rb welcome_email_job.rb"}}]),
-            ev_tool_result("a1", "short"),
+            ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
             ev_result(final, usage=usage_ok),
         ]
 
@@ -1512,11 +1767,12 @@ def selftest():
         False, require_reason="gold_confirmed")
 
     confirmed = (
-        "confirmed: include Notifiable — path: rails/app/models/user.rb\n"
-        "confirmed: after_create :send_welcome_email — path: rails/app/models/user.rb\n"
-        "confirmed: WelcomeEmailJob.perform_later — path: rails/app/models/concerns/notifiable.rb\n"
+        "confirmed: include Notifiable — path: {FIX}/rails/app/models/user.rb\n"
+        "confirmed: after_create :send_welcome_email — path: {FIX}/rails/app/models/user.rb\n"
+        "confirmed: WelcomeEmailJob.perform_later — path: {FIX}/rails/app/models/concerns/notifiable.rb\n"
         "Notifiable after_create WelcomeEmailJob"
     )
+    confirmed = confirmed.replace("{FIX}", FIXTURES_DIR)
     run("gold_confirmed-with-path-pass", gold_evs(confirmed), gold_spec_base,
         "delegate", True)
 
@@ -1534,7 +1790,7 @@ def selftest():
         evs = [
             ev_init(),
             ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                            "input": {"subagent_type": "token-shunt:bulk-reader",
+                            "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                       "prompt": fx_rel}}]),
             ev_tool_result("a1", "LEAK\n" + chunk + "\nEND"),
             ev_result("MAGIC_TOKEN ok", usage=usage_ok),
@@ -1556,7 +1812,7 @@ def selftest():
             evs = [
                 ev_init(),
                 ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                                "input": {"subagent_type": "token-shunt:bulk-reader",
+                                "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                           "prompt": tpath}}]),
                 ev_tool_result("a1", leak_chunk),
                 ev_result("ok", usage=usage_ok),
@@ -1579,9 +1835,9 @@ def selftest():
                         "input": {"file_path": rpath}}]),
         ev_tool_result("r1", "hello body"),
         ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                        "input": {"subagent_type": "token-shunt:bulk-reader",
+                        "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                   "prompt": rpath}}]),
-        ev_tool_result("a1", "short"),
+        ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
         ev_result("hello", usage=usage_ok),
     ]
     spec = {"id": "selftest-direct-agent",
@@ -1592,9 +1848,9 @@ def selftest():
     evs = [
         ev_init(),
         ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                        "input": {"subagent_type": "token-shunt:bulk-reader",
+                        "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                   "prompt": path}}]),
-        ev_tool_result("a1", "short"),
+        ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
         ev_asst("mr", [{"type": "tool_use", "id": "r1", "name": "Read",
                         "input": {"file_path": path, "offset": 1}}]),
         ev_tool_result("r1", "full-ish"),
@@ -1610,9 +1866,9 @@ def selftest():
     evs = [
         ev_init(),
         ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                        "input": {"subagent_type": "token-shunt:bulk-reader",
+                        "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
                                   "prompt": path}}]),
-        ev_tool_result("a1", "short"),
+        ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
         ev_asst("mr", [{"type": "tool_use", "id": "r1", "name": "Read",
                         "input": {"file_path": path, "offset": 1, "limit": 350}}]),
         ev_tool_result("r1", "window"),
@@ -1661,7 +1917,7 @@ def selftest():
             return [
                 ev_init(),
                 ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
-                                "input": {"subagent_type": subagent,
+                                "input": {"model": "haiku", "subagent_type": subagent,
                                           "prompt": nb_path}}]),
                 ev_tool_result("a1", child_text),
                 ev_result("MARKER_NB = 'nb-7c1'", usage=usage_ok),
@@ -1695,7 +1951,7 @@ def selftest():
 
         # GREEN: contracted child, same fixture, summary only.
         summary = ("confirmed: MARKER_NB = 'nb-7c1' — path: %s line 1\n"
-                   "41 lines; no body returned. status: complete" % nb_path)
+                   "41 lines; no body returned.\nstatus: complete\nstop_reason: complete" % nb_path)
         run("child_no_body-GREEN-contracted-child-summary",
             nb_evs(summary, "token-shunt:bulk-reader"),
             nb_spec("token-shunt:bulk-reader"), "delegate", True)
@@ -1713,7 +1969,11 @@ def selftest():
 def leakcheck(transcript_path, target_path):
     """writer_body_absent: generated target body must not appear in the
     parent's transcript (>20 consecutive lines or >2KiB contiguous)."""
-    tr = Transcript(load_events(transcript_path))
+    try:
+        tr = Transcript(load_events(transcript_path))
+    except (OSError, ValueError) as exc:
+        print("leakcheck: invalid transcript: " + str(exc), file=sys.stderr)
+        return 2
     ptxt = tr.parent_added_text()
     try:
         with open(target_path, encoding="utf-8", errors="replace") as target:
@@ -1793,12 +2053,15 @@ def aggregate(verdict_dir, spec_dir, fix_dir, out_path, manifest_path=None):
             v["reasons"].append(reason)
         if spec.get("id") != cid or v.get("case") != cid or v.get("mode") != mode:
             fail("missing or mismatched spec/verdict identity")
+        error = spec_evidence_error(spec)
+        if error:
+            fail("spec: " + error)
         if spec.get("disk_check"):
             disk = read_json(os.path.join(verdict_dir, stem + ".disk.json"))
             v["checks"]["disk"] = disk.get("disk_ok") is True
             if disk.get("disk_ok") is not True:
                 fail("disk: " + str(disk.get("reason", "missing successful disk evidence")))
-        if mode in spec.get("require_parent_tokens", []):
+        if requires_parent_tokens(spec, mode):
             metrics = v.get("metrics", {})
             pi = metrics.get("parent_input_tokens", {})
             if (not isinstance(pi, dict) or
@@ -1878,11 +2141,43 @@ def aggregate(verdict_dir, spec_dir, fix_dir, out_path, manifest_path=None):
             "delta_output": (ao - do) if None not in (ao, do) else None,
             "delta_io": (a_io - d_io) if None not in (a_io, d_io) else None,
         }
+    cost_cases = {}
+    for cid in ("auto-bulk-facts", "auto-one-line", "auto-explicit-multifile", "auto-large-writer"):
+        modes = cases.get(cid, {}).get("modes", {})
+        costs = {m: (modes.get(m, {}).get("metrics") or {}).get("total_cost_usd")
+                 for m in ("direct", "haiku", "sonnet", "auto")}
+        available = all(numeric(costs[m]) for m in ("direct", "auto"))
+        cost_cases[cid] = {**costs,
+                          "delta_usd": costs["auto"] - costs["direct"] if available else None,
+                          "evidence_complete": available,
+                          "missing_cost_modes": [m for m, x in costs.items() if not numeric(x)],
+                          "auto_minus_sonnet_usd": (costs["auto"] - costs["sonnet"]
+                                                    if all(numeric(costs[m]) for m in ("auto", "sonnet"))
+                                                    else None),
+                          "runs_passed": all(modes.get(m, {}).get("verdict") == "pass"
+                                             for m in ("direct", "auto"))}
+    complete = all(c["evidence_complete"] for c in cost_cases.values())
+    totals = {m: sum(c[m] for c in cost_cases.values())
+              if all(numeric(c[m]) for c in cost_cases.values()) else None
+              for m in ("direct", "haiku", "sonnet", "auto")}
+    cost_summary = {"cases": cost_cases, "evidence_complete": complete,
+                    "basis": "single_run_four_large_cases; not repeated-run medians",
+                    "evidence_complete_scope": ["direct", "auto"],
+                    "mode_totals_usd": totals,
+                    "all_modes_evidence_complete": all(numeric(x) for x in totals.values()),
+                    "auto_minus_sonnet_usd": (totals["auto"] - totals["sonnet"]
+                                              if all(numeric(totals[m]) for m in ("auto", "sonnet"))
+                                              else None),
+                    "runs_passed": all(c["runs_passed"] for c in cost_cases.values()),
+                    "direct_usd": totals["direct"], "auto_usd": totals["auto"],
+                    "delta_usd": totals["auto"] - totals["direct"] if complete else None,
+                    "regression": totals["auto"] > totals["direct"] if complete else None,
+                    "release_gate": False}
     out = {"generated_at": __import__("datetime").datetime.now().isoformat(),
            "cases": cases, "fail_count": fails, "errors": errors,
            "selected_run_valid": fails == 0,
            "release_eligible": fails == 0 and planned == mandatory,
-           "parent_token_deltas": deltas}
+           "parent_token_deltas": deltas, "suite_cost_usd": cost_summary}
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     print("aggregate: cases=%d fail_runs=%d" % (len(cases), fails))

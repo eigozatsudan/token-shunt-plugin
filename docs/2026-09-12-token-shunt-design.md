@@ -39,7 +39,7 @@ Spotify の shunt と同じ分離（hooks + skills + workers）だが、Portal /
 | ワーカー | Claude Code 子エージェント。frontmatter は `model: haiku` / `effort: low`。親が Agent の `model` で Haiku / Sonnet を選択（§26.1） |
 | モデル方針 | SKILL.md の入力規約 `--worker-model auto / haiku / sonnet`（表記は §26.1）。既定 auto。初回 Haiku、条件付き Sonnet 再試行は 1 回まで |
 | 小仕事 | 読み取り合計 ≤ 16384 バイトで各 Read が通過するなら原則直接。定型生成は見積もり 50 行未満かつ参照合計 ≤ 16384 バイトなら直接 |
-| 子の予算 | bulk-reader は Read のみ・`maxTurns: 6`。1 起動につき**明示された最大 3 パス**を読み、**各領域は 1 回だけ**（通常は 1 パス 1 Read、Read ツール自身がトークン上限で全文を拒否した場合のみ連続・非重複の分割）。探索・重複再 Read・指定外パスなし。code-writer は §26.3 |
+| 子の予算 | bulk-reader は Read のみ・`maxTurns: 7`。1 起動につき**明示された最大 3 パス**を読み、**各領域は 1 回だけ**（通常は 1 パス 1 Read、Read ツール自身がトークン上限で全文を拒否した場合のみ連続・非重複の分割）。探索・重複再 Read・指定外パスなし。code-writer は §26.3 |
 | 再利用 | v0.1 対象外。索引・fingerprint・resume を実装しない |
 | 強制 | PreToolUse は親と非 allowlist の子の Read / Bash をサイズゲートする。allowlist は bulk-reader（Read と Bash）と code-writer（Read のみ）（§8.4）。モデル方針・小仕事判定・作業量制限はスキル遵守（ベストエフォート） |
 | 配布 | プラグイン ZIP + ローカル marketplace |
@@ -82,7 +82,7 @@ Spotify の shunt と同じ分離（hooks + skills + workers）だが、Portal /
 
 ## 5. データの流れ
 
-親の全文 Read → PreToolUse deny → 親が `/token-shunt:bulk-reader` を開く → `Agent(subagent_type=token-shunt:bulk-reader, model=haiku|sonnet)`。渡すのは質問・**読むファイルの明示パス**・必要な短い診断だけ。親は本文を取り込まない。子は 1 起動につき明示された**最大 3 パス**を読み、各領域は 1 回だけ Read して回答で終了する（Read のみ、maxTurns 6。分割条件は §12）。関連先は追わず `unconfirmed` として返す。複数ファイル横断は親が全パスを指定した場合に限り、**同一起動にまとめて渡す**（ファイル間の関係は子が同一コンテキストで見る。親が partial を縫って推測する形にしない）。4 パス以上は 3 パスずつ起動を分け、§26.3 の総起動上限と §11 のバッチ間根拠契約に従って親が統合する。記事の tools なし 1 完了と同一ではなく、認証・権限・実行履歴を Claude Code 内で扱う採用方式である（§26.0）。モデル選択と小仕事判定は §26。編集するなら親が原本へ targeted Read し、成功した本文を確認して Edit する（§11.6）。
+親の全文 Read → PreToolUse deny → 親が `/token-shunt:bulk-reader` を開く → `Agent(subagent_type=token-shunt:bulk-reader, model=haiku|sonnet)`。渡すのは質問・**読むファイルの明示パス**・必要な短い診断だけ。親は本文を取り込まない。子は 1 起動につき明示された**最大 3 パス**を読み、各領域は 1 回だけ Read して回答で終了する（Read のみ、maxTurns 7。分割条件は §12）。関連先は追わず `unconfirmed` として返す。複数ファイル横断は親が全パスを指定した場合に限り、**同一起動にまとめて渡す**（ファイル間の関係は子が同一コンテキストで見る。親が partial を縫って推測する形にしない）。4 パス以上は 3 パスずつ起動を分け、§26.3 の総起動上限と §11 のバッチ間根拠契約に従って親が統合する。記事の tools なし 1 完了と同一ではなく、認証・権限・実行履歴を Claude Code 内で扱う採用方式である（§26.0）。モデル選択と小仕事判定は §26。編集するなら親が原本へ targeted Read し、成功した本文を確認して Edit する（§11.6）。
 
 定型生成は親が `/token-shunt:code-writer` を開き `Agent(subagent_type=token-shunt:code-writer)`。渡すのは spec・参照パス・target・検証コマンド。子が参照を Read して target に Write。返すのは短い要約。親が検証コマンドを Bash し、§11 の検証段階に従って完了判定する（全文は vis しない）。同一 target への並列起動はしない。上書きは可。
 
@@ -100,17 +100,25 @@ token-shunt/
     hook-evals.json
     bash-hook-evals.json
     fixtures/
+    test_*.py
     compare/
       run.sh
       cases.json
-      gold/
+      judge.py
+      flow_checks.py
+      routing_checks.py
+      report_text.py
+      repeat.sh
+      test_*.py
       last-run.json.example
+      last-run.skip.json.example
       fixtures/rails/app/models/user.rb
       fixtures/rails/app/models/concerns/notifiable.rb
       fixtures/rails/app/jobs/welcome_email_job.rb
       fixtures/codegen/greeter.py
       fixtures/codegen/out/.gitkeep
       fixtures/edit/.gitkeep
+  scripts/doctor.sh
   scripts/build-zip.sh
   .claude-plugin/marketplace.json
   plugin/
@@ -123,6 +131,8 @@ token-shunt/
     hooks/check-file-size
     hooks/check-bash-read
     hooks/check-jq
+    hooks/check-agent-model
+    hooks/check-reader-contract
 ```
 
 ZIP 一次成果物は `plugin/` の中身（アーカイブ先頭または一段のフォルダ直下に `.claude-plugin/plugin.json`）。marketplace.json は ZIP に入れない。`--plugin-dir` に渡すのは zip または `plugin/` であり、リポジトリルートではない。
@@ -159,12 +169,12 @@ ZIP 一次成果物は `plugin/` の中身（アーカイブ先頭または一�
   "name": "token-shunt",
   "displayName": "Token Shunt",
   "version": "0.1.0",
-  "description": "Keep large-file contents and boilerplate output out of the parent context by delegating to Haiku/Sonnet subagents. Requires jq. Do not enable alongside Spotify shunt.",
+  "description": "Keep large-file contents and boilerplate output out of the parent context by delegating to Haiku/Sonnet subagents. Requires jq and Python 3 on Unix. Do not enable alongside Spotify shunt.",
   "keywords": ["delegation", "context", "hooks"]
 }
 ```
 
-`version` は 0.1.0 で固定する（この仕様の初版）。最低 Claude Code は README に「PreToolUse の stdin に `agent_type` が載る版」と書き、インストール手順でフック stdin を 1 回 dump する doctor を載せる。数値ピンはここに書かない（未実測のため）。doctor は agent_type だけでなく、呼び出し時モデル指定、Haiku/Sonnet の実モデル、effort、maxTurns の partial 終了も検証し、実装時に最低対応版を記録する。
+`version` は 0.1.0 で固定する（この仕様の初版）。最低対応 Claude Code は、後述の reader 契約に必要な Pre/Post/Failure stdin の ID と結果メタデータを実機で確認した版とする。インストール手順には `scripts/doctor.sh` のフック stdin 確認手順を載せる。数値ピンはここに書かない（未実測のため）。doctor は agent_type だけでなく、呼び出し時モデル指定、Haiku/Sonnet の実モデル、effort、maxTurns の partial 終了も検証し、実装時に最低対応版を記録する。
 
 ### `plugin/hooks/hooks.json`
 
@@ -192,6 +202,12 @@ ZIP 一次成果物は `plugin/` の中身（アーカイブ先頭または一�
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-file-size",
             "args": [],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-reader-contract",
+            "args": [],
+            "timeout": 10
           }
         ]
       },
@@ -205,13 +221,50 @@ ZIP 一次成果物は `plugin/` の中身（アーカイブ先頭または一�
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-agent-model",
+            "args": [],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-reader-contract",
+            "args": [],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-reader-contract",
+            "args": [],
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
 }
 ```
 
-`"args": []` は present なので公式どおり **exec form**（shell 無しで `command` を直接 spawn）。3 本ともシェバン（`#!/usr/bin/env bash`）と Unix 実行ビットが必須。`timeout` の単位は秒。
+`"args": []` は present なので公式どおり **exec form**（shell 無しで `command` を直接 spawn）。計 7 登録・5 スクリプト（PreToolUse は 4 スクリプト）。`check-reader-contract` は `#!/usr/bin/env python3`、残る 4 本は `#!/usr/bin/env bash` とし、全 5 本に Unix 実行ビットが必須。`timeout` の単位は秒。
 
 公式: タイムアウトした PreToolUse の command hook は tool call を **block しない**（通常の権限フローへ進む = fail-open）。10 秒は上限であり「必ずそれより早く終わる」保証には使えない。走査は区間閾値の早期打ち切りに加え、§8.6 の走査予算（読み取りバイトと経過時間）で打ち切る。判定不能は deny。予算は timeout より短く取る。遅い FS で予算チェックより先に timeout へ達した場合の素通りは既知の限界（§15）。timeout を延ばして全走査する設計にはしない。
 
@@ -219,14 +272,14 @@ Windows PowerShell ツールは対象外（既知の限界）。
 
 `check-jq`（SessionStart。公式に block 不可、`additionalContext` 可）。**jq を呼んではいけない**（欠落検知そのものが目的。警告 JSON は heredoc で書く）:
 
-1. `command -v jq >/dev/null` なら stdout 空、exit 0。
-2. 無ければ exit 0 で次を出す（セッションは止めない。PreToolUse 側が exit 2 で全 Read/Bash を止める）:
+1. 依存（Bash 4 以上・`jq`・`python3`）がすべて揃っていれば stdout 空、exit 0。
+2. 欠けているものがあれば exit 0 で次を出す（セッションは止めない。Bash/jq 不足は PreToolUse 側が exit 2 で Read/Bash を止める。Python 3 不足は `check-file-size` が bulk-reader の Read を exit 2 で止める）。**最初の1件で打ち切らず、欠落している依存をすべて1つの `additionalContext` に列挙する**（1件ずつ知らせると運用者がセッションを繰り返して直すことになる）:
 
 ```json
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "token-shunt: jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed."
+    "additionalContext": "token-shunt: jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed. Python 3 is required for the bulk-reader runtime contract. Bulk-reader Reads remain blocked until it is available."
   }
 }
 ```
@@ -248,9 +301,21 @@ Windows PowerShell ツールは対象外（既知の限界）。
 
 `permissionDecision: "allow"` は使わない。公式仕様では `"allow"` はインタラクティブな権限確認を省略する。本プラグインの matcher はすべての Read とすべての Bash に付くため、通過を `"allow"` にすると `git status` まで自動承認する。`"ask"` も出さない。
 
+### reader 契約フックの stdin と状態
+
+`check-reader-contract` はトップレベル `agent_type` が `token-shunt:bulk-reader` と完全一致するイベントだけを処理する。それ以外（欠落を含む）は対象外なので、対応 CLI の確認では実際の子 Read でこのフィールドが届くことも必須とする。対象イベントには非空文字列の `session_id` / `agent_id`、呼出しを対応付ける非空 `tool_use_id`、`hook_event_name`（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）、object の `tool_input` が必要。ID 欠落や不正形状は診断付き exit 2。
+
+Pre の `tool_input.file_path` は絶対パス、`offset` は整数（既定 1）、指定する `limit` は正整数。成功 Post は `tool_response.type: "text"` と object の `tool_response.file` に整数の `startLine` / `numLines` / `totalLines` が必要。開始行・件数は対応する要求と整合しなければならない。不明な実終端や非テキスト結果は当該パスを stopped とし、推測による続読を認めない。Failure の `error` で既知のネイティブトークン上限拒否を識別し、それ以外の失敗は stopped とする。
+
+状態は OS 一時ディレクトリ内のユーザー専用領域で `(session_id, agent_id)` ごとにロックして保持する。拒否試行も 6 回予算を消費し、絶対パスが新規登録された後の offset / limit 不正でも最大 3 パス枠を消費する。破損した状態は自動初期化せず fail-closed（exit 2）となり、同じ ID の再利用では回復しない。実行中の予算をリセットする回復操作は提供しない。
+
+初回 limit なしのネイティブ拒否に対する行数取得は独立した固定 8 MiB 上限（超過検知に 1 byte 追加）で、サイズフックの `TOKEN_SHUNT_SCAN_BUDGET_BYTES` とは連動しない。これは再試行 limit の計算に限る読取りであり、サイズゲート全体の走査予算を置き換えない。
+
+`worker-model-invalid` の `agent_zero` はフックで拒否された起動を除外するため、不正モデルの**実行防止**を検証する。親が起動前に指定を拒否するスキル遵守と同じ証明ではない。
+
 ## 8. フック共通
 
-スクリプト先頭（PreToolUse の 2 本。`check-jq` は §7）:
+サイズ検査の Bash スクリプト `check-file-size` / `check-bash-read` の共通処理（PreToolUse 全体はこの 2 本に `check-agent-model` / `check-reader-contract` を加えた 4 本。`check-jq` は §7）:
 
 1. `command -v jq >/dev/null` でなければ stderr に `token-shunt: jq is required` を書き、stdout 空、exit 2。
 2. stdin を JSON として `jq` で読む。失敗も exit 2。
@@ -336,7 +401,7 @@ deny reason の骨子（英語、短く）:
      - 末尾コマンドを解釈できない（`$(` / バッククォート / 閉じない引用）→ 早期通過しない。先頭の単純コマンドを全文閾値で判定する（fail-closed）。
      - `cat 'large|name.txt'` の `|` は引用内なのでパイプではない。
    - **複合セパレータ:** 引用の外の `;` / `&&` / `||` / 改行 / 文末以外の `&`（`&&` `>&` `2>&1` `|&` の一部ではない）。引用を保持して各区間に分け、各区間のパイプ段の先頭トークンをステップ 5 と同じ規則で調べる。サイズ対象（`cat`/`head`/`tail`/`less`/`more`）の明示された通常ファイルをステップ 6・§8.7 の全文閾値で判定し、いずれか超過なら deny。全区間を調べ終えるまで通過しない。複合ではパイプ末尾やリダイレクトによる早期通過を使わない。`cat large; echo ok > /tmp/status` と `echo ok; cat large` はともに deny。変数展開・コマンド置換からのパス解決や stdin の追跡は行わず、明示パスが無い経路は保証しない。
-   - **先行 cd の相対パス:** 先頭から連続するリテラル `cd <dir>` / `cd -- <dir>` を `&&` / `;` / 改行でつないだ場合は、移動先を後続のファイル引数の基準にする。フック内の組み込み cd でディレクトリだけを変更し、入力コマンドは実行・evalしない。`||`・バックグラウンド・グループ構文・変数等の展開・他の cd オプション・他コマンド後の cd・非空 CDPATH に依存する相対ディレクトリは追跡範囲外。この範囲外で確実にサイズ判定するには絶対ファイルパスを指定する。
+   - **先行 cd の相対パス:** 先頭から連続するリテラル `cd <dir>` / `cd -- <dir>` を `&&` / `;` / 改行でつないだ場合は、移動先を後続のファイル引数の基準にする。フック内の組み込み cd でディレクトリだけを変更し、入力コマンドは実行・evalしない。`||`・バックグラウンド・グループ構文・変数等の展開・他の cd オプション・他コマンド後の cd・非空 CDPATH に依存する相対ディレクトリは追跡範囲外。追跡不能・不確定な cd を伴う処理では、読取りを別の Bash 呼出しへ分け、絶対ファイルパスを指定する。グループ構文そのものの読取り保証は追加しない。
    - **リダイレクト早期通過:** 複合でもパイプでも解釈不能でもない単一コマンドに限り、stdout をファイルへ切る `>` / `>>`（直前が `2` でも `&` でもない。`2>&1` / `>&` / `&>` が無い）→ 出力先が通常ファイル（新規パスを含む）または `/dev/null` の場合だけ通過。stdout/stderr に戻るパス（`/dev/stdout`、`/dev/stderr`、`/dev/fd/*`、`/proc/*/fd/*` 等）、同一 inode 比較および利用可能な `readlink -f` で判定できる同等のリンク先、その他の特殊ファイル、展開等で確定できない出力先は入力ファイルの通常判定へ戻す。複数の stdout リダイレクトは全ての出力先がこの条件を満たす場合だけ早期通過する。リダイレクトは**対象コマンドに属するときだけ**通過理由にする。
    - 解釈不能でサイズ対象がある → 全文閾値（fail-closed）。
 5. （ステップ 4 で判定しなかった単一コマンドまたは単独パイプライン）先頭の `VAR=val` を繰り返し除去。残りの最初のトークンの basename が `cat` / `head` / `tail` / `less` / `more` でなければ **通過**（`git status` を含む。`"allow"` は出さない）。単独パイプラインの非縮約末尾はステップ 4 の各段判定で完了する。解釈不能な末尾からのフォールバックでは先頭の単純コマンドだけを見る。複合コマンドはステップ 4 の全区間判定で完了し、ここへ落とさない。
@@ -419,7 +484,7 @@ name: bulk-reader
 description: Bounded reader of up to three explicitly supplied files, invoked via the token-shunt bulk-reader skill.
 model: haiku
 effort: low
-maxTurns: 6
+maxTurns: 7
 tools: Read
 ```
 
@@ -456,6 +521,8 @@ tools: Read, Write, Grep, Glob
 `evals/run.sh` が Claude 無しでフックを stdin JSON → stdout 決定 / exit code で検証する。fixture ファイルは `evals/fixtures/`。
 
 通過の期待はすべて **exit 0 かつ stdout に `permissionDecision` が無い**（空 stdout）。deny は exit 0 かつ `permissionDecision` が `"deny"`。`"allow"` が 1 件でも出たらそのケースは失敗。
+
+`evals/run.sh` の `deny` / `deny_budget` は既存の bulk-reader 経路案内を理由に要求する。プロセス置換など経路案内を伴わない安全上の拒否は `deny_safety` とし、deny JSON と理由の `token-shunt` 帰属を要求する。
 
 必須ケース（これ以外を足してよい。減らさない）:
 
@@ -513,16 +580,17 @@ tools: Read, Write, Grep, Glob
 | bash-head-full | `head` を 400 行・各行ちょうど 50 バイト（改行込み）の fixture に（既定 N=10） | **通過**（先頭 10 行 = 500 バイト。条件付き散文にしない） |
 | path-space | 空白を含む大きいファイルの Read | deny、JSON が parse できる |
 | worker-code-writer-read | agent_type=`token-shunt:code-writer`、大きいファイルの **Read** | 通過。Bash 側の同等ケースは作らない（tools に Bash が無く到達しない） |
-| zip-exec-bits | `scripts/build-zip.sh` の成果物 | `hooks/check-file-size` / `check-bash-read` / `check-jq` が zip 内で実行ビット付き |
+| zip-exec-bits | `scripts/build-zip.sh` の成果物 | `hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract` が zip 内で実行ビット付き |
 | sessionstart-jq-missing | PATH から jq を外して `check-jq` に SessionStart stdin | exit 0、`additionalContext` に jq 欠落の警告。block JSON を出さない |
 | marketplace-schema | `.claude-plugin/marketplace.json` | `name` / `owner.name` / `plugins` が存在。`claude plugin validate` が使えるならそれも実行して成功 |
 
 スキル/エージェントの RED: スキル無し（または「本文を返すな」契約無し）の子がコード引用を最終メッセージに載せることを 1 ケースで確認し、契約ありで載せないことを 1 ケースで確認する。実装フェーズで writing-skills に従う。フック eval が先。
 
-`scripts/build-zip.sh` は zip 前に 3 本のフックへ `chmod +x` し、`plugin/` を zip し、次を `zipinfo` で確認して失敗なら非 0:
+`scripts/build-zip.sh` は zip 前に 5 本のフックへ `chmod +x` し、`plugin/` を zip し、次を Python 3（なければ `zipinfo`）で確認して失敗なら非 0:
 
 - アーカイブ先頭または一段下に `.claude-plugin/plugin.json`
-- `hooks/check-file-size` / `hooks/check-bash-read` / `hooks/check-jq` の Unix 実行ビット（exec form と親 Bash からの spawn は実行ビット無しだと動かない）
+- `__pycache__` / `*.pyc` / `*.pyo` を zip と Python 両ビルド経路で除外し、検証時も混入を拒否
+- `hooks/check-file-size` / `hooks/check-bash-read` / `hooks/check-jq` / `hooks/check-agent-model` / `hooks/check-reader-contract` の Unix 実行ビット（exec form と親 Bash からの spawn は実行ビット無しだと動かない）
 
 marketplace 検証（成功条件 8）: `evals/run.sh` または同梱の検証ステップが `.claude-plugin/marketplace.json` を読み、`name`・`owner.name`（非空文字列）・`plugins`（配列）を必須とする。`claude plugin validate` が PATH にあれば marketplace ルートに対して実行し、非 0 なら失敗。JSON の構文だけ通して `owner` 欠落を許さない。
 
@@ -535,24 +603,25 @@ marketplace 検証（成功条件 8）: `evals/run.sh` または同梱の検証�
 起動コマンド（必須フラグ。欠けたら比較 eval は fail。公式 Headless / CLI reference）:
 
 ```
+# .claude/ と CLAUDE.md のない一時 cwd で実行
 # 共通（両モード同一。plugin の有無以外を揃える）
-COMMON='-p --output-format stream-json --verbose --include-hook-events --forward-subagent-text --model sonnet --permission-mode acceptEdits --allowedTools Read,Edit,Grep,Glob,Agent,Write,Bash --add-dir <fixtures-abs>'
+COMMON='-p --output-format stream-json --verbose --include-hook-events --forward-subagent-text --model sonnet --permission-mode acceptEdits --allowedTools Read,Edit,Grep,Glob,Agent,Task,Write,Bash --add-dir <fixtures-abs>'
 
 # 直接: token-shunt をロードしない
-claude --bare $COMMON "<prompt>"
+claude --setting-sources "" $COMMON "<prompt>"
 
 # 委譲: token-shunt をロードする
-claude --bare $COMMON --plugin-dir plugin/ "<prompt>"
+claude --setting-sources "" $COMMON --plugin-dir <plugin-abs> "<prompt>"
 ```
 
 - 直接と委譲で変えてよいのは **token-shunt のロード有無と、委譲プロンプトのスキル指示（§26 の worker モデル方針を含む）だけ**。親モデル、permission mode、allowedTools、cwd、fixture パス、stream フラグは同一。
-- `--bare` は公式どおりフック・スキル・プラグイン・設定の自動発見をスキップする。ホストの marketplace に入った token-shunt と、cwd の `.claude/settings.json` / `.claude/settings.local.json` も読まない。委譲は `--plugin-dir` で明示ロードする（公式: `--bare` でも `--plugin-dir` は載る）。
-- **OAuth 代替（`--bare` が `ANTHROPIC_API_KEY` を要求して使えないとき）。`CLAUDE_CONFIG_DIR` だけでは足りない。** 公式の設定スコープは User（`~/.claude/settings.json`、`CLAUDE_CONFIG_DIR` で移せる）と Project（`<cwd>/.claude/settings.json`、親ディレクトリへフォールバックしない）と Local（`<cwd>/.claude/settings.local.json`）が別である。OAuth は `~/.claude.json` 側にあり、`CLAUDE_CONFIG_DIR` を空ディレクトリに移すと認証まで落ちることがある。代替は次を全部満たす:
-  1. 認証: 既定の OAuth（`~/.claude.json` を移さない）。`ANTHROPIC_API_KEY` があればそれを使って `--bare` に戻してよい。
+- 現行 runner は **`--bare` を使わない**。CLI 2.1.x ではプラグインの agent 登録がスキップされるため、API key の有無でもこの方針は変えない。委譲だけ `--plugin-dir` で明示ロードする。
+- **共通隔離契約:** `CLAUDE_CONFIG_DIR` だけでは足りない。次を全部満たす:
+  1. 認証: 既定の OAuth または API key を使い、隔離のために認証ファイルを移動しない。
   2. 設定ソース: `--setting-sources` を空（user / project / local をロードしない。SDK の `settingSources: []` に相当）。空を受け付けない CLI なら比較 eval は **fail**（`CLAUDE_CONFIG_DIR` だけに落とさない）。
   3. cwd: `.claude/` も `CLAUDE.md` も無い一時ディレクトリ。fixture は `--add-dir` で絶対パスを足す。リポジトリルートを cwd にしない。
-  4. 検出: `system/init.plugins` に token-shunt が無いことだけでは他フックは分からない。`--include-hook-events` の `hook_started` / `hook_response` で、token-shunt の 3 本（`hooks/check-file-size` / `check-bash-read` / `check-jq`）以外の command hook が 1 件でもあればそのケースは fail。直接モードは PreToolUse の hook_response が 0 件。managed settings は公式に切れない（既知の限界。managed のフックが混ざったら fail）。
-     - **実機で判明した制約（2026-09-13, CLI 2.1.270）:** この CLI の `hook_response` の `hook_name` は**マッチャ名だけ**（`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup`）で、コマンドパスを含まない。上のコマンドパスによる識別はそのままでは実装できない。代替として**隔離契約で識別する**: (a) 直接モードは `--plugin-dir` を渡さないので、PreToolUse の `hook_response` が 1 件でもあれば fail。(b) 委譲モードは `--setting-sources ""`・クリーン cwd・`--plugin-dir plugin/` のみなので、登録され得る command hook は token-shunt の 3 本だけであり、`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup` 以外の hook_event が出れば fail。(c) 出力が非空なのに `token-shunt` を含まない `hook_response` は、上記マッチャ上でも外来として fail（他プラグインの deny を捕まえる）。
+  4. 検出: `system/init.plugins` に token-shunt が無いことだけでは他フックは分からない。`--include-hook-events` の `hook_started` / `hook_response` で、token-shunt の 5 本（`hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract`）以外の command hook が 1 件でもあればそのケースは fail。直接モードは PreToolUse の hook_response が 0 件。managed settings は公式に切れない（既知の限界。managed のフックが混ざったら fail）。
+     - **実機で判明した制約（2026-09-13, CLI 2.1.270）:** この CLI の `hook_response` の `hook_name` は**マッチャ名だけ**（`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup`）で、コマンドパスを含まない。上のコマンドパスによる識別はそのままでは実装できない。代替として**隔離契約で識別する**: (a) 直接モードは `--plugin-dir` を渡さないので、PreToolUse の `hook_response` が 1 件でもあれば fail。(b) 委譲モードは `--setting-sources ""`・クリーン cwd・`--plugin-dir plugin/` のみなので、登録され得る command hook は token-shunt のフックだけであり、`PreToolUse:Read` / `PreToolUse:Bash` / `PreToolUse:Agent`（互換名 `PreToolUse:Task` / `PreToolUse:Agent|Task`）/ `PostToolUse:Read` / `PostToolUseFailure:Read` / `SessionStart:startup` 以外の hook_event が出れば fail。(c) 出力が非空なのに `token-shunt` を含まない `hook_response` は、上記マッチャ上でも外来として fail（他プラグインの deny を捕まえる）。
      - deny の識別も `hook_name` ではなく `permissionDecisionReason` に `token-shunt` が含まれることで行う（§13 の `compare-hook-deny-route` の一次証拠）。
      - **残る穴（§15）:** 同じ `PreToolUse:Read` / `Bash` マッチャに載った**外来の通過フック**は出力が空なので、この CLI では token-shunt の通過と区別できない。コマンドパスが `hook_name` に載る CLI が出たら (b) をコマンドパス識別へ戻す。
 - `system/init` の `plugins`: 直接モードに `token-shunt` がいたらそのケースは fail（隔離失敗）。委譲モードに `token-shunt` が無ければ fail（ロード失敗）。`plugin_errors` に token-shunt があれば委譲は fail。
@@ -560,7 +629,7 @@ claude --bare $COMMON --plugin-dir plugin/ "<prompt>"
 - `--include-hook-events` が PreToolUse の `hook_response` を stream に出す（SessionStart / Setup はフラグ無しでも出る）。フック deny の**一次証拠**。直接モードでは token-shunt の deny が無いこと。
 - 子の `tool_use` / `tool_result` は verbose stream に `parent_tool_use_id` 付きで出る（公式 Headless「Follow subagent messages」。既定で tool ブロック、`--forward-subagent-text` で text/thinking も）。
 - 古い CLI で子の tool_use が無いときだけ、SubagentStop の `agent_transcript_path`（ネストした `subagents/*.jsonl`）を読む。どちらも無ければそのケースの path_ok は fail（skip にしない）。
-- `--bare` も `--setting-sources` 空＋空 cwd もできない古い CLI で直接モードから token-shunt と他フックを外せないなら、比較 eval は fail（skip にしない）。1 行 70KiB の直接 Read がフック deny される状態では「親 Read 成功」を検証できない。
+- `--setting-sources` 空＋空 cwd による隔離ができない CLI で直接モードから token-shunt と他フックを外せないなら、比較 eval は fail（skip にしない）。1 行 70KiB の直接 Read がフック deny される状態では「親 Read 成功」を検証できない。
 
 パース対象は親の `tool_use`（Read / Edit / Grep / Agent / Bash）、対応する `tool_result`、`parent_tool_use_id` 付きの子メッセージ、`hook_response`、各親ターンの `result.usage`、`result.modelUsage`（Python は `model_usage`）。編集ケースは実行前後の fixture バイト列も見る。
 
@@ -568,10 +637,12 @@ claude --bare $COMMON --plugin-dir plugin/ "<prompt>"
 
 #### 起動判定（skip と fail を分ける）
 
+集計例は `last-run.json.example`（通常集計）、`last-run.skip.json.example`（CLI 未導入）に分ける。通常集計は `suite_cost_usd` を常に含み、未選択の費用対象ケースは null と証拠不足を記録する。`claude_code_version` は現行集計の出力フィールドではない。
+
 1. `command -v claude` が無い → **skip**（exit 0）。`last-run.json` に `skip_reason=claude_missing`。フック eval は通す。
 2. `claude` がある → skip しない。次のプローブ・検証とケース評価を順に実行し、それぞれの合否契約で失敗なら比較 eval は **fail**:
-   - ロードプローブ（委譲）: `--bare --plugin-dir plugin/`（または ZIP）で `system/init.plugins` に token-shunt があること。manifest 不正・フック未登録・起動エラー・`plugin_errors` は fail。
-   - 隔離プローブ（直接）: `--bare`（または OAuth 代替の空 `--setting-sources`＋空 cwd）かつ `--plugin-dir` なしで `system/init.plugins` に token-shunt が**無い**こと。あったら fail。token-shunt 以外の PreToolUse hook_response があっても fail。
+   - ロードプローブ（委譲）: 空の `--setting-sources`＋空 cwd＋`--plugin-dir <plugin-abs>`（または ZIP）で `system/init.plugins` に token-shunt があること。manifest 不正・フック未登録・起動エラー・`plugin_errors` は fail。
+   - 隔離プローブ（直接）: 空の `--setting-sources`＋空 cwdかつ `--plugin-dir` なしで `system/init.plugins` に token-shunt が**無い**こと。あったら fail。token-shunt 以外の PreToolUse hook_response があっても fail。
    - `claude plugin validate` が PATH にあれば marketplace ルートに対して実行。非 0 は fail。
    - 必須ケースを実行。ケース本体は非空transcriptをjudgeし、正答・経路・隔離と必要なディスク検証で合否を決める。CLIの非0終了だけでは不合格にしないが、各判定に `cli_exit_code` を保存する。空transcript、親result欠落・エラー結果はfail。ロード／隔離プローブのCLI非0終了は本文があっても環境失敗にする。
 3. **リリース:** A 全必須ケース（bulk-reader / code-writer）と B 各指定モード 1 反復の経路・品質・隔離に合格すれば出荷可。費用は記録し回帰チェックに使うが、出荷可否の条件にしない（§1.1・§26.5）。Claude 未導入による実機 skip は出荷不可。
@@ -611,10 +682,12 @@ claude --bare $COMMON --plugin-dir plugin/ "<prompt>"
 - 順序と証拠:
   1. 親の起点ファイルへの `Read` `tool_use`（offset/limit なし、path が fixture と一致）。
   2. その Read に対応する token-shunt フック決定が `hookSpecificOutput.permissionDecision === "deny"`。`permissionDecisionReason` は §9 の骨子を含む（`token-shunt` と `/token-shunt:bulk-reader`）。**一次証拠**は `--include-hook-events` の `hook_response`（stdout JSON）。フォールバックだけ `TOKEN_SHUNT_HOOK_LOG`。どちらも無ければ fail。
-  3. その後 `subagent_type=token-shunt:bulk-reader`。
+  3. 対象 Read の呼出 ID に結び付く `is_error` の tool_result に、親の `PreToolUse:Read` hook event と同じ `permissionDecisionReason` が含まれること。厳密に Read → hook → 失敗結果 → 最初の実行された `subagent_type=token-shunt:bulk-reader` 起動の順を要求する。hook に明示的な `tool_use_id` があって異なる場合、子・Bash・Post の hook event の場合は証拠にしない。
 - 次はフック deny の証拠にしない: ENOENT、EACCES、パス間違い、ツール組み込みのサイズ制限、`is_error` だけの tool_result、他プラグインの deny。
 - Grep だけで正答して Agent を呼ばない場合も fail。
 - 子→親テキスト契約は委譲モードと同じ。
+
+**2026-09-14 正答 fixture の予算整合:** `user.rb` のコメントパディングを短縮し、350 行超・16KiB 超を維持しつつ 24KiB 未満にする。末尾の `send_welcome_email` と参照関係は維持する。これは6回の Read 予算を増やす変更ではなく、正答用入力の調整である。実際の返却行数・拒否回数と予算内での成功は実機再測定で確認する。小仕事の判定は質問に必要な総 I/O に適用し、関係を問う3パスのうち一部が小さいことだけでバッチを分けない（§11、§26.2）。
 
 **compare-explicit-multifile の委譲**
 
@@ -689,7 +762,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 #### 合格 / 不合格
 
 - `accuracy` または `path_ok` が fail ならそのケースは失敗。
-- 「分割して再質問せよ」だけ、gold を欠く要約、子本文の親への漏れは失敗。
+- 「分割して再質問せよ」だけ、gold を欠く要約、子本文の親への漏れは失敗。ただし明示的に許可した単一行ケースの limit=1 拒否は、ネイティブ拒否証跡と親子の unreadable_line / partial・未取得行の報告を検証して unsupported_input とする。これは accuracy の成功には数えない。
 - **isolation_ok（合格条件）:** `compare-bulk-facts`、`compare-one-line`、`compare-explicit-multifile`、`compare-hook-deny-route`、`compare-edit-dense-lines`、`compare-code-writer-ok`。上の定義を満たさなければそのケースは失敗。主目的（親コンテキスト削減）を任意にしない。`parent_added_chars` と fixture `st_size` を直接比較しない。編集ケースは isolation_ok に加えてディスク上の Edit 成功と対象以外の不変が必須。
 - `usage_*` / `wall_ms` と §26.5 の親子合計推定費用を記録する。トークン総数だけでは費用を判定しない。auto の費用回帰は比較スイート合計で見る（出荷 fail にはしない）。
 - 直接モードで `parent_added_utf8_bytes` が fixture サイズに近い逐次 targeted Read になっていても、直接側は fail にしない（観測対象。委譲側の isolation_ok とは独立）。
@@ -711,6 +784,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - jq 必須。`command -v jq`。欠落時は SessionStart が警告し、PreToolUse は全 Read/Bash を exit 2 で止める
 - `shunt@portal` と同時に有効にしない（他プラグインの deny が子の Read を殺す）
 - 親コンテキスト隔離と推定 API 費用の削減を目指す。auto は Haiku を第一候補にし必要時だけ Sonnet。削減率は比較結果で示し、定額料金の減額や請求額 90% 減を保証しない
+- シェルの引用外プロセス置換は拒否する。既知readerの未解決glob・tilde・braceオペランドは、出力隔離またはバイト上限が確認できる場合を除いて拒否する。先頭cdの追跡を失った後の既知readerも拒否する。制御構文・グループ化・wrapper経由の読み取りは依然対象外であり、完全なシェル制御ではない。
 - 既知の限界: `@ファイル`、Explore の最終メッセージ、Grep content、python/sed、未知の末尾コマンドのパイプ（fail-open）、`limit=350` 逐次 Read、PowerShell、code-writer 非強制、原本 targeted Read で取れない編集
 - 導入: `claude --plugin-dir plugin/` または zip。marketplace add はリポジトリルート（`owner.name` 必須）。zip 内フックは実行ビット必須
 - フックは通過時に `permissionDecision: "allow"` を出さない（権限確認を省略しない）
@@ -718,10 +792,10 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - 環境変数 `TOKEN_SHUNT_MIN_LINES` / `TOKEN_SHUNT_MIN_BYTES` / `TOKEN_SHUNT_SCAN_BUDGET_BYTES` / `TOKEN_SHUNT_SCAN_BUDGET_MS`。`TOKEN_SHUNT_HOOK_LOG` は古い CLI の eval フォールバック
 - 画像 / PDF / `.ipynb` の Read はサイズゲートしない
 - 単一の巨大ファイルは親が行分割せず 1 ワーカーに渡す。均等行分割はしない
-- 比較 eval（`evals/compare/`）は `--bare` + 共通フラグ。直接は `--plugin-dir` なし、委譲は `--plugin-dir plugin/`。OAuth 代替は空 `--setting-sources`＋`.claude` の無い一時 cwd＋`--add-dir`。`CLAUDE_CONFIG_DIR` だけでは足りない。経路・正確性・代表ケースの親コンテキスト削減（isolation_ok、UTF-8 バイト同士）が合格条件。親子合計の推定費用と再試行は §26.5 で記録し回帰する。code-writer は親が検証コマンドを実行し、eval ランナーが生成テスト＋ mutation に成功することがリリース必須
+- 比較 eval（`evals/compare/`）は空 `--setting-sources`＋`.claude` の無い一時 cwd＋`--add-dir` と共通フラグ。直接は `--plugin-dir` なし、委譲は `--plugin-dir <plugin-abs>`。`--bare` は agent 登録を妨げるため使わない。`CLAUDE_CONFIG_DIR` だけでは足りない。経路・正確性・代表ケースの親コンテキスト削減（isolation_ok、UTF-8 バイト同士）が合格条件。親子合計の推定費用と再試行は §26.5 で記録し回帰する。code-writer は親が検証コマンドを実行し、eval ランナーが生成テスト＋ mutation に成功することがリリース必須
 - Claude 未導入なら比較 eval は skip。ロード失敗と直接モードへの token-shunt 混入、token-shunt 以外のフック混入は fail。リリースには実機の比較 eval 成功が必須
 - 編集はフックが通る原本 targeted Read が成功した場合のみ。head/tail は閲覧用。dd+temp・未読 Edit 例外を編集保証に使わない
-- bulk-reader の subagent は 1 起動につき明示最大 3 パス・各領域 1 回 Read・maxTurns 6（§12）。関連探索と再利用は v0.1 対象外
+- bulk-reader の subagent は 1 起動につき明示最大 3 パス・各領域 1 回 Read・maxTurns 7（§12）。関連探索と再利用は v0.1 対象外
 - 記事の約 90% は親 Claude の input トークン削減であり、本プラグインの親子合計費用の削減率ではない。親 input、子 usage、親子合計推定 USD を別々に示す
 - 効果が出やすいのは親が Sonnet / Opus のとき。親が Haiku なら isolation のみを期待する
 - 両スキルの `--worker-model` 呼び出し例と、未知値は起動前エラーとなる入力規約（§26.1）
@@ -732,7 +806,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - Explore / Plan / general-purpose の起動自体は止めない。それらの大きな Read は deny する。Grep や最終メッセージの引用は残る
 - Grep `output_mode=content`、`sed`、`python -c`、PowerShell `Get-Content` は対象外
 - **パイプの残穴:** 末尾が未知コマンドなら §10-4 は通過する（意図した fail-open。`cat large | grep` は通す。`cat large | cat` は deny）。封鎖しない。引用内の `|` と複合コマンドのリダイレクトはパイプ／リダイレクト通過にしない
-- **入力リダイレクト `<`:** 単語オペランドが無い `cat <large.txt` / `head -c 70000 <large.txt` は検査せず通過する。実 bash は本文を出す。ファイルオペランド付きの `cat large` / `head -c 70000 large` は deny のまま。空白付き `cat < large` の deny はパスが単語として残る副作用であり、`<` を解析しているわけではない。`dd if=` / `bash -c` と同種の穴
+- **入力リダイレクト `<`:** 単語オペランドが無い `cat <large.txt` / `head -c 70000 <large.txt` は検査せず通過する。実 bash は本文を出す。ファイルオペランド付きの `cat large` / `head -c 70000 large` は deny のまま。空白付き `cat < large` も入力元のサイズ検査対象外。`dd if=` / `bash -c` と同種の穴
 - **ANSI-C 引用 `$''`:** §10-4 の引用状態機械（通常 / `'` / `"` / `\`）に含まれない。`cat $'large.txt'` は通過、`cat 'large.txt'` は deny
 - **逐次 targeted Read:** 成功条件 6 が実測 lines/bytes が両閾値以下の targeted Read を許すため、親は `limit=350` を offset ずらしで繰り返し全文を回収できる。1 行が `MIN_BYTES` 以下なら `limit=1` の繰り返しでも回収できる（巨大行の `limit=1` は §9.7 で deny）。フックは呼び出しをまたぐ回収を検出しない。比較 eval の直接モードでは観測し、委譲側では §26.5 に従い deny 後の連続 Read / パイプ回収を path_ok fail にする。isolation_ok の量的判定も別途適用する
 - code-writer の Write フック強制はしない。完了は §11 の検証段階と受入条件の確認に依存する。最小・構文チェックだけなら生成済み・内容未検証と報告する。検証を省略した利用は製品手順違反であり、eval では fail
@@ -757,13 +831,13 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 
 ## 26. 費用最適化（v0.1 は優先順位 1〜3、2026-09-12）
 
-親コンテキスト隔離と費用最適化を別々に測る。費用最適化対象外だった旧方針は撤回済み（履歴は §16）。v0.1 の bulk-reader は指定ファイルの Read-only・maxTurns 6・1 起動あたり明示最大 3 パス。関連探索と再利用はリリース要件から外す。
+親コンテキスト隔離と費用最適化を別々に測る。費用最適化対象外だった旧方針は撤回済み（履歴は §16）。v0.1 の bulk-reader は指定ファイルの Read-only・maxTurns 7・1 起動あたり明示最大 3 パス。関連探索と再利用はリリース要件から外す。
 
 ### 26.0 採用経路と依存の決定
 
 読取・生成とも Claude Code の named subagent を採用する。Claude Code の認証・権限・モデル解決・実行履歴を使い、追加サービスや専用キーを運用しないことを設計上の制約とする。外部 API を直接呼ぶ経路は利用予定がないため、実装・比較・費用回帰悪化時のフォールバックの対象にしない。
 
-bulk-reader は 1 起動あたり明示最大 3 パス、Read のみ・maxTurns 6。複数ファイル横断は親が全パスを指定したとき同一起動にまとめる。4 パス以上は 3 パスずつ起動を分け、§26.3 の総起動上限内で親が短い回答を統合する。この選択は tools なし 1 完了より安いという主張ではない。記事とは実行境界と課金構造が異なるため、親隔離と親子合計推定費用を §26.5 で独立に測る。費用が悪化したら、この依存制約内で閾値・モデル方針・再試行を見直す。
+bulk-reader は 1 起動あたり明示最大 3 パス、Read のみ・maxTurns 7。複数ファイル横断は親が全パスを指定したとき同一起動にまとめる。4 パス以上は 3 パスずつ起動を分け、§26.3 の総起動上限内で親が短い回答を統合する。この選択は tools なし 1 完了より安いという主張ではない。記事とは実行境界と課金構造が異なるため、親隔離と親子合計推定費用を §26.5 で独立に測る。費用が悪化したら、この依存制約内で閾値・モデル方針・再試行を見直す。
 
 ### 26.1 優先 1: モデルを選択できるようにする
 
@@ -799,7 +873,7 @@ according to --worker-model. auto starts with haiku.
 
 ### 26.3 優先 3: 作業量を制限する
 
-- bulk-reader は **Read のみ、maxTurns 6**。1 起動につき明示最大 3 パスの各領域を 1 回 Read し、次に回答する。関連探索・重複再 Read・resume は禁止。Read 呼び出し数は起動あたり最大 6（分割時のみ 3 超、§12）、指定外パス 0。4 パス以上は 3 パスずつ起動を分け、§11 のバッチ間根拠契約に従う。境界確認（質問あたり最大 1 回）も総起動上限に含め、各要約の統合と全起動費用を親側に計上する。maxTurns は CLI の上限、Read 回数と対象パスは指示と transcript eval の契約であり、現在のサイズフックによる強制ではない。
+- bulk-reader は **Read のみ、maxTurns 7**。1 起動につき明示最大 3 パスの各領域を 1 回 Read し、次に回答する。関連探索・重複再 Read・resume は禁止。Read 呼び出し数は起動あたり最大 6（分割時のみ 3 超、§12）、指定外パス 0。4 パス以上は 3 パスずつ起動を分け、§11 のバッチ間根拠契約に従う。境界確認（質問あたり最大 1 回）も総起動上限に含め、各要約の統合と全起動費用を親側に計上する。maxTurns は CLI の上限、Read 回数・最大 3 パス・連続範囲は `check-reader-contract` が強制する。親が指定したパス集合との一致と回答契約は指示と transcript eval で検証する。
 - これは認証・権限統合を優先する採用方式であり、厳密な one-shot ではない。記事の 30 秒上限も named subagent の maxTurns では保証できない。時間は wall_ms として測り、30 秒を保証と宣伝しない。厳密な 1 完了・30 秒上限は製品要件にしない。
 - Read 失敗・省略・ターン終了で回答契約を満たせない場合は partial。親は自動 resume せず、ファイルを分割して再 Read するループも作らない。
 - code-writer は生成用の別契約で `maxTurns: 12` を維持する。内容確認は最大 16 ファイル、Read / Grep / Glob 合計 20 回を指示上の上限とし、transcript 超過は fail。読み取り worker の one-shot 方針を生成の Write 手順と混同しない。
@@ -816,7 +890,7 @@ v0.1 には回答索引・fingerprint・ハッシュ依存・再利用 hit/miss 
 
 ### 26.5 比較検証とリリース条件
 
-`cases.json` に `suite`、`routing`、`worker_model`、`expected_agent_calls`、`required_paths`、`expected_resolved_model` を持たせる。A と B は別 ID・別結果として保存し、同じ fixture でも経路判定を共有しない。以下が固定スイート定義である。
+`cases.json` は `suite`、`modes`、`expect.direct` / `expect.delegate`（必要時 `expect.<mode>`）で実行と経路期待を宣言する。起動数は `agent_calls_min` / `agent_calls_max` / `agent_zero`、読取は `parent_reads` / `child_reads_once`、親トークン必須条件は `require_parent_tokens` を用いる。`expected_resolved_model`、`retry_policy`、`batch_invocation` は経路制約の宣言に使うが、委譲時の要求・解決モデル一致は宣言の有無によらず全 plugin worker に適用する。期待モデルは実行 mode から導出する（auto 初回 haiku、許可された再試行のみ sonnet）。`required_paths` は判定器が受け付ける補助フィールドで、現カタログでは未使用。旧案の `routing` / `worker_model` / `expected_agent_calls` は JSON フィールド名ではない。A と B は別 ID・別結果として保存し、同じ fixture でも経路判定を共有しない。以下が固定スイート定義である。
 
 | 群 | ケース ID | 実行条件 | path_ok / 合格条件 |
 |---|---|---|---|
@@ -827,7 +901,7 @@ v0.1 には回答索引・fingerprint・ハッシュ依存・再利用 hit/miss 
 | A 契約 | worker-model-invalid | 両スキルへ `--worker-model invalid` | 明示エラー、Agent 0、生成 target 変更 0 |
 | A 契約 | writer-verification-levels | auto、参照付き YAML / Markdown / JSON の生成。親の検証・報告を実機確認 | 最小チェック成功は minimal、JSON parse 成功だけなら syntax、いずれも内容未検証・partial。必須キー/値を検査する受入条件の成功時だけ requirements。ランナーは構文が正しい必須キー欠落例、同程度の行数の途中欠落例、末尾が正当なコードブロックの Markdown を制御入力にし、誤完了・誤拒否を検出する |
 | A 契約 | reader-batch-evidence | auto、明示 4 パスを 3 + 1 で委譲、各ファイルは 1 回で読める fixture | 一意な参照識別子が揃う正答ケースは根拠付き統合。同名シンボルがあり要約だけでは識別不能な制御ケースは、境界確認で曖昧さを解消するか unconfirmed / partial。根拠なし confirmed は fail。総起動 ≤ 4、本文キャップ、各起動内の Read 契約を維持 |
-| A 契約 | reader-bounds / retry-policy / writer-bounds | 制御入力と実機 transcript | 指定外依存は partial・探索 0、Read は指定パスの各領域 1 回（重複禁止、起動あたり最大 6）、maxTurns 6。許可理由だけ Sonnet 再試行 1 回。writer 上限、総起動 ≤ 4、resume 0 |
+| A 契約 | reader-bounds / retry-policy / writer-bounds | 制御入力と実機 transcript | 指定外依存は partial・探索 0、Read は指定パスの各領域 1 回（重複禁止、起動あたり最大 6）、maxTurns 7。許可理由だけ Sonnet 再試行 1 回。writer 上限、総起動 ≤ 4、resume 0 |
 | B 製品 auto | auto-bulk-facts / auto-one-line / auto-explicit-multifile | direct / haiku / sonnet / auto。A と同じ大容量 fixture、強制委譲指示なし | ロード側は bulk-reader。明示ファイルだけで正答、本文隔離。multifile は 3 パス 1 起動。direct は親 Read 成功 |
 | B 製品 auto | auto-small-files / auto-known-range / auto-small-writer | 同じ 4 モード、各 1 反復。3 小ファイル合計 ≤16KiB / 既知の数行 / 50 行未満 | 全モード Agent 0、親の Read または生成・検証成功。委譲必須条件は適用しない |
 | B 製品 auto | auto-large-writer | 同じ 4 モード、50 行以上を要する固定 spec | direct は親生成・検証。ロード側は code-writer、親の検証と mutation 成功 |
@@ -846,17 +920,20 @@ v0.1 には回答索引・fingerprint・ハッシュ依存・再利用 hit/miss 
 
 B に `auto-edit-grep-location` を必須経路テストとして追加する（4 モード各 1 回、費用集計外）。大ファイルに類似メソッド名と同名のコメントを置き、親に誤った行番号をヒントとして与える。親は限定した Grep で実メソッドを識別し、原本 targeted Read 後に Edit する。Grep → Read → Edit の順序、正しい offset、対象以外のバイト不変を path_ok / accuracy にする。誤った子の位置ヒントを模した制御入力であることを記録する。取得位置を子に尋ねる委譲は不要で Agent 0。Grep が曖昧な制御ケースは非 Edit を期待し、実メソッド識別の正答ケースとは分ける。
 
+**2026-09-14 実機で判明:** 手順は 4 モード共通のプロンプトに明記する。正答ケースと曖昧な対照ケースには同じ位置特定・編集前確認の手順とマーカー表記を与え、対照ケースでは一意に絞れない場合の非 Edit と理由報告を要求する。`direct` はプラグインを読み込まず、フックの deny メッセージも受け取らないため、Grep → 原本 targeted Read → Edit の手順を伝える経路がプロンプト以外に無い。手順を伝えずに 4 モードへ同じ経路を要求すると、モデルの既定挙動を測るだけの試験になる。また判定器は Grep 出力の実一致行のみを数え（コンテキスト行は数えない）、実一致が 1 行でなければ絞り込み不足として不合格にする。連続行や同一関数内という理由では一意と見なさない。
+
 旧 `compare-rails-follow`（起点から concern → job を探索）、`compare-edit-byte-window`、`compare-edit-long-line` は v0.1 の必須スイートから削除する。dense-lines は targeted Read 成功ケースのみ。再利用 eval は B に含めない。
 
 - A は機構・契約のリリースゲート。B の経路・品質・隔離も出荷ゲート。48 実行の費用比較は内部回帰であり出荷条件ではない。A の auto は全必須ケース合格が必要。固定モデルの品質失敗は記録し、成功と偽らない。予算 partial は制御テストの期待結果であり、正答課題の成功には数えない。
-- B の費用回帰スイートは大容量読取 3 件と大規模生成 1 件の計 4 件（4 モード × 3 反復 = 48 実行）。小仕事 3 件は各モード 1 反復の必須経路テスト（12 実行）とし費用集計から除く。各モードで各 **3 回**、順序交替、新しい会話、同じ親モデル（既定 Sonnet）・権限・fixture 初期状態で測る。親 Haiku / Opus の結果は別表にし、Sonnet と混ぜて一般化しない。B の固定 haiku / sonnet も小仕事の直接方針は共通で、委譲時のモデルだけ固定する。
+- **将来の費用比較計画（未実装）:** B の費用回帰スイートは大容量読取 3 件と大規模生成 1 件の計 4 件（4 モード × 3 反復 = 48 実行）。小仕事 3 件は各モード 1 反復の必須経路テスト（12 実行）とし費用集計から除く。各モードで各 **3 回**、順序交替、新しい会話、同じ親モデル（既定 Sonnet）・権限・fixture 初期状態で測る。親 Haiku / Opus の結果は別表にし、Sonnet と混ぜて一般化しない。B の固定 haiku / sonnet も小仕事の直接方針は共通で、委譲時のモデルだけ固定する。
 - §13 の隔離した CLI 条件を使用する。各試行は同じ cwd パスに独立 fixture を復元し、生成物と mutation を持ち越さない。要求・実モデル、方針バージョン、キャッシュ条件を記録する。
 - **親 input と費用を分離:** `parent_input_tokens`（親の uncached input / cache read / cache creation の内訳付き累積）、`usage_tree`、`estimated_api_cost_usd` を別々に保存する。parent_added_utf8_bytes は本文隔離指標であり、記事の input トークンや費用ではない。親だけの削減率を親子合計 USD の削減率と呼ばない。
-- 推定 USD は親子全モデルの uncached input / cache read / cache creation / output に、それぞれの単価を掛けて合計する。単価の公式出典 URL・取得日・価格適用日・プロバイダーを保存する。usage や料金区分が不足なら null と理由を記録し、費用合格にしない。定額契約の実請求額とは呼ばない。
+- **現実装の費用:** `estimated_api_cost_usd` は CLI の `total_cost_usd` を記録する。usage からの単価再計算・単価出典の保存は未実装であり、価格検証済みの値や定額契約の実請求額とは呼ばない。欠測は null として費用合格にしない。親子分は CLI 集計を使い、別途加算しない。
+- **現実装の反復:** `evals/compare/repeat.sh [N]` は全カタログを固定のケース・モード順で N 回実行する（既定2回）。各試行は新しい CLI 会話と復元済み fixture を使い、反復ごとの集計とログを保存する。48実行への絞り込み・3反復・順序交替・反復中央値の費用比較は実装していない。将来は単価の公式出典 URL・取得日・価格適用日・プロバイダーと価格区分を保存する再計算方式も検討する。
 - ルーティング、全子呼び出し、再試行、親の検証・修正を課題単位で合算する。modelUsage に含まれる子を二重加算しない。失敗試行も除外しない。worker_attempts / fallback_reason / stop_reason / wall_ms を保存する。未キャッシュとキャッシュありを混ぜた平均だけで評価しない。
-- **費用回帰（出荷条件ではない）:** B の 4 件を 4 モード × 3 反復 = 48 実行し、費用中央値の総和が direct と sonnet 固定の両方より小さいかを記録する。個別ケースの増加も表に残す。悪化したら手段（モデル方針・小仕事閾値・起動のまとめ方）を改訂して測り直す。記事の約 90% とは独立した内部チェックであり、製品ラベルや出荷区分にはしない。
+- **将来の費用回帰（未実装・出荷条件ではない）:** B の 4 件を 4 モード × 3 反復 = 48 実行し、費用中央値の総和が direct と sonnet 固定の両方より小さいかを記録する。個別ケースの増加も表に残す。悪化したら手段（モデル方針・小仕事閾値・起動のまとめ方）を改訂して測り直す。記事の約 90% とは独立した内部チェックであり、製品ラベルや出荷区分にはしない。
 
-**ゲート失敗時:** 経路・品質・隔離の失敗または必須親トークン測定の欠測は修正まで出荷を止める。費用だけが不合格または未取得なら、費用削減をうたわない出荷物は出荷可。外部 API 経路への切り替えは行わない。小仕事も 3 反復する従来の 84 実行は任意の拡張観測とし、必須 48 実行の費用集計と混ぜない。A・境界・編集ケースはこの実行数に別途加わる。
+**ゲート失敗時:** 経路・品質・隔離の失敗または必須親トークン測定の欠測は修正まで出荷を止める。費用だけが不合格または未取得なら、費用削減をうたわない出荷物は出荷可。外部 API 経路への切り替えは行わない。小仕事も 3 反復する従来の 84 実行は任意の拡張観測とし、将来計画の 48 実行の費用集計と混ぜない。A・境界・編集ケースはこの実行数に別途加わる。
 
 Claude CLI 不在では実機 eval を skip できるが、リリースは不可。現時点では設計のみで、モデル適性・削減率は未検証。
 
@@ -871,6 +948,8 @@ Claude CLI 不在では実機 eval を skip できるが、リリースは不可
 PR 1 から順に進める。経路選定用の API プロトタイプや先行比較は不要。PR 3 未完了・実機 skip・費用未取得のまま費用削減をうたわない。
 
 
+bulk-reader の Read 予算は6回のまま、maxTurns=7 として最後の1ターンを終了報告に予約する。上限に達する前に回答できる場合はその時点で終了する。実機の強制停止で返答がない場合は成功とせず partial とする。
+
 ## 27. 2026-09-13 レビューの偽陽性チェック
 
 前回レビューの番号に対応する。設計書の静的照合であり、実機検証済みという意味ではない。
@@ -882,3 +961,21 @@ PR 1 から順に進める。経路選定用の API プロトタイプや先行�
 | 3. トークン節約の未確認出荷 | 一部真陽性 | 費用ゲート不要・欠測時に費用削減をうたわない方針は明示済みで、これ自体は欠陥でない。一方、今回の目的に対して親の累積トークンを測らなくてもよい点は不足。既存 B の direct / auto から必須観測を追加し、削減保証や USD 出荷ゲートは追加しない |
 | 4. 3 パス分割 | 一部真陽性 | 固定 3 パス自体が品質を落とすという断定は撤回。根拠が揃えば親の統合は可能。不足はバッチ間の根拠と曖昧時の扱いであり、上限を維持して §11・§26.3 と境界 eval を補足 |
 | 5. Bash パイプ・複合判定 | 真陽性 | 行数指定ではバイト数を判定できず、複合の全対象判定と先頭だけの判定が矛盾。stdin の head/tail は明示バイト上限でのみ通過、複合は全区間の明示対象を先に判定する規約と回帰ケースを追加。汎用シェル解析や未知コマンドの封鎖は追加しない |
+
+### 2026-09-14 実機再検証後の判定補正
+
+- reader の Read 予算は既存フックと同じく最初の6試行で、ネイティブ拒否・token-shunt の deny も消費する。予算枯渇後に遮断された追加要求は実行済み Read と数えない。6試行後に通過した Read は不合格。フックの予算定義は変更しない。
+- 呼出 ID・子起動 ID・時系列が一致する失敗 tool_result に、`check-reader-contract` の既知の拒否理由がある場合だけ、範囲・重複・指定外 Read の検査対象から分離する。遮断された要求はカーソルや半減値を更新せず、読取成功の根拠にもならない。ネイティブのトークン上限拒否と、未識別の失敗は従来どおり検査する。
+- `metrics.reader_attempts` に起動ごとの `attempts`、`budget_consumed`、`blocked_attempts`（呼出 ID と理由）を残す。遮断が成功してもモデルが試行時から契約を守ったことにはしない。最終回答・正確性・未読範囲などの判定は引き続き必要。
+- 単一行がネイティブ Read の `limit=1` でも読めない場合の partial 例外では、空の `confirmed:` と `confirmed: none` を事実主張と数えない。観測済みの `confirmed: none — unable to retrieve payload_sha value.` 型（識別子のみ可）も許容する。任意の後続説明や別行の事実主張は免除しない。親と子の両報告、実際のネイティブ拒否、unread 行、status/stop_reason の証拠を引き続き必須にする。
+
+### 2026-09-14 別ハーネス指摘 F1〜F8 の修正
+
+- Bash のコマンド識別は先頭のリダイレクトと代入を踏まえて行い、通常コマンド・複合区間・パイプ段で同じ規則を使う。fd 転送の順序は維持する。追跡できない先頭 cd は未解決として、後続 reader の相対パスを元 cwd のファイルと誤認しない。
+- `>` ごとに全前置・後置文字列を再字句化せず、1回の字句化結果からリダイレクトを調べる。ファイル走査の予算とフック全体の10秒タイムアウトは引き続き別であり、遅いFS等の絶対的な時間保証はしない。
+- 名前付きfd（`{fd}>...`）は動的なfd割当を推測せず明示的に拒否する。引用・エスケープされた同形のファイル名はリテラルのまま扱う。
+- heredoc の本文を別コマンドとして検査しない。引用・エスケープによるリテラル区切り、`<<-`、複数 heredoc を扱う。ANSI-C/ロケール引用の区切りと、非引用本文のバックスラッシュ改行は、安全に解釈できないため明示的に拒否する。算術の `<<` を heredoc として扱わない。入力リダイレクトだけからファイル本文を読む経路のサイズ検査は引き続き保証外。
+- Bash のすべての deny 理由に token-shunt の帰属を含め、判定器の外来フック検査と揃える。
+- 判定器のパス同一性は、記録済み `tool_cwd`（なければ親 `system/init.cwd`）とファイルシステム上のパス解決を使う。`.`、重複区切り、`..`、相対名、シンボリックリンクを扱い、評価器自身の cwd を借りない。基準cwdが不明な成功Readは、禁止系チェックで証拠不足として不合格。過去に変更・削除されたリンクの履歴までは再構成しない。
+- Python 3 不足は既存 Read サイズフックが bulk-reader を exit 2 で遮断する。契約フックへの非object JSONや不正な入れ子の形状は診断付き exit 2。reader 契約・Bash 修正・doctor の回帰テストを `evals/run.sh` に組み込む。
+- doctor の記録は同じディレクトリの一時ファイルへ書き、置換成功後だけ recorded と表示する。準備・書込み・置換失敗は明示的なエラーと非0終了。以前の記録を成功前に切り詰めない。

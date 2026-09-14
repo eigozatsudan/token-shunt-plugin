@@ -60,7 +60,9 @@ class WriterBoundaryTest(unittest.TestCase):
         events += [call('write', 'Write', {'file_path': target, 'content': module(lines)}, worker),
                    result('write', parent=worker)]
         if worker:
-            events.append(result(worker))
+            reply = result(worker)
+            reply['message']['content'][0]['content'] = (target + '\n50 lines\n- Generated tests\n- Used reference\n- Parent verification pending\nstatus: complete\nstop_reason: complete')
+            events.append(reply)
         verification = [call('verify', 'Bash', {'command': command or 'python -m py_compile ' + shlex.quote(target)}),
                         result('verify', error=check == 'failed')]
         final = {'type': 'result', 'result': 'Done', 'is_error': False}

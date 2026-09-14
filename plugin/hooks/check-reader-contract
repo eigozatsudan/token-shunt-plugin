@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Serialize bulk-reader Reads and enforce six attempts and exact continuation.
+
+State is private to (session_id, agent_id), contains metadata only, and remains
+for the OS temporary-directory lifecycle so resumed invocations cannot reset it.
+"""
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import tempfile
+
+
+def transition(state, event):
+    kind = event['hook_event_name']
+    inp = event.get('tool_input', {})
+    if not isinstance(inp, dict):
+        raise ValueError('tool_input must be an object')
+    call = event.get('tool_use_id')
+    if not call:
+        raise ValueError('missing tool_use_id')
+    if kind == 'PreToolUse':
+        if state['calls'] >= 6:
+            return 'Read budget exhausted; stop partial with stop_reason: budget_exhausted.'
+        state['calls'] += 1  # Refused attempts also consume budget.
+        if state.get('pending'):
+            return 'A Read is still pending. Issue Reads serially; do not read ahead.'
+        path = inp.get('file_path')
+        if not isinstance(path, str) or not os.path.isabs(path):
+            return 'Read requires an absolute file_path.'
+        path = os.path.realpath(path)
+        if path not in state['paths'] and len(state['paths']) >= 3:
+            return 'At most three paths per invocation.'
+        cursor = state['paths'].setdefault(path, {'next': 1})
+        if cursor.get('stopped'):
+            return 'No further Read is supported for this path; report its unread range partial.'
+        offset, limit = inp.get('offset', 1), inp.get('limit')
+        if (type(offset) is not int or offset != cursor['next']
+                or (limit is not None and (type(limit) is not int or limit < 1))):
+            return 'Read must start at offset=%s with a positive limit.' % cursor['next']
+        if 'retry' in cursor and limit != cursor['retry']:
+            return 'Retry at offset=%s with limit=%s (floor half).' % (cursor['next'], cursor['retry'])
+        state['pending'] = {'id': call, 'path': path, 'offset': offset, 'limit': limit}
+        return None
+    pending = state.get('pending')
+    # Denied parallel/invalid calls must not finalize another outstanding Read.
+    if not pending or pending['id'] != call:
+        return None
+    cursor = state['paths'][pending['path']]
+    state['pending'] = None
+    if kind == 'PostToolUseFailure':
+        count = pending['limit']
+        if re.search(r'File content .*exceeds maximum allowed tokens', str(event.get('error', '')), re.I):
+            if count is None:
+                # Never scan an unbounded file just to compute a retry limit.
+                with open(pending['path'], 'rb') as source:
+                    data = source.read(8388609)
+                if len(data) <= 8388608:
+                    count = data.count(b'\n') + int(bool(data) and not data.endswith(b'\n'))
+            if count and (count > 1 or pending['limit'] is None):
+                cursor['retry'] = max(1, count // 2)
+                return None
+        cursor['stopped'] = True
+        return None
+    response = event.get('tool_response', {})
+    file = response.get('file', {}) if isinstance(response, dict) else {}
+    if not isinstance(file, dict):
+        raise ValueError('tool_response.file must be an object')
+    start, count, total = (file.get(k) for k in ('startLine', 'numLines', 'totalLines'))
+    if (isinstance(response, dict) and response.get('type') == 'text' and type(start) is int and start == pending['offset']
+            and type(count) is int and count > 0 and type(total) is int
+            and start + count - 1 <= total
+            and (pending['limit'] is None or count <= pending['limit'])):
+        cursor.pop('retry', None)
+        cursor['next'] = start + count
+        cursor['stopped'] = cursor['next'] > total
+    else:
+        cursor['stopped'] = True  # Unknown actual endpoint never licenses a guess.
+    return None
+
+
+def main():
+    event = json.load(sys.stdin)
+    if not isinstance(event, dict):
+        raise ValueError('hook stdin must be an object')
+    if event.get('agent_type') != 'token-shunt:bulk-reader':
+        return
+    session, agent = event.get('session_id'), event.get('agent_id')
+    if not isinstance(session, str) or not session or not isinstance(agent, str) or not agent:
+        raise ValueError('bulk-reader hooks require session_id and agent_id')
+    key = hashlib.sha256((session + '\0' + agent).encode()).hexdigest()
+    root = Path(tempfile.gettempdir()) / ('token-shunt-reader-%s' % os.getuid())
+    root.mkdir(mode=0o700, exist_ok=True)
+    if root.is_symlink() or root.stat().st_uid != os.getuid() or root.stat().st_mode & 0o077:
+        raise ValueError('reader state directory must be private and owned by this user')
+    fd = os.open(root / (key + '.json'), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as source:
+        fcntl.flock(source, fcntl.LOCK_EX)
+        raw = source.read()
+        state = json.loads(raw) if raw else {'calls': 0, 'paths': {}}
+        reason = transition(state, event)
+        source.seek(0)
+        json.dump(state, source)
+        source.truncate()
+        source.flush()
+    if reason:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
+            'permissionDecision': 'deny', 'permissionDecisionReason': 'token-shunt: ' + reason}}))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as exc:  # Any ordinary failure must block PreToolUse, including recursion.
+        print('token-shunt: reader contract unavailable: ' + str(exc), file=sys.stderr)
+        sys.exit(2)

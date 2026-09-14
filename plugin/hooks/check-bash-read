@@ -2,6 +2,10 @@
 # token-shunt PreToolUse hook for Bash (design §8, §10).
 # Pass: exit 0, empty stdout. Deny: exit 0, permissionDecision JSON.
 # Fail-closed: missing jq / unreadable stdin -> stderr + exit 2.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  printf 'token-shunt: Bash 4 or newer is required; hook blocked\n' >&2
+  exit 2
+fi
 export LC_ALL=C
 HOOK_NAME=check-bash-read
 
@@ -40,13 +44,16 @@ now_ms() {
 
 hook_log() {
   [[ -n ${TOKEN_SHUNT_HOOK_LOG-} ]] || return 0
-  jq -nc --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
-    '{hook:$h,decision:$d,reason:$r}' >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
+  jq -c --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
+    '{hook:$h,decision:$d,reason:$r,tool_use_id:.tool_use_id,session_id:.session_id,
+      command:.tool_input.command}' <<<"$input" >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
 }
 pass() { hook_log pass ""; exit 0; }
 deny() {
-  hook_log deny "$1"
-  jq -nc --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
+  local reason=$1
+  [[ $reason == *token-shunt* ]] || reason="token-shunt: $reason"
+  hook_log deny "$reason"
+  jq -nc --arg r "$reason" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
 }
 
@@ -65,15 +72,24 @@ range_scan() {
   st=$(file_size "$path") && [[ $st =~ ^[0-9]+$ ]] || { printf '1 1 0 0 0 0'; return; }
   t0=$(now_ms)
   res=$(set -o pipefail
-    head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" |
-    awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
-    BEGIN { if (st>bb+1) st=bb+1 }
-    !f { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
-      if (NR>=start && NR<start+cnt) { rl++; rby+=lb+nl
-        if (rl>ml || rby>mb) { printf "1 0 %d %d %d", rl, rby, rb; f=1; next } }
-      if (rb>bb)             { printf "1 1 %d %d %d", rl, rby, rb; f=1; next }
-      if (NR==start+cnt-1)   { printf "0 0 %d %d %d", rl, rby, rb; f=1; next } }
-    END { if(!f) printf "0 0 %d %d %d", rl, rby, rb }') || res="1 1 0 0 0"
+    # One fixed EOF marker preserves exact newline accounting independent of stat.
+    { head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" && printf '.'; } |
+    awk -v start="$start" -v cnt="$count" -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" '
+    function record(bytes) {
+      if (f) return
+      line++; rb+=bytes
+      if (line>=start && line<start+cnt) {
+        rl++; rby+=bytes
+        if (rl>ml || rby>mb) { ex=1; f=1; return }
+      }
+      if (rb>bb) { ex=1; un=1; f=1; return }
+      if (line==start+cnt-1) f=1
+    }
+    { if (NR>1) record(prev+1); prev=length($0) }
+    END {
+      if (prev>1) record(prev-1)
+      printf "%d %d %d %d %d", ex, un, rl, rby, rb
+    }') || res="1 1 0 0 0"
   t1=$(now_ms); elapsed=$((t1-t0))
   # Pipeline failures and malformed output are undetermined deny (§8.6).
   [[ $res =~ ^[01]\ [01]\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || res="1 1 0 0 0"
@@ -116,13 +132,22 @@ full_file_verdict() {
   fi
   t0=$(now_ms)
   res=$(set -o pipefail
-    head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" |
-    awk -v ml="$MIN_LINES" -v bb="$SCAN_BUDGET_BYTES" -v st="$st" '
-    BEGIN { if (st>bb+1) st=bb+1 }
-    !f { lb=length($0); nl=(rb+lb<st)?1:0; rb+=lb+nl
-      if (NR>ml) { printf "EXCEEDED %d %d %d", NR, rb, rb; f=1; next }
-      if (rb>bb) { printf "UNDETERMINED %d %d %d", NR, rb, rb; f=1; next } }
-    END { if(!f) printf "OK %d %d %d", NR, rb, rb }') || res="UNDETERMINED 0 0 0"
+    # Append one known byte so awk can distinguish the final unterminated
+    # record without trusting stat (procfs and concurrent growth can report 0).
+    { head -c "$((SCAN_BUDGET_BYTES+1))" -- "$path" && printf '.'; } |
+    awk -v ml="$MIN_LINES" -v mb="$MIN_BYTES" -v bb="$SCAN_BUDGET_BYTES" '
+    function record(bytes) {
+      if (f) return
+      lines++; rb+=bytes
+      if (lines>ml || rb>mb) { v="EXCEEDED"; f=1 }
+      else if (rb>bb) { v="UNDETERMINED"; f=1 }
+    }
+    { if (NR>1) record(prev+1); prev=length($0) }
+    END {
+      if (prev>1) record(prev-1)
+      if (!f) v="OK"
+      printf "%s %d %d %d", v, lines, rb, rb
+    }') || res="UNDETERMINED 0 0 0"
   t1=$(now_ms); elapsed=$((t1-t0))
   # Pipeline failures and malformed output are undetermined deny (§8.6).
   [[ $res =~ ^(OK|EXCEEDED|UNDETERMINED)\ -?[0-9]+\ [0-9]+\ [0-9]+$ ]] || res="UNDETERMINED 0 0 0"
@@ -153,7 +178,8 @@ cmd="${cmd%"${cmd##*[![:space:]]}"}"
 # Remove shell comments before either operator scanning or tokenization. Keep
 # newlines so a command following a comment remains a separate command.
 strip_comments() {
-  local s=$1 i=0 n=${#1} qs=0 c nxt word=0
+  local s=$1 i=0 n=${#1} qs=0 c nxt word=0 j dq dc delim hd line end trim delimiter_quoted arithmetic_depth=0
+  local -a heredocs=() heredoc_tabs=() heredoc_quoted=()
   COMMENT_FREE=''
   while (( i < n )); do
     c=${s:i:1}; nxt=${s:i+1:1}
@@ -161,7 +187,70 @@ strip_comments() {
       while (( i < n )) && [[ ${s:i:1} != $'\n' ]]; do ((i++)); done
       continue
     fi
+    # Arithmetic shifts are not heredoc operators. Track their parentheses
+    # only to keep the body masker from swallowing following real commands.
+    if (( qs == 0 )); then
+      if [[ $c == '(' ]] && { (( arithmetic_depth )) || [[ $nxt == '(' ]]; }; then
+        ((arithmetic_depth++))
+      elif [[ $c == ')' ]] && (( arithmetic_depth )); then ((arithmetic_depth--)); fi
+    fi
+    # Heredoc contents are data, not additional shell command segments.
+    # Record quote-removed delimiters without expanding or executing them.
+    if (( qs == 0 && arithmetic_depth == 0 )) && [[ $c == '<' && $nxt == '<' && ${s:i+2:1} != '<' && ( $i == 0 || ${s:i-1:1} != '<' ) ]]; then
+      j=$((i+2)); trim=0
+      if [[ ${s:j:1} == '-' ]]; then trim=1; ((j++)); fi
+      while [[ ${s:j:1} == ' ' || ${s:j:1} == $'\t' ]]; do ((j++)); done
+      delim=''; dq=0; hd=0; delimiter_quoted=0
+      while (( j < n )); do
+        dc=${s:j:1}
+        case $dq in
+          1) [[ $dc == "'" ]] && dq=0 || delim+=$dc ;;
+          2) if [[ $dc == '"' ]]; then dq=0
+             elif [[ $dc == '\' && ( ${s:j+1:1} == '"' || ${s:j+1:1} == '\' || ${s:j+1:1} == '$' || ${s:j+1:1} == '`' || ${s:j+1:1} == $'\n' ) ]]; then
+               ((j++)); [[ ${s:j:1} == $'\n' ]] || delim+=${s:j:1}
+             else delim+=$dc; fi ;;
+          0) case $dc in
+               [[:space:]]|'|'|'&'|';'|'<'|'>'|'('|')') break ;;
+               "'") dq=1; delimiter_quoted=1 ;;
+               '"') dq=2; delimiter_quoted=1 ;;
+               '\')
+                 ((j++))
+                 if [[ ${s:j:1} != $'\n' ]]; then delimiter_quoted=1; delim+=${s:j:1}; fi ;;
+               '$')
+                 if [[ ${s:j+1:1} == "'" || ${s:j+1:1} == '"' ]]; then
+                   deny 'token-shunt: Expanded heredoc delimiters cannot be checked safely. Use a literal delimiter.'
+                 fi
+                 delim+=$dc ;;
+               *) delim+=$dc ;;
+             esac ;;
+        esac
+        hd=1; ((j++))
+      done
+      (( dq == 0 )) || deny "token-shunt: Unclosed heredoc delimiter cannot be checked safely."
+      if (( hd )); then heredocs+=("$delim"); heredoc_tabs+=("$trim"); heredoc_quoted+=("$delimiter_quoted"); fi
+    fi
     COMMENT_FREE+=$c
+    if (( qs == 0 )) && [[ $c == $'\n' ]] && ((${#heredocs[@]})); then
+      j=$((i+1))
+      for ((hd=0; hd<${#heredocs[@]}; hd++)); do
+        while (( j < n )); do
+          end=$j
+          while (( end < n )) && [[ ${s:end:1} != $'\n' ]]; do ((end++)); done
+          line=${s:j:end-j}; j=$((end+1))
+          # Bash joins backslash-newline in an unquoted body before checking
+          # delimiters. Do not guess that grammar and hide following commands.
+          if (( !heredoc_quoted[hd] )) && [[ $line == *'\' ]]; then
+            deny "token-shunt: Continued unquoted heredoc bodies cannot be checked safely. Quote the delimiter."
+          fi
+          if (( heredoc_tabs[hd] )); then
+            while [[ $line == $'\t'* ]]; do line=${line:1}; done
+          fi
+          [[ $line == "${heredocs[hd]}" ]] && break
+        done
+      done
+      heredocs=(); heredoc_tabs=(); heredoc_quoted=(); i=$j; word=0
+      continue
+    fi
     case $qs in
       1) [[ $c == "'" ]] && qs=0 ;;
       2) if [[ $c == '"' ]]; then qs=0
@@ -185,6 +274,10 @@ strip_comments() {
 }
 strip_comments "$cmd"
 cmd=$COMMENT_FREE
+# Masked heredoc bodies can leave a final newline after one simple command.
+# It is not a compound list; keep genuine internal command separators.
+cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+cmd="${cmd%"${cmd##*[![:space:]]}"}"
 
 # A stdout redirect is isolating only for a normal file or /dev/null.
 # Follow links without reading their contents; unknown devices/FIFOs and
@@ -193,7 +286,7 @@ is_isolating_target() {
   local target=$1 resolved
   [[ -n $target ]] || return 1
   case $target in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*) return 1;; esac
-  case $target in *'$'*|*'`'*|*'~'*|*'<'*|*'>'*|*'*'*|*'?'*|*'['*) return 1;; esac
+  case $target in *'$'*|*'`'*|*'~'*|*'<'*|*'>'*|*'*'*|*'?'*|*'['*|*'('*|*')'*|*'{'*) return 1;; esac
   [[ $target -ef /dev/stdout || $target -ef /dev/stderr ]] && return 1
   resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
   case $resolved in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*|*'pipe:['*|*'socket:['*) return 1;; esac
@@ -207,7 +300,7 @@ is_isolating_target() {
 scan_ops() {
   local s=$1
   local i=0 n=${#s} qs=0 c nxt prv
-  S_UNINTERP=0; PIPES=(); SEPS=(); CLEAN_GT=0; SPECIAL_GT=0
+  S_PROCESS=0; S_EXPANSION=0; S_UNINTERP=0; PIPES=(); SEPS=(); CLEAN_GT=0; SPECIAL_GT=0
   while (( i < n )); do
     c=${s:i:1}
     prv=''; (( i > 0 )) && prv=${s:i-1:1}
@@ -228,37 +321,41 @@ scan_ops() {
                else PIPES+=("$i:1"); fi ;;
          '&')  if   [[ $nxt == '&' ]]; then SEPS+=("$i:2"); ((i++))
                elif [[ $nxt == '>' ]]; then SPECIAL_GT=1; ((i++))
-               elif [[ $prv == '>' ]]; then :
+               elif [[ $prv == '>' || $prv == '<' ]]; then :
                elif (( i == n - 1 )); then :  # trailing background & is not a compound separator (§10-4)
                else SEPS+=("$i:1"); fi ;;
-         '>')  local fdpos=$i   # scan fd digits from THIS '>', before consuming '>>' etc.
-               if   [[ $nxt == '>' || $nxt == '|' ]]; then ((i++)); fi
-               if   [[ $prv == '&' || $nxt == '&' ]]; then SPECIAL_GT=1
-               else
-                 # Only an entirely unquoted digit token is an IO number.
-                 # Reuse the lexer so filename suffixes and quoted/escaped
-                 # digits cannot be mistaken for an explicit descriptor.
-                 local -a saved_toks=("${TOKS[@]}") saved_kinds=("${TOK_KINDS[@]}")
-                 tokenize "${s:0:fdpos}>"
-                 local fd=${TOKS[${#TOKS[@]}-1]%>}
-                 TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
-                 # Bash accepts zero-padded fd 1. Match lexically, avoiding
-                 # overflow from arithmetic on arbitrarily long IO numbers.
-                 if [[ -z $fd || $fd =~ ^0*1$ ]]; then
-                   # Every stdout redirect must be isolating before early pass.
-                   # Tokenization only removes quotes; it never expands/evals.
-                   tokenize "${s:i+1}"
-                   if is_isolating_target "${TOKS[0]-}"; then CLEAN_GT=1
-                   else SPECIAL_GT=1; fi
-                   TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
-                 fi
-               fi ;;
+         '<')  [[ $nxt == '(' ]] && S_PROCESS=1 ;;
+         '*'|'?'|'['|'~'|'{') S_EXPANSION=1 ;;
+         '>')  [[ $nxt == '(' ]] && S_PROCESS=1
+               [[ $nxt == '>' || $nxt == '|' || $nxt == '&' ]] && ((i++)) ;;
          ';'|$'\n') SEPS+=("$i:1") ;;
        esac ;;
     esac
     ((i++))
   done
   (( qs == 1 || qs == 2 )) && S_UNINTERP=1
+  # Lex once, then inspect redirect tokens. Re-lexing a growing prefix and
+  # suffix for every > made repeated redirects exceed the hook timeout.
+  local -a saved_toks=("${TOKS[@]}") saved_kinds=("${TOK_KINDS[@]}") saved_exp=("${TOK_EXP[@]}")
+  local fd t
+  tokenize "$s"
+  for ((i=0; i<${#TOKS[@]}; i++)); do
+    if [[ ${TOK_KINDS[i]} == input_redirect ]]; then
+      fd=${TOKS[i]%%<*}
+      [[ $fd =~ ^0*1$ ]] && SPECIAL_GT=1
+      ((i++)); continue
+    fi
+    [[ ${TOK_KINDS[i]} == redirect ]] || continue
+    t=${TOKS[i]}; fd=${t%%>*}
+    if [[ $t == *'>&' ]] || { (( i > 0 )) && [[ ${TOK_KINDS[i-1]} == operator && ${TOKS[i-1]} == '&' ]]; }; then
+      SPECIAL_GT=1
+    elif [[ -z $fd || $fd =~ ^0*1$ ]]; then
+      if is_isolating_target "${TOKS[i+1]-}"; then CLEAN_GT=1
+      else SPECIAL_GT=1; fi
+    fi
+    ((i++))
+  done
+  TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}"); TOK_EXP=("${saved_exp[@]}")
 }
 
 # tokenize: quote removal -> TOKS, with lexical kinds preserved in TOK_KINDS.
@@ -266,7 +363,8 @@ scan_ops() {
 tokenize() {
   local s=$1
   local i=0 n=${#s} qs=0 c nxt cur='' have=0 quoted=0
-  TOKS=(); TOK_KINDS=()
+  TOKS=(); TOK_KINDS=(); TOK_EXP=()
+  local expanded=0
   while (( i < n )); do
     c=${s:i:1}; nxt=${s:i+1:1}
     case $qs in
@@ -282,30 +380,65 @@ tokenize() {
          "'")  qs=1; have=1; quoted=1 ;;
          '"')  qs=2; have=1; quoted=1 ;;
          '&'|'|'|';'|'('|')')
-              (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); }
-              TOKS+=("$c"); TOK_KINDS+=(operator); cur=''; have=0; quoted=0 ;;
-         '>') local redir=''
+              (( have )) && { TOK_EXP[${#TOKS[@]}]=$expanded; TOKS+=("$cur"); TOK_KINDS+=(word); }
+              TOK_EXP[${#TOKS[@]}]=0; TOKS+=("$c"); TOK_KINDS+=(operator); cur=''; have=0; quoted=0; expanded=0 ;;
+         '<'|'>') local redir='' kind=redirect
+              [[ $c == '<' ]] && kind=input_redirect
               if (( have )); then
+                # Bash allocates a descriptor for an unquoted {name} prefix.
+                # It is neither a command word nor stdout; do not infer its
+                # dynamic descriptor number or let it manufacture isolation.
+                if (( !quoted )) && [[ $cur =~ ^\{[A-Za-z_][A-Za-z0-9_]*\}$ ]]; then
+                  deny "token-shunt: Named file descriptors cannot be checked safely. Use literal descriptor numbers."
+                fi
                 if (( !quoted )) && [[ $cur =~ ^[0-9]+$ ]]; then redir=$cur
-                else TOKS+=("$cur"); TOK_KINDS+=(word); fi
+                else TOK_EXP[${#TOKS[@]}]=$expanded; TOKS+=("$cur"); TOK_KINDS+=(word); fi
               fi
-              redir+='>'
-              if [[ $nxt == '>' || $nxt == '|' || $nxt == '&' ]]; then redir+=$nxt; ((i++)); fi
-              TOKS+=("$redir"); TOK_KINDS+=(redirect); cur=''; have=0; quoted=0 ;;
-         [[:space:]]) (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); cur=''; have=0; quoted=0; } ;;
+              redir+=$c
+              if [[ $c == '>' && ( $nxt == '>' || $nxt == '|' || $nxt == '&' ) ]] ||
+                 [[ $c == '<' && ( $nxt == '<' || $nxt == '>' || $nxt == '&' ) ]]; then
+                redir+=$nxt; ((i++))
+                if [[ $redir == *'<<' && ( ${s:i+1:1} == '<' || ${s:i+1:1} == '-' ) ]]; then
+                  redir+=${s:i+1:1}; ((i++))
+                fi
+              fi
+              TOK_EXP[${#TOKS[@]}]=0; TOKS+=("$redir"); TOK_KINDS+=("$kind"); cur=''; have=0; quoted=0; expanded=0 ;;
+         [[:space:]]) (( have )) && { TOK_EXP[${#TOKS[@]}]=$expanded; TOKS+=("$cur"); TOK_KINDS+=(word); cur=''; have=0; quoted=0; expanded=0; } ;;
+         '*'|'?'|'['|'~'|'{') expanded=1; cur+=$c; have=1 ;;
          *) cur+=$c; have=1 ;;
        esac ;;
     esac
     ((i++))
   done
-  (( have )) && { TOKS+=("$cur"); TOK_KINDS+=(word); }
+  (( have )) && { TOK_EXP[${#TOKS[@]}]=$expanded; TOKS+=("$cur"); TOK_KINDS+=(word); }
 }
 
+# Identify the simple command after assignments and prefix redirections.
+# Preserve redirection order: command, prefix redirects, remaining operands.
+# TOKS stays untouched for callers that need the original lexical sequence.
 strip_vars() {
-  VTOKS=("${TOKS[@]}"); VTOK_KINDS=("${TOK_KINDS[@]}")
-  while ((${#VTOKS[@]})) && [[ ${VTOKS[0]} =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do
-    VTOKS=("${VTOKS[@]:1}"); VTOK_KINDS=("${VTOK_KINDS[@]:1}")
+  local i=0 n=${#TOKS[@]} count
+  local -a prefix=() kinds=()
+  VTOKS=(); VTOK_KINDS=(); COMMAND_EXPANSION=0
+  while (( i < n )); do
+    if [[ ${TOK_KINDS[i]} == word && ${TOKS[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*\+?= ]]; then
+      ((i++)); continue
+    fi
+    count=0
+    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then
+      count=2
+    elif [[ ${TOK_KINDS[i]} == operator && ${TOKS[i]} == '&' && ${TOK_KINDS[i+1]-} == redirect ]]; then
+      count=3
+    fi
+    (( count )) || break
+    (( i + count <= n )) || return 0
+    prefix+=("${TOKS[@]:i:count}"); kinds+=("${TOK_KINDS[@]:i:count}")
+    ((i+=count))
   done
+  (( i < n )) || return 0
+  COMMAND_EXPANSION=${TOK_EXP[i]:-0}
+  VTOKS=("${TOKS[i]}" "${prefix[@]}" "${TOKS[@]:i+1}")
+  VTOK_KINDS=("${TOK_KINDS[i]}" "${kinds[@]}" "${TOK_KINDS[@]:i+1}")
 }
 
 split_at() { # str cuts... -> SPLIT
@@ -321,7 +454,7 @@ collect_file_args() {
   FILES=(); local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
     t=${TOKS[i]}
-    if [[ ${TOK_KINDS[i]} == redirect ]]; then ((i+=2)); continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]];  then eoo=1; ((i++)); continue; fi
     if (( !eoo )) && [[ $t == -* ]];  then ((i++)); continue; fi
     [[ -f $t ]] && FILES+=("$t")
@@ -345,7 +478,7 @@ ht_parse() {
   local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
     t=${TOKS[i]}
-    if [[ ${TOK_KINDS[i]} == redirect ]]; then ((i+=2)); continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]]; then eoo=1; ((i++)); continue; fi
     if (( eoo )); then [[ -f $t ]] && FILES+=("$t"); ((i++)); continue; fi
     case $t in
@@ -357,6 +490,7 @@ ht_parse() {
       --lines=*)       ((HT_OPTS++)); HT_FORM=line; HT_VALUE=${t#--lines=} ;;
       --bytes=*)       ((HT_OPTS++)); HT_FORM=byte; HT_VALUE=${t#--bytes=} ;;
       -[0-9]*)         ((HT_OPTS++)); HT_FORM=line; HT_VALUE=${t:1} ;;
+      +[0-9]*)         HT_BAD=1 ;;
       -*)              HT_BAD=1 ;;
       *)               [[ -f $t ]] && FILES+=("$t") ;;
     esac
@@ -437,18 +571,19 @@ pipe_stage_bypasses_limit() {
   TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
   base=${TOKS[0]-}; base=${base##*/}
   for ((i=0; i<${#TOKS[@]}; i++)); do
-    [[ ${TOK_KINDS[i]} == redirect ]] || continue
-    t=${TOKS[i]}; rawfd=${t%%>*}; fd=${rawfd:-1}; operator=${t#"$rawfd"}
+    [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]] || continue
+    t=${TOKS[i]}; rawfd=${t%%[<>]*}; operator=${t#"$rawfd"}
+    if [[ $operator == '<'* ]]; then fd=${rawfd:-0}; else fd=${rawfd:-1}; fi
     while [[ ${#fd} -gt 1 && $fd == 0* ]]; do fd=${fd#0}; done
     both=0
     if (( i > 0 )) && [[ ${TOK_KINDS[i-1]} == operator && ${TOKS[i-1]} == '&' ]]; then both=1; fi
     ((i++)); target=${TOKS[i]-}
-    if [[ $operator == '>&' && $target =~ ^[0-9]+-?$ ]]; then
+    if [[ ( $operator == '>&' || $operator == '<&' ) && $target =~ ^[0-9]+-?$ ]]; then
       source=${target%-}
       while [[ ${#source} -gt 1 && $source == 0* ]]; do source=${source#0}; done
       route=${PIPE_FDS[$source]-unknown}
       [[ $target == *- ]] && PIPE_FDS[$source]=closed
-    elif [[ $operator == '>&' && $target == '-' ]]; then
+    elif [[ ( $operator == '>&' || $operator == '<&' ) && $target == '-' ]]; then
       route=closed
     else
       route=$(pipe_target_route "$target")
@@ -477,8 +612,14 @@ pipe_stage_bypasses_limit() {
 }
 
 run_head_tail() { # TOKS[0] is head|tail; per-target verdict
-  local tool=${TOKS[0]##*/} f st actual ex un rl rby rd el
+  local tool=${TOKS[0]##*/} f st actual ex un rl rby rd el probe t0 t1
+  (( ${CMD_EXPANSION:-0} )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
   ht_parse
+  if (( ${FS_UNCERTAIN:-0} )); then
+    if ! (( HT_BAD == 0 && HT_OPTS == 1 )) || [[ $HT_FORM != byte || ! $HT_VALUE =~ ^[0-9]+$ || ${#HT_VALUE} -gt 15 ]] || (( 10#$HT_VALUE > MIN_BYTES )); then
+      deny "A command in this Bash call may change reader files before execution. Use an explicit byte bound or separate preparation and reading with /token-shunt:bulk-reader."
+    fi
+  fi
   ((${#FILES[@]})) || pass
   if (( HT_BAD || HT_OPTS > 1 )); then
     check_files_full "$tool"; pass
@@ -501,23 +642,77 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
     done
   else
     for f in ${FILES[@]+"${FILES[@]}"}; do
+      # An explicit byte bound is sufficient regardless of the file size.
+      (( 10#$HT_VALUE <= MIN_BYTES )) && continue
       st=$(file_size "$f") && [[ $st =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
-      actual=$(( 10#$HT_VALUE < st ? 10#$HT_VALUE : st ))
-      (( actual > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$actual" 0 0 0)"
+      (( st > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$st" 0 0 0)"
+      # A small stat is not proof of a small output (procfs, concurrent growth).
+      # Both head and tail emit min(C, actual file bytes), so a bounded prefix
+      # establishes the size without buffering content or reading a long suffix.
+      probe=$(( (MIN_BYTES < SCAN_BUDGET_BYTES ? MIN_BYTES : SCAN_BUDGET_BYTES) + 1 ))
+      t0=$(now_ms)
+      actual=$(set -o pipefail; head -c "$probe" -- "$f" | wc -c) || deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      actual=${actual//[[:space:]]/}
+      [[ $actual =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      t1=$(now_ms); el=$((t1-t0))
+      (( actual > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
+      (( actual > SCAN_BUDGET_BYTES || el > SCAN_BUDGET_MS )) && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 1)"
     done
   fi
   pass
 }
 
+# A file-size observation is usable only before any potentially mutating stage.
+# This is deliberately a small proof of harmless stages, not a writer blacklist.
+stage_may_mutate() {
+  local raw=$1 base kind i token target arithmetic_safe
+  # Even a metadata command may execute substitutions before it starts.
+  arithmetic_safe=$raw
+  # Numeric-only arithmetic cannot execute a command or assign shell state.
+  while [[ $arithmetic_safe =~ \$\(\([0-9[:space:]()+*/%\<\>\&\|^~!-]+\)\) ]]; do
+    arithmetic_safe=${arithmetic_safe/"${BASH_REMATCH[0]}"/0}
+  done
+  case $arithmetic_safe in *'$'*|*'`'*) return 0;; esac
+  tokenize "$raw"; strip_vars
+  base=${VTOKS[0]-}; base=${base##*/}
+  for ((i=0; i<${#TOKS[@]}; i++)); do
+    kind=${TOK_KINDS[i]}; token=${TOKS[i]}; target=${TOKS[i+1]-}
+    if [[ $kind == redirect ]]; then
+      if [[ $token == *'>&' && $target =~ ^[0-9]+-?$ ]] || [[ $target == /dev/null ]]; then
+        ((i++)); continue
+      fi
+      return 0
+    elif [[ $kind == input_redirect && $token == *'<>' ]]; then return 0
+    fi
+  done
+  case $base in
+    cat|head|tail|less|more|wc|stat|true|false|pwd|echo|printf) return 1;;
+    cd) (( ${TRACK_CD:-0} && ! ${CD_UNCERTAIN:-0} )) && return 1;;
+    '') return 1;;
+  esac
+  return 0
+}
+
+check_command_expansion() {
+  tokenize "$1"; strip_vars
+  (( COMMAND_EXPANSION )) && deny "Shell-expanded command words cannot be checked safely. Use a literal command name."
+  return 0
+}
+
 # evaluate one simple command at the FULL threshold (compound segments,
 # pipeline first command after non-narrowing tail, uninterpretable commands)
 check_stage_full() {
-  local base
+  local base unresolved
+  scan_ops "$1"; unresolved=$S_EXPANSION
   tokenize "$1"; strip_vars
   ((${#VTOKS[@]})) || return 0
   base=${VTOKS[0]##*/}
   case $base in
-    cat|head|tail|less|more) TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$base" ;;
+    cat|head|tail|less|more)
+      (( ${FS_UNCERTAIN:-0} )) && deny "A command in this Bash call may change reader files before execution. Separate file preparation and reading into different Bash calls, then use /token-shunt:bulk-reader if needed."
+      (( unresolved )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
+      (( ${CD_UNCERTAIN:-0} )) && deny "A preceding cd has an unresolved destination or redirection. Use absolute file paths in a separate Bash call."
+      TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$base" ;;
   esac
 }
 
@@ -546,8 +741,11 @@ check_stage_output() {
 # expansions, and cd after another command remain outside this limited parser.
 track_literal_cd() {
   local raw=$1 target
+  tokenize "$raw"; strip_vars
+  # Losing the ability to resolve cd must not lose the fact that it may
+  # change cwd. Retain uncertainty across all subsequent command segments.
+  if [[ ${VTOKS[0]-} == cd ]]; then CD_UNCERTAIN=1; fi
   (( TRACK_CD )) || return 0
-  tokenize "$raw"
   if (( ${#TOKS[@]} == 3 )) && [[ ${TOKS[0]} == cd && ${TOKS[1]} == -- ]]; then
     target=${TOKS[2]}
   elif (( ${#TOKS[@]} == 2 )) && [[ ${TOKS[0]} == cd ]]; then
@@ -566,6 +764,7 @@ track_literal_cd() {
   # A failed cd leaves the working directory unchanged. Following segments
   # still receive the existing conservative full-file check.
   CDPATH= builtin cd -- "$target" 2>/dev/null || TRACK_CD=0
+  CD_UNCERTAIN=0
 }
 
 # --- common 5-6 / §10 decision tree ---
@@ -574,6 +773,21 @@ track_literal_cd() {
 # trusted) but never exempt operator scanning — other segments still get
 # checked at full thresholds.
 scan_ops "$cmd"
+# Process substitutions can run independent readers and side outputs. Their
+# nested shell programs are outside this lexer; never grant an early pass.
+(( S_PROCESS )) && deny "Process substitution cannot be checked safely. Use separate commands with literal file paths."
+CMD_EXPANSION=$S_EXPANSION
+preflight_cuts=("${SEPS[@]}" "${PIPES[@]}")
+# Cuts must retain source order when lists contain pipelines.
+if ((${#preflight_cuts[@]})); then
+  mapfile -t preflight_cuts < <(printf '%s\n' "${preflight_cuts[@]}" | sort -n)
+  split_at "$cmd" "${preflight_cuts[@]}"
+  for preflight_stage in "${SPLIT[@]}"; do check_command_expansion "$preflight_stage"; done
+else
+  check_command_expansion "$cmd"
+fi
+scan_ops "$cmd"
+FS_UNCERTAIN=0
 
 if ((${#SEPS[@]})); then
   TRACK_CD=1
@@ -582,7 +796,7 @@ if ((${#SEPS[@]})); then
   case $cmd in *'('*|*')'*|*'{'*|*'}'*) TRACK_CD=0;; esac
   for sep in "${SEPS[@]}"; do
     pos=${sep%%:*}; len=${sep##*:}; op=${cmd:pos:len}
-    case $op in '||'|'&'|'|'|'|&') TRACK_CD=0;; esac
+    case $op in '||'|'&') TRACK_CD=0;; esac
   done
   split_at "$cmd" "${SEPS[@]}"
   segments=("${SPLIT[@]}")
@@ -596,8 +810,13 @@ if ((${#SEPS[@]})); then
     else
       stages=("$seg")
     fi
+    # Pipeline siblings run concurrently: even a later stage can replace a file.
+    if ((${#stages[@]} > 1)); then
+      for stage in "${stages[@]}"; do stage_may_mutate "$stage" && FS_UNCERTAIN=1; done
+    fi
     for stage in ${stages[@]+"${stages[@]}"}; do
       check_stage_full "$stage"
+      stage_may_mutate "$stage" && FS_UNCERTAIN=1
     done
   done
   pass
@@ -607,6 +826,7 @@ if ((${#PIPES[@]})); then
   split_at "$cmd" "${PIPES[@]}"
   bounded_stages=("${SPLIT[@]}")
   bounded_connectors=("${PIPES[@]}")
+  for stage in "${bounded_stages[@]}"; do stage_may_mutate "$stage" && FS_UNCERTAIN=1; done
   last_idx=$(( ${#SPLIT[@]} - 1 ))
   scan_ops "${SPLIT[last_idx]}"
   tail_uninterp=$S_UNINTERP
@@ -658,7 +878,7 @@ tokenize "$cmd"; strip_vars
 base=${VTOKS[0]##*/}
 TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
 case $base in
-  cat|less|more) collect_file_args; check_files_full "$base"; pass ;;
-  head|tail)     run_head_tail ;;
+  cat|less|more) (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; collect_file_args; check_files_full "$base"; pass ;;
+  head|tail)     (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; run_head_tail ;;
   *)             pass ;;
 esac

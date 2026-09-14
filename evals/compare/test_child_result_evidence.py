@@ -20,9 +20,9 @@ class ChildResultEvidenceTests(unittest.TestCase):
                      'plugins': [{'name': 'token-shunt'}]}
         self.call = {'type': 'assistant', 'message': {'content': [{
             'type': 'tool_use', 'id': 'worker', 'name': 'Agent',
-            'input': {'subagent_type': 'token-shunt:bulk-reader'}}]}}
+            'input': {'subagent_type': 'token-shunt:bulk-reader', 'model': 'haiku'}}]}}
         self.reply = {'type': 'user', 'message': {'content': [{
-            'type': 'tool_result', 'tool_use_id': 'worker',
+            'type': 'tool_result', 'tool_use_id': 'worker', 'resolvedModel': 'claude-haiku',
             'content': 'status: partial\nstop_reason: missing dependency'}]}}
         self.final = {'type': 'result', 'result': 'done'}
 
@@ -76,14 +76,14 @@ class ChildResultEvidenceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertFalse(verdict['checks']['child_result_evidence'])
 
-    def async_events(self, summary='status: complete'):
+    def async_events(self, summary='status: complete\nstop_reason: complete'):
         launch = copy.deepcopy(self.reply)
         launch['message']['content'][0]['content'] = (
             'Async agent launched successfully. ' + 'internal metadata ' * 300)
         launch['tool_use_result'] = {
             'isAsync': True, 'status': 'async_launched', 'agentId': 'task-1'}
         notification = {'type': 'system', 'subtype': 'task_notification',
-                        'tool_use_id': 'worker', 'task_id': 'task-1',
+                        'tool_use_id': 'worker', 'resolvedModel': 'claude-haiku', 'task_id': 'task-1',
                         'status': 'completed', 'summary': summary}
         return launch, notification
 

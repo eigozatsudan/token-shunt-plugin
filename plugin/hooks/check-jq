@@ -1,18 +1,27 @@
 #!/usr/bin/env bash
 # token-shunt SessionStart hook (design §7).
-# Warns once when jq is missing. Cannot block SessionStart; PreToolUse hooks
-# fail-closed (exit 2) on every Read/Bash instead.
+# Warns once about every missing dependency. Cannot block SessionStart;
+# PreToolUse hooks fail-closed (exit 2) on every Read/Bash instead.
 # This script must not invoke jq: detecting its absence is the point.
 export LC_ALL=C
 
-if command -v jq >/dev/null 2>&1; then
-  exit 0
+missing=""
+add() { missing="${missing:+$missing }$1"; }
+
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  add 'Bash 4 or newer is required. Read and Bash hooks block until a supported Bash is on PATH.'
 fi
 
-printf '%s\n' '{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "token-shunt: jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed."
-  }
-}'
+if ! command -v jq >/dev/null 2>&1; then
+  add 'jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed.'
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  add 'Python 3 is required for the bulk-reader runtime contract. Bulk-reader Reads remain blocked until it is available.'
+fi
+
+[ -z "$missing" ] && exit 0
+
+# The sentences above are fixed ASCII text with no JSON metacharacters.
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"token-shunt: %s"}}\n' "$missing"
 exit 0

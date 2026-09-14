@@ -10,23 +10,23 @@ import judge
 
 class ConfirmedLabelTests(unittest.TestCase):
     def test_unconfirmed_is_never_a_confirmed_label(self):
-        for text in ('unconfirmed: secret at source.py',
-                     'Notes: unconfirmed: secret at source.py',
-                     'UNCONFIRMED: secret at source.py',
-                     'notconfirmed: secret at source.py'):
+        for text in ('unconfirmed: secret at /repo/source.py',
+                     'Notes: unconfirmed: secret at /repo/source.py',
+                     'UNCONFIRMED: secret at /repo/source.py',
+                     'notconfirmed: secret at /repo/source.py'):
             with self.subTest(text=text):
                 self.assertEqual([], judge.confirmed_items(text))
                 self.assertEqual(['secret'], judge.gold_confirmed_ok(text, ['secret'],
-                    {'gold_paths': {'secret': ['source.py']}}))
+                    {'gold_paths': {'secret': ['/repo/source.py']}}))
 
     def test_line_and_inline_confirmed_labels_still_work(self):
-        for text in ('confirmed: secret at source.py',
-                     '- confirmed: secret at source.py',
-                     'Notes: confirmed: secret at source.py unconfirmed: other',
-                     'Notes: CONFIRMED: secret at source.py inferred: other'):
+        for text in ('confirmed: secret at /repo/source.py',
+                     '- confirmed: secret at /repo/source.py',
+                     'Notes: confirmed: secret at /repo/source.py unconfirmed: other',
+                     'Notes: CONFIRMED: secret at /repo/source.py inferred: other'):
             with self.subTest(text=text):
                 self.assertEqual([], judge.gold_confirmed_ok(text, ['secret'],
-                    {'gold_paths': {'secret': ['source.py']}}))
+                    {'gold_paths': {'secret': ['/repo/source.py']}}))
                 self.assertNotIn('other', '\n'.join(judge.confirmed_items(text)))
 
 

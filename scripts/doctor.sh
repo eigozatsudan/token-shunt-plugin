@@ -10,7 +10,7 @@
 #   - hook-stdin dump: how-to only; a live delegated session is not a
 #     doctor fail (org auth may be off)
 # Live checks print "unconfirmed" and do NOT change the exit code: only a
-# missing jq is a hard fail.
+# missing jq, Bash < 4, or failure to save a confirmed probe is a hard fail.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 ROOT=$PWD
@@ -19,11 +19,18 @@ plugin_probe_ok=0
 have_claude=0
 command -v claude >/dev/null 2>&1 && have_claude=1
 
+printf '== Bash ==\n'
+if (( BASH_VERSINFO[0] < 4 )); then
+  printf 'Bash >= 4 required; found %s\n' "$BASH_VERSION"; fail=1
+else
+  printf 'Bash: %s\n' "$BASH_VERSION"
+fi
+
 printf '== jq ==\n'
 if command -v jq >/dev/null 2>&1; then
   printf 'jq: %s\n' "$(command -v jq)"
 else
-  printf 'MISSING jq — hooks will exit 2 on every Read/Bash\n'; fail=1
+  printf 'MISSING jq — hooks will exit 2 on every Read/Bash/Agent\n'; fail=1
 fi
 
 printf '== claude ==\n'
@@ -209,38 +216,56 @@ record="$ROOT/docs/distribution/doctor-last-probe.txt"
 if [[ $have_claude -eq 1 && $plugin_probe_ok -eq 1 ]]; then
   ver=$(claude --version 2>/dev/null | head -1)
   [[ -n ${ver:-} ]] || ver="unknown"
-  mkdir -p "$(dirname "$record")"
-  {
-    printf 'token-shunt doctor probe record (design §7: record the minimum supported version at implementation time)\n'
-    printf 'date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'claude --version: %s\n' "$ver"
-    printf 'plugin + agent registration: confirmed\n'
-    if [[ ${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-0} == 1 ]]; then
-      printf 'worker model resolution (haiku/sonnet): not comparable (CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1)\n'
-    elif [[ $model_probe_ok -eq 1 ]]; then
-      printf 'worker model resolution (haiku/sonnet): probed — see doctor output for match/mismatch\n'
+  if [[ ${CLAUDE_CODE_SUBAGENT_MODEL_FORCE:-0} == 1 ]]; then
+    model_record='worker model resolution (haiku/sonnet): not comparable (CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1)'
+  elif [[ $model_probe_ok -eq 1 ]]; then
+    model_record='worker model resolution (haiku/sonnet): probed — see doctor output for match/mismatch'
+  else
+    model_record='worker model resolution (haiku/sonnet): unconfirmed on this run'
+  fi
+  record_tmp=""
+  if mkdir -p "$(dirname "$record")" && record_tmp=$(mktemp "${record}.XXXXXX"); then
+    if printf '%s\n' \
+      'token-shunt doctor probe record (design §7: record the minimum supported version at implementation time)' \
+      "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "claude --version: $ver" \
+      'plugin + agent registration: confirmed' \
+      "$model_record" \
+      'agent_type on PreToolUse stdin: confirm manually (see the hook stdin section)' \
+      'This file is a probe log, not a version pin. Do not copy a numeric floor into plugin.json.' \
+      > "$record_tmp" && [[ ! -d $record ]] && mv -f -- "$record_tmp" "$record"; then
+      printf 'recorded probed CLI version in %s\n' "$record"
     else
-      printf 'worker model resolution (haiku/sonnet): unconfirmed on this run\n'
+      printf 'ERROR: could not save probe record in %s\n' "$record" >&2
+      rm -f -- "$record_tmp"
+      fail=1
     fi
-    printf 'agent_type on PreToolUse stdin: confirm manually (see the hook stdin section)\n'
-    printf 'This file is a probe log, not a version pin. Do not copy a numeric floor into plugin.json.\n'
-  } > "$record"
-  printf 'recorded probed CLI version in %s\n' "$record"
+  else
+    printf 'ERROR: could not prepare probe record in %s\n' "$record" >&2
+    fail=1
+  fi
 else
   printf 'unconfirmed — no successful plugin-load probe, nothing recorded\n'
 fi
 
 printf '== hook stdin (needs auth) ==\n'
 cat <<'EOF'
-To confirm your Claude Code puts `agent_type` on the PreToolUse hook stdin,
-run a delegated session once and inspect a captured hook payload, e.g.:
+To confirm the bulk-reader runtime contract, add temporary Read debug hooks
+for PreToolUse, PostToolUse, and PostToolUseFailure that capture stdin to
+private files (for example `umask 077; cat > /tmp/ts-hook-stdin.json`, using
+a distinct file per event). Run a delegated session and confirm top-level
+agent_type is exactly "token-shunt:bulk-reader" and session_id, agent_id,
+tool_use_id, hook_event_name, and object tool_input are present. Matching
+Pre/Post/Failure events must use the same tool_use_id. Successful text Reads
+must include tool_response.type="text" and integer fields in
+ tool_response.file: startLine, numLines, totalLines.
+The reader contract needs session_id and agent_id only for this exact worker
+agent_type. Missing worker identity cannot establish compatibility; missing
+required IDs for a recognized worker cause fail-closed exit 2.
+Remove the debug hook and captured payload afterward.
 
-  TOKEN_SHUNT_HOOK_LOG=/tmp/ts-hooks.jsonl \
-  claude --plugin-dir plugin/ -p "use /token-shunt:bulk-reader on a large file"
-
-then check the captured stdin (or add a temporary debug hook that does
-`cat > /tmp/hook-stdin.json`) and confirm a top-level "agent_type" field
-appears on worker invocations.
+TOKEN_SHUNT_HOOK_LOG records decisions only, not stdin; it cannot verify
+these stdin fields. Payloads may contain source paths and tool arguments.
 
 A missing dump is not a doctor failure (org auth may be off). Do not treat
 an incomplete live Agent session as a hard fail.

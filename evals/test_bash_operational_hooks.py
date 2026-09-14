@@ -131,7 +131,7 @@ class BashOperationalHooksTest(unittest.TestCase):
 
     def test_tee_file_is_output_not_input(self):
         self.assert_command("cat small.txt | tee large.txt | cat",
-                            "pass", len(self.small))
+                            "deny", len(self.small))
 
     def test_stdout_redirect_aliases(self):
         for target in ("/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"):

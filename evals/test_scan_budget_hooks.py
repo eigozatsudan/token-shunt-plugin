@@ -133,14 +133,33 @@ class ScanBudgetHooksTest(unittest.TestCase):
             f'proc = subprocess.run([{real_awk!r}, *sys.argv[1:]], input=data)\n'
             'raise SystemExit(proc.returncode)\n')
         wrapper.chmod(0o755)
+        # Independently observe the producer: the EOF marker must not permit
+        # reading an extra byte from the source file.
+        source_log = self.root / 'source-bytes.jsonl'
+        real_head = shutil.which('head')
+        head_wrapper = bindir / 'head'
+        head_wrapper.write_text(
+            '#!' + sys.executable + '\n'
+            'import sys, subprocess, json\n'
+            f'proc = subprocess.run([{real_head!r}, *sys.argv[1:]], capture_output=True)\n'
+            f'with open({str(source_log)!r}, "a") as out: out.write(json.dumps(len(proc.stdout)) + "\\n")\n'
+            'sys.stdout.buffer.write(proc.stdout)\n'
+            'sys.stderr.buffer.write(proc.stderr)\n'
+            'raise SystemExit(proc.returncode)\n')
+        head_wrapper.chmod(0o755)
         self.env['PATH'] = str(bindir) + os.pathsep + self.env['PATH']
         for invoke in [lambda: self.read('huge.txt', offset=2, limit=1),
                        lambda: self.bash('head -n 1 huge.txt')]:
             log.write_text('')
+            source_log.write_text('')
             invoke()
             counts = [json.loads(line) for line in log.read_text().splitlines()]
             self.assertTrue(counts)
-            self.assertLessEqual(max(counts), 1025)
+            # At most budget+1 source bytes plus one fixed EOF marker.
+            self.assertLessEqual(max(counts), 1026)
+            source_counts = [json.loads(line) for line in source_log.read_text().splitlines()]
+            self.assertTrue(source_counts)
+            self.assertLessEqual(max(source_counts), 1025)
 
 
 if __name__ == '__main__':

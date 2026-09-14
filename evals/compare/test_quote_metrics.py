@@ -60,7 +60,7 @@ class ParentContextTests(unittest.TestCase):
                 payload = '秘密の本文\n' * 20
                 tool_event = assistant('m', [use(name, {field: payload})])
                 tr = judge.Transcript([thinking, tool_event])
-                expected = '{' + json.dumps(field) + ':' + payload + '}'
+                expected = 'plan\n{' + json.dumps(field) + ':' + payload + '}'
                 self.assertEqual(tr.parent_added_text(), expected)
                 self.assertEqual(tr.metrics()['parent_added_utf8_bytes'], len(expected.encode()))
         first = assistant('n', [{'type': 'text', 'text': 'hello'}])
@@ -265,9 +265,9 @@ class ChildNoBodyUnverifiedTests(unittest.TestCase):
             {'type': 'system', 'subtype': 'init',
              'plugins': [{'name': 'token-shunt'}]},
             assistant('ma', [use('Agent', {
-                'subagent_type': 'token-shunt:bulk-reader', 'prompt': ' '.join(paths)})]),
+                'subagent_type': 'token-shunt:bulk-reader', 'model': 'haiku', 'prompt': ' '.join(paths)})]),
             {'type': 'user', 'message': {'content': [
-                {'type': 'tool_result', 'tool_use_id': 'Agent', 'content': child_text}]}},
+                {'type': 'tool_result', 'tool_use_id': 'Agent', 'resolvedModel': 'claude-haiku', 'content': child_text}]}},
             {'type': 'result', 'result': 'ok', 'usage': {
                 'input_tokens': 10, 'cache_read_input_tokens': 0,
                 'cache_creation_input_tokens': 0, 'output_tokens': 5}},
@@ -327,7 +327,7 @@ class ChildNoBodyUnverifiedTests(unittest.TestCase):
                     metadata = {'fixtures_abs': [str(target)]}
                     if rooted:
                         metadata['fixture_root'] = str(self.root)
-                    verdict, ok = self.evaluate(rel, 'status: partial', **metadata)
+                    verdict, ok = self.evaluate(rel, 'status: partial\nstop_reason: empty file', **metadata)
                     self.assertTrue(ok, verdict['reasons'])
 
     def test_missing_path_cannot_alias_a_different_file_with_same_basename(self):

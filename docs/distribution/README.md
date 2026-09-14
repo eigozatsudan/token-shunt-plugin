@@ -10,7 +10,7 @@
 scripts/build-zip.sh
 ```
 
-スクリプトは3つのフックに実行権限を付け、既存の `token-shunt.zip` を置き換えて `plugin/` を圧縮し、配置と実行権限を検証します。作成には `zip` または Python 3、検証には Python 3 または `zipinfo` が必要です。検証に失敗すると終了コードは非0になります。
+スクリプトは5つのフックに実行権限を付け、既存の `token-shunt.zip` を置き換えて `plugin/` を圧縮し、配置と実行権限を検証します。作成には `zip` または Python 3、検証には Python 3 または `zipinfo` が必要です。検証に失敗すると終了コードは非0になります。
 
 生成するZIPの主な構成は次のとおりです。
 
@@ -22,11 +22,13 @@ hooks/hooks.json
 hooks/check-file-size
 hooks/check-bash-read
 hooks/check-jq
+hooks/check-agent-model
+hooks/check-reader-contract
 skills/bulk-reader/SKILL.md
 skills/code-writer/SKILL.md
 ```
 
-検証では `.claude-plugin/plugin.json` がアーカイブ直下または1階層下にあることと、3つのフックにUnixの実行権限があることを確認します。実際のビルドはアーカイブ直下に配置します。フックは直接実行されるため、展開後も実行権限が必要です。
+検証では `.claude-plugin/plugin.json` がアーカイブ直下または1階層下にあることと、5つのフックにUnixの実行権限があることを確認します。Python / zipinfo の両検証経路で、manifest と同じルートに5フックが揃っていることを要求します。重複エントリや複数の manifest も拒否します。実際のビルドはアーカイブ直下に配置します。フックは直接実行されるため、展開後も実行権限が必要です。
 
 リポジトリのルートにある `.claude-plugin/marketplace.json` はZIPに含みません。
 
@@ -77,3 +79,5 @@ evals/compare/run.sh
 `scripts/doctor.sh` はソースツリーのプローブです。`--plugin-dir "$ROOT/plugin"` と `--setting-sources ""` で隔離ロードし、ユーザースコープのキャッシュは見ません。`plugin + agent registration: confirmed` はソース側の登録確認であり、導入済みコピーの確認ではありません。ZIPの検証や診断の成功だけではリリース可能とは判断しません。[設計書](../2026-09-12-token-shunt-design.md) §26.5・§26.6に沿って、スイートA・Bの経路・品質・本文の分離と、必須の親トークン計測を確認します。費用比較は内部回帰の記録であり、欠測や費用の悪化だけでは出荷を止めません。削減効果の宣伝には実測が必要です。実機比較評価の集計では `selected_run_valid` と `release_eligible` を区別してください。
 
 利用方法、依存コマンド、フックの制限事項は[ルートREADME](../../README.md)を参照してください。
+
+依存不足でツールが停止した場合の復旧と無効化は、[通常READMEの手順](../../README.md#依存不足からの復旧無効化)を参照してください。jq の導入は Claude の Bash ツールではなく外部ターミナルで行います。

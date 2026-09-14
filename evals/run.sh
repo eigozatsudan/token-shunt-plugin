@@ -3,6 +3,7 @@
 # stdin JSON -> hook stdout decision / exit code.
 set -u
 export LC_ALL=C
+unset CDPATH
 cd "$(dirname "$0")" || exit 1
 if ! jq -e 'type == "array" and length > 0' hook-evals.json >/dev/null; then
   echo "error: hook-evals.json must be a non-empty JSON array catalog" >&2
@@ -36,7 +37,7 @@ gen_fixtures() {
   { printf '\211PNG\r\n\032\n'; head -c 210000 /dev/zero; }                >"$FIX/img-200k.png"
   { printf '%%PDF-1.4\n'; head -c 209900 /dev/zero | tr '\0' ' '; }        >"$FIX/doc-200k.pdf"
   awk 'BEGIN{printf "{\"cells\":[],\"metadata\":{}}"; for(i=0;i<209930;i++)printf " "}' >"$FIX/nb-200k.ipynb"
-  # >9MiB of short lines; generated, not committed (§13 read-scan-budget-offset)
+  # >9MiB of short lines; restore the tracked fixture if missing/undersized.
   if [[ ! -f $FIX/big-scan.txt ]] || (( $(wc -c <"$FIX/big-scan.txt") < 9000000 )); then
     awk 'BEGIN{for(i=0;i<4700000;i++)print "x"}'                           >"$FIX/big-scan.txt"
   fi
@@ -46,16 +47,31 @@ record() { # id ok detail
   if [[ $2 == 0 ]]; then PASS=$((PASS+1)); else FAIL=$((FAIL+1)); FAILED+=("$1: $3"); fi
 }
 
-run_hook() { # hook input [env "K=V K=V"] -> OUT EC
-  local envs=()
-  if [[ -n ${3-} ]]; then read -ra envs <<<"$3"; fi
-  OUT=$(printf '%s' "$2" | env "${envs[@]+"${envs[@]}"}" "$HOOKS/$1" 2>/dev/null); EC=$?
+run_hook() { # hook input [JSON env object] -> OUT EC
+  local envs=() name
+  if [[ -n ${3-} ]]; then
+    while IFS= read -r -d '' entry; do envs+=("$entry"); done < <(
+      jq -j 'to_entries[] | "\(.key)=\(.value)\u0000"' <<<"$3")
+  fi
+  OUT=$(
+    # Preserve PATH/authentication, but apply only the catalog's hook settings.
+    while IFS= read -r name; do
+      [[ $name == TOKEN_SHUNT_* || $name == CDPATH ]] && unset "$name"
+    done < <(compgen -e)
+    printf '%s' "$2" | env "${envs[@]+"${envs[@]}"}" "$HOOKS/$1" 2>/dev/null); EC=$?
 }
 
 check_expect() { # expect out ec
   local expect=$1 out=$2 ec=$3
   case $expect in
     pass)  [[ $ec == 0 && -z $out ]] ;;
+    deny_safety)
+      # Non-routing parser safety denials still need plugin attribution.
+      [[ $ec == 0 ]] \
+        && jq -e '.hookSpecificOutput.permissionDecision == "deny"
+                   and (.hookSpecificOutput.permissionDecisionReason | type == "string")
+                   and (.hookSpecificOutput.permissionDecisionReason | test("token-shunt"))' \
+             <<<"$out" >/dev/null 2>&1 ;;
     deny|deny_budget)
       # deny JSON + reason must route to /token-shunt:bulk-reader (§3-1);
       # deny_budget additionally requires the scan-budget detail (§8.6)
@@ -78,8 +94,8 @@ while IFS= read -r case; do
   id=$(jq -r '.id' <<<"$case")
   expect=$(jq -r '.expect' <<<"$case")
   inp=$(jq -c '.input' <<<"$case")
-  envs=$(jq -r '[.env // {} | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$case")
-  inp=${inp//@FIX@/$FIX}
+  envs=$(jq -c '.env // {}' <<<"$case")
+  inp=$(jq -c --arg fix "$FIX" 'walk(if type == "string" then split("@FIX@") | join($fix) else . end)' <<<"$inp")
   run_hook check-file-size "$inp" "$envs"
   if check_expect "$expect" "$OUT" "$EC"; then record "$id" 0 ""; else record "$id" 1 "expect=$expect ec=$EC out=$(head -c 200 <<<"$OUT")"; fi
 done < <(jq -c '.[]' hook-evals.json)
@@ -91,8 +107,8 @@ while IFS= read -r case; do
   expect=$(jq -r '.expect' <<<"$case")
   cmd=$(jq -r '.cmd' <<<"$case")
   agent=$(jq -r '.agent_type // ""' <<<"$case")
-  envs=$(jq -r '[.env // {} | to_entries[] | "\(.key)=\(.value)"] | join(" ")' <<<"$case")
-  cmd=${cmd//@FIX@/$FIX}
+  envs=$(jq -c '.env // {}' <<<"$case")
+  cmd=$(python3 "$ROOT/evals/render_command.py" "$cmd" "$FIX")
   inp=$(jq -nc --arg c "$cmd" --arg a "$agent" \
         '{tool_input:{command:$c}} + (if $a == "" then {} else {agent_type:$a} end)')
   run_hook check-bash-read "$inp" "$envs"
@@ -103,7 +119,8 @@ done < <(jq -c '.[]' bash-hook-evals.json)
 inp=$(jq -nc --arg f "$FIX/large-80k.txt" '{tool_input:{file_path:$f,agent_type:"token-shunt:bulk-reader"}}')
 run_hook check-file-size "$inp"
 check_expect deny "$OUT" "$EC" && record read-worker-spoof 0 "" || record read-worker-spoof 1 "ec=$EC out=$OUT"
-inp=$(jq -nc --arg f "$FIX/large-80k.txt" '{tool_input:{command:("cat "+$f),agent_type:"token-shunt:bulk-reader"}}')
+printf -v quoted_file %q "$FIX/large-80k.txt"
+inp=$(jq -nc --arg f "$quoted_file" '{tool_input:{command:("cat "+$f),agent_type:"token-shunt:bulk-reader"}}')
 run_hook check-bash-read "$inp"
 check_expect deny "$OUT" "$EC" && record bash-worker-spoof 0 "" || record bash-worker-spoof 1 "ec=$EC out=$OUT"
 
@@ -128,6 +145,25 @@ if [[ $EC == 0 ]] \
   record sessionstart-jq-missing 0 ""
 else
   record sessionstart-jq-missing 1 "ec=$EC out=$OUT"
+fi
+
+# Every missing dependency must be named: reporting only the first one hides
+# the others from the operator, who then fixes them one session at a time.
+OUT=$(printf '{"session_id":"t"}' | env PATH="$STUB" "$HOOKS/check-jq" 2>/dev/null); EC=$?
+if [[ $EC == 0 ]] \
+  && jq -e '.hookSpecificOutput.additionalContext | test("jq") and test("Python 3")' <<<"$OUT" >/dev/null 2>&1; then
+  record sessionstart-deps-missing 0 ""
+else
+  record sessionstart-deps-missing 1 "ec=$EC out=$OUT"
+fi
+
+ln -sf "$(command -v jq)" "$STUB/jq"
+OUT=$(printf '{"session_id":"t"}' | env PATH="$STUB" "$HOOKS/check-jq" 2>/dev/null); EC=$?
+if [[ $EC == 0 ]] \
+  && jq -e '.hookSpecificOutput.additionalContext | test("Python 3") and (test("jq") | not)' <<<"$OUT" >/dev/null 2>&1; then
+  record sessionstart-python-missing 0 ""
+else
+  record sessionstart-python-missing 1 "ec=$EC out=$OUT"
 fi
 rm -rf "$STUB"
 
@@ -161,6 +197,25 @@ echo "== Bash operational regression checks =="
 python3 "$ROOT/evals/test_bash_operational_hooks.py" \
   && record bash-operational-regressions 0 "" || record bash-operational-regressions 1 "Bash operational regression failed"
 
+echo "== review regression checks =="
+python3 -B "$ROOT/evals/test_review_hooks.py" \
+  && record review-regressions 0 "" || record review-regressions 1 "review regression failed"
+
+echo "== harness input regression checks =="
+python3 -B "$ROOT/evals/test_harness_inputs.py" \
+  && record harness-input-regressions 0 "" || record harness-input-regressions 1 "harness input regression failed"
+
+echo "== model selection regression checks =="
+python3 -B -m unittest discover -s "$ROOT/evals/compare" -p test_unreadable_and_model.py \
+  && record model-selection-regressions 0 "" || record model-selection-regressions 1 "model selection regression failed"
+
+# These standalone suites are part of the result-accounted release checks.
+for suite in reader_contract bash_finding_fixes doctor_record; do
+  echo "== $suite regression checks =="
+  python3 -B "$ROOT/evals/test_${suite}.py" \
+    && record "$suite-regressions" 0 "" || record "$suite-regressions" 1 "$suite regression failed"
+done
+
 # --- special: marketplace schema (§13 marketplace-schema) ---
 echo "== marketplace-schema =="
 if jq -e '.name | type == "string" and length > 0' "$ROOT/.claude-plugin/marketplace.json" >/dev/null \
@@ -175,6 +230,10 @@ if jq -e '.name | type == "string" and length > 0' "$ROOT/.claude-plugin/marketp
 else
   record marketplace-schema 1 "missing name / owner.name / plugins"
 fi
+
+echo "== archive verification regression checks =="
+python3 -B -m unittest discover -s "$ROOT/evals" -p test_build_zip.py \
+  && record archive-verification-regressions 0 "" || record archive-verification-regressions 1 "archive verification regression failed"
 
 # --- special: zip structure + exec bits (§13 zip-exec-bits) ---
 echo "== zip-exec-bits =="

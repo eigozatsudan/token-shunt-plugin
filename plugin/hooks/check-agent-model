@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Enforce explicit model selection for token-shunt workers only.
+set -eu
+command -v jq >/dev/null 2>&1 || { echo 'token-shunt: jq is required' >&2; exit 2; }
+input=$(cat)
+jq -e -s 'if length != 1 then false else .[0] |
+         if type != "object" then false
+         elif has("tool_input") then (.tool_input | type == "object")
+         else true end end' >/dev/null 2>&1 <<<"$input" || {
+  echo 'token-shunt: hook stdin and tool_input must be objects' >&2; exit 2;
+}
+decision=$(jq -r '
+  (.tool_input.subagent_type == "token-shunt:bulk-reader" or
+   .tool_input.subagent_type == "token-shunt:code-writer") and
+  (.tool_input.model != "haiku" and .tool_input.model != "sonnet")
+' <<<"$input") || { echo 'token-shunt: model validation failed' >&2; exit 2; }
+if [[ $decision == true ]]; then
+  jq -nc --arg reason 'token-shunt: Agent model must be explicitly haiku or sonnet. Resolve --worker-model first (auto starts with haiku); resend the same call with model set. This denied launch is not evidence for escalation.'     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$reason}}'
+fi

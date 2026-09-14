@@ -20,6 +20,10 @@ Examples:
 
 ## Fixed procedure
 
+When reporting a worker result, copy its final `status:` and `stop_reason:`
+fields verbatim as separate plain lines. Do not wrap them in bold, backticks,
+or a prose summary. Preserve source-scoped unconfirmed items and unread ranges.
+
 1. **Small-task check first (§26.2).** If the explicitly named files or
    the known needed ranges total <= 16384 bytes **and** each targeted
    Read would pass the Read hook (§9), answer directly in the parent —
@@ -59,8 +63,10 @@ Examples:
    `subagent_type` is exactly `token-shunt:bulk-reader` — never Explore,
    never a bare `bulk-reader`. Always pass `model` per --worker-model
    (auto starts with haiku). Before invoking, resolve the flag to a literal
-   `haiku` or `sonnet`: never send `model="auto"` or omit model. An invalid
-   Agent argument is a launch error, not evidence for model escalation.
+   `haiku` or `sonnet`: never send `model="auto"` or omit model.
+   The Agent hook rejects a missing or invalid model. Resend the same
+   call with the resolved literal model; a rejected launch is not evidence
+   for escalation. Apply this to every batch, boundary check, and retry.
 
    Pass this response contract in every invocation, including retries and
    boundary checks: "One bullet per fact: confirmed: <path> — <symbol>:
@@ -114,11 +120,20 @@ Examples:
    offset (last returned line + 1). After a refusal, narrow the unread
    range without skipping ahead. At most **6 Read calls per invocation**,
    including refused calls, shared across all paths; stop partial when
-   exhausted. Pass this budget and continuation rule in the child prompt:
+   exhausted. maxTurns=7 reserves one turn for the final report after the
+   sixth Read; the extra turn does not increase the Read budget. Pass this budget and continuation rule in the child prompt:
    "Maintain next_line per path; offset is inclusive. After success set it
    to the last returned line + 1. After refusal keep it unchanged, halve
    limit (minimum 1), and retry there. Never sample ahead or backfill.
    Stop partial if one line is refused or 6 calls are spent."
+   If limit=1 is refused, return `status: partial`,
+   `stop_reason: unreadable_line`, and `unconfirmed: <absolute path> —
+   <requested fact>; unread line <next_line>`. The parent preserves these
+   fields verbatim as separate plain lines, without bold, backticks, or enclosing
+   bullets, and explains that the value could not be retrieved. A requested
+   value is conditional on readable evidence: this is an explicit unsupported
+   input outcome, not a successful value lookup. Do not use Grep or another
+   tool to extract the value, invent it, or escalate for this refusal.
    It never re-reads a
    range, does not explore related files, does not Grep/Glob/resume, and
    answers only the question. If the specified paths are

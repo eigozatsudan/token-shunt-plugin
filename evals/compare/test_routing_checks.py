@@ -15,7 +15,7 @@ def transcript(attempts, final='done'):
         for j,p in enumerate(paths):
             rid=aid+'r'+str(j)
             events.extend([{'type':'assistant','parent_tool_use_id':aid,'message':{'model':'claude-'+model,'content':[{'type':'tool_use','id':rid,'name':'Read','input':{'file_path':p}}]}}, {'type':'user','parent_tool_use_id':aid,'message':{'content':[{'type':'tool_result','tool_use_id':rid,'content':'source'}]}}])
-        events.append({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':aid,'content':'partial: missing evidence','resolvedModel':'claude-'+model}]}})
+        events.append({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':aid,'content':'status: partial\nstop_reason: missing evidence','resolvedModel':'claude-'+model}]}})
     events.append({'type':'result','result':final})
     return Transcript(events)
 
@@ -76,11 +76,33 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual([],self.check(initial+[boundary],exp=exp,final=final))
         self.assertTrue(self.check(initial+[boundary,boundary],exp=exp,final=final))
         self.assertTrue(self.check(initial,exp=exp,final='confirmed: TOKEN alpha.py refers to beta.py'))
+        absence = 'confirmed: /notifiable.rb — No TOKEN definitions, references, or imports found'
+        self.assertEqual([], self.check(initial, exp=exp, final=absence + '\n' + final))
+        for claim in (absence + '; TOKEN alpha.py refers to beta.py',
+                      'confirmed: TOKEN alpha.py refers to beta.py; no imports found',
+                      'confirmed: /alpha.py — TOKEN references beta.py'):
+            self.assertTrue(self.check(initial, exp=exp, final=claim + '\n' + final), claim)
 
     def test_duplicate_and_outside_invocation_reads(self):
         self.assertTrue(self.check([('haiku',['/a.py','/a.py'],'',{})]))
         tr=transcript([('haiku',['/a.py'],'',{})]); tr.tool_uses[-1]['input']['file_path']='/other.py'
         self.assertTrue(check_reader_reads(tr,{'child_reads_once':['/a.py']},tr.agent_uses()))
+
+    def test_absence_coverage_note_and_paraphrase_with_routing_enabled(self):
+        exp = {'ambiguous_batch': True, 'retry_policy': True,
+               'batch_invocation': [['/a'], ['/b']]}
+        ending = '\nunconfirmed: TOKEN relationship\nstatus: partial'
+        def errors(claim):
+            tr = Transcript([{'type': 'result', 'result': claim + ending}])
+            return check_routing(tr, {}, exp, 'auto', [], agent_resolved_models)
+        for absence in (
+                'confirmed: /notifiable.rb — No TOKEN definitions, references, or imports found (entire 7-line file read)',
+                'confirmed: /notifiable.rb — no TOKEN reference present in this file'):
+            self.assertEqual([], errors(absence))
+            for claim in (absence + '; TOKEN refers to beta.py',
+                          absence + ' (TOKEN references beta.py)',
+                          absence.replace('No TOKEN', 'TOKEN').replace('no TOKEN', 'TOKEN')):
+                self.assertIn('batch_evidence', [name for name, _ in errors(claim)], claim)
 
 
 

@@ -78,7 +78,7 @@ class WriterReferenceTest(unittest.TestCase):
         events = [{'type': 'system', 'subtype': 'init', 'plugins': [{'name': 'token-shunt'}]},
                   call('worker', 'Agent', {'subagent_type': 'token-shunt:code-writer',
                                           'model': 'haiku', 'prompt': ref}, None)]
-        events += sequence + [result('worker', None, text='status: complete; stop_reason: written'),
+        events += sequence + [result('worker', None, text=write['message']['content'][0]['input']['file_path'] + '\n1 line\n- Generated test\n- Matched reference\n- Parent verification pending\nstatus: complete\nstop_reason: written'),
                               call('verify', 'Bash', {'command': spec['verify_cmd']}, None),
                               result('verify', None, text='Ran 1 test\nOK'),
                               {'type': 'result', 'result': 'verified'}]

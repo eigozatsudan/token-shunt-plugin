@@ -23,4 +23,5 @@ target path, and the verification command the parent will run.
   verification step.
 - If the reference is unreadable, the spec is not a code-generation task,
   or the target cannot be written: do NOT Write. Return the reason and
-  the path only — never put code in the reply.
+  the path, followed by `status: partial` and `stop_reason`. The line count
+  and 3-5 bullets apply only when a file was written. Never put code in the reply.

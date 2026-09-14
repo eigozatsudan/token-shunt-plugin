@@ -36,6 +36,40 @@ class CdHooksTest(unittest.TestCase):
     def test_large_destination_file(self):
         self.assertEqual(self.decision("cd 'destination space' && cat large.txt"), "deny")
 
+    def test_untracked_cd_cannot_use_original_directory(self):
+        commands = (
+            "cd 'destination space' && cat large.txt || true",
+            "cd 'destination space' || exit; cat large.txt",
+            "cd 'destination space' && cat large.txt & echo hi",
+            "cd -- 'destination space' && /bin/cat large.txt || true",
+            "echo ok; cd 'destination space'; cat large.txt",
+            "cd 'destination space' && true || true; cat large.txt",
+            "cd 'destination space' && cd . || true; cat large.txt",
+        )
+        # Both absent and small files in the original cwd used to mask the
+        # large destination operand. Check actual Bash output as well.
+        for original_exists in (False, True):
+            if original_exists:
+                (self.root / "large.txt").write_bytes(b"small\n")
+            for command in commands:
+                with self.subTest(original_exists=original_exists, command=command):
+                    actual = subprocess.run(["bash", "-c", command], cwd=self.root,
+                                            env=self.env, capture_output=True, timeout=10)
+                    self.assertEqual(actual.returncode, 0, actual.stderr)
+                    self.assertGreaterEqual(len(actual.stdout), 70000)
+                    self.assertEqual(self.decision(command), "deny")
+
+    def test_supported_leading_cd_chain(self):
+        self.assertEqual(self.decision("cd 'destination space'; cd . && cat same.txt"), "pass")
+        self.assertEqual(self.decision("cd 'destination space'; cd . && cat large.txt"), "deny")
+
+    def test_no_cd_small_file_is_unchanged(self):
+        (self.root / "small.txt").write_bytes(b"small\n")
+        for command in ("cat small.txt", "cat small.txt || true",
+                        "cat small.txt & echo hi", "echo ok; cat small.txt"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), "pass")
+
     def test_destination_pipeline(self):
         self.assertEqual(self.decision("cd 'destination space' && cat large.txt | cat"), "deny")
 

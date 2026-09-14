@@ -1,0 +1,76 @@
+== fixtures ==
+fixtures ready: /tmp/token-shunt-clean-5qoea4d_/evals/fixtures
+== check-file-size ==
+== check-bash-read ==
+== jq-missing / sessionstart ==
+== invalid-json ==
+== symlink regression checks ==
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 1.587s
+
+OK
+== cd regression checks ==
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 1.284s
+
+OK
+== scan budget regression checks ==
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 2.544s
+
+OK
+== Bash operational regression checks ==
+.............................
+----------------------------------------------------------------------
+Ran 29 tests in 12.494s
+
+OK
+== review regression checks ==
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 2.244s
+
+OK
+== harness input regression checks ==
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.106s
+
+OK
+== model selection regression checks ==
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.517s
+
+OK
+== reader_contract regression checks ==
+.............
+----------------------------------------------------------------------
+Ran 13 tests in 0.671s
+
+OK
+== bash_finding_fixes regression checks ==
+..............
+----------------------------------------------------------------------
+Ran 14 tests in 13.493s
+
+OK
+== doctor_record regression checks ==
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 2.531s
+
+OK
+== marketplace-schema ==
+== archive verification regression checks ==
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.966s
+
+OK
+== zip-exec-bits ==
+== result ==
+pass: 121  fail: 0

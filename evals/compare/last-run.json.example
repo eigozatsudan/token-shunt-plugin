@@ -1,43 +1,144 @@
 {
   "generated_at": "2026-09-13T00:00:00",
-  "claude_code_version": "x.y.z",
   "cases": {
     "compare-bulk-facts": {
       "modes": {
         "direct": {
-          "case": "compare-bulk-facts", "mode": "direct", "verdict": "pass",
-          "checks": {"plugin_absent": true, "foreign_hooks": true, "accuracy": true, "parent_reads": true},
+          "case": "compare-bulk-facts",
+          "mode": "direct",
+          "verdict": "pass",
+          "checks": {
+            "plugin_absent": true,
+            "foreign_hooks": true,
+            "accuracy": true,
+            "parent_reads": true
+          },
           "metrics": {
-            "parent_added_chars": 0, "parent_added_utf8_bytes": 0,
+            "parent_added_chars": 0,
+            "parent_added_utf8_bytes": 0,
             "parent_added_tokens_est": 0,
-            "parent_input_tokens": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
+            "parent_input_tokens": {
+              "uncached": 0,
+              "cache_read": 0,
+              "cache_creation": 0
+            },
             "parent_output_tokens": 0,
-            "usage_parent": {}, "usage_tree": {},
-            "models": ["claude-sonnet-5"], "wall_ms": 0, "total_cost_usd": 0
+            "usage_parent": {},
+            "usage_tree": {},
+            "models": [
+              "claude-sonnet-5"
+            ],
+            "wall_ms": 0,
+            "total_cost_usd": 0
           },
           "reasons": []
         },
-        "auto": {"case": "compare-bulk-facts", "mode": "auto", "verdict": "pass", "checks": {}, "metrics": {}, "reasons": []}
+        "auto": {
+          "case": "compare-bulk-facts",
+          "mode": "auto",
+          "verdict": "pass",
+          "checks": {},
+          "metrics": {},
+          "reasons": []
+        }
       },
-      "isolation": {"ok": true, "detail": "delegate=[n] direct=m fixture=f"}
+      "isolation": {
+        "ok": true,
+        "detail": "delegate=[n] direct=m fixture=f"
+      }
     }
   },
   "fail_count": 0,
   "errors": [],
   "selected_run_valid": true,
   "release_eligible": false,
-  "parent_token_deltas": {
-    "auto-bulk-facts": {
-      "direct_input": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
-      "auto_input": {"uncached": 0, "cache_read": 0, "cache_creation": 0},
-      "direct_output": 0,
-      "auto_output": 0,
-      "direct_io": 0,
-      "auto_io": 0,
-      "delta_input": 0,
-      "delta_output": 0,
-      "delta_io": 0
-    }
-  },
-  "skip_reason": "claude_missing (only when the claude binary is absent)"
+  "parent_token_deltas": {},
+  "suite_cost_usd": {
+    "cases": {
+      "auto-bulk-facts": {
+        "direct": null,
+        "haiku": null,
+        "sonnet": null,
+        "auto": null,
+        "delta_usd": null,
+        "evidence_complete": false,
+        "missing_cost_modes": [
+          "direct",
+          "haiku",
+          "sonnet",
+          "auto"
+        ],
+        "auto_minus_sonnet_usd": null,
+        "runs_passed": false
+      },
+      "auto-one-line": {
+        "direct": null,
+        "haiku": null,
+        "sonnet": null,
+        "auto": null,
+        "delta_usd": null,
+        "evidence_complete": false,
+        "missing_cost_modes": [
+          "direct",
+          "haiku",
+          "sonnet",
+          "auto"
+        ],
+        "auto_minus_sonnet_usd": null,
+        "runs_passed": false
+      },
+      "auto-explicit-multifile": {
+        "direct": null,
+        "haiku": null,
+        "sonnet": null,
+        "auto": null,
+        "delta_usd": null,
+        "evidence_complete": false,
+        "missing_cost_modes": [
+          "direct",
+          "haiku",
+          "sonnet",
+          "auto"
+        ],
+        "auto_minus_sonnet_usd": null,
+        "runs_passed": false
+      },
+      "auto-large-writer": {
+        "direct": null,
+        "haiku": null,
+        "sonnet": null,
+        "auto": null,
+        "delta_usd": null,
+        "evidence_complete": false,
+        "missing_cost_modes": [
+          "direct",
+          "haiku",
+          "sonnet",
+          "auto"
+        ],
+        "auto_minus_sonnet_usd": null,
+        "runs_passed": false
+      }
+    },
+    "evidence_complete": false,
+    "basis": "single_run_four_large_cases; not repeated-run medians",
+    "evidence_complete_scope": [
+      "direct",
+      "auto"
+    ],
+    "mode_totals_usd": {
+      "direct": null,
+      "haiku": null,
+      "sonnet": null,
+      "auto": null
+    },
+    "all_modes_evidence_complete": false,
+    "auto_minus_sonnet_usd": null,
+    "runs_passed": false,
+    "direct_usd": null,
+    "auto_usd": null,
+    "delta_usd": null,
+    "regression": null,
+    "release_gate": false
+  }
 }

@@ -20,7 +20,7 @@
         "gen/bulk_facts.py"
       ],
       "gold_file": "gen/gold-bulk-facts.json",
-      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Read the file and answer.",
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Use the Read tool to read the specified file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
       "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/bulk_facts.py --question \"report_token() が返すトークン文字列・その文字列を返す関数名・その関数の定義開始行（return 行ではなく def 行）\". Then report the worker's answer.",
       "expect": {
         "direct": {
@@ -58,8 +58,8 @@
         "gen/oneline.json"
       ],
       "gold_file": "gen/gold-oneline.json",
-      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Read the file and answer.",
-      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/oneline.json --question \"payload_sha キーの値\". Then report the worker's answer.",
+      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Use the Read tool to read the specified file before answering; use consecutive ranges if needed. Then answer from the returned evidence. This file has exactly one logical line. Start its Read with offset=1, limit=1; if delegating, include this first-Read instruction in the worker prompt.",
+      "prompt_delegate": "Invoke the skill token-shunt:bulk-reader with these arguments: --worker-model {WM} {FIX}/gen/oneline.json --question \"payload_sha キーの値\". Then report the worker's answer. This file has exactly one logical line. Start its Read with offset=1, limit=1; if delegating, include this first-Read instruction in the worker prompt.",
       "expect": {
         "direct": {
           "parent_reads": [
@@ -74,6 +74,9 @@
           "child_msg_max": 4000,
           "child_no_body": true,
           "parent_no_full_read": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "allow_unreadable_line_partial": [
             "{FIX}/gen/oneline.json"
           ]
         }
@@ -607,7 +610,7 @@
         "sonnet": "sonnet",
         "auto": "haiku_then_authorized_sonnet"
       },
-      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Read the file and answer.",
+      "prompt_direct": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)? Use the Read tool to read the specified file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
       "prompt_delegate": "In {FIX}/gen/bulk_facts.py, what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)?{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
@@ -656,8 +659,8 @@
         "sonnet": "sonnet",
         "auto": "haiku_then_authorized_sonnet"
       },
-      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Read the file and answer.",
-      "prompt_delegate": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha?{WMHINT}",
+      "prompt_direct": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? Use the Read tool to read the specified file before answering; use consecutive ranges if needed. Then answer from the returned evidence. This file has exactly one logical line. Start its Read with offset=1, limit=1; if delegating, include this first-Read instruction in the worker prompt.",
+      "prompt_delegate": "In {FIX}/gen/oneline.json, what is the value of the key payload_sha? This file has exactly one logical line. Start its Read with offset=1, limit=1; if delegating, include this first-Read instruction in the worker prompt.{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
@@ -675,7 +678,10 @@
           "parent_no_full_read": [
             "{FIX}/gen/oneline.json"
           ],
-          "deny_bypass": true
+          "deny_bypass": true,
+          "allow_unreadable_line_partial": [
+            "{FIX}/gen/oneline.json"
+          ]
         }
       },
       "isolation": "delegate_lt_direct_and_fixture"
@@ -959,8 +965,8 @@
         "gen/edit_hint.py"
       ],
       "gold_file": "gen/gold-edit-hint.json",
-      "prompt_direct": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical.",
-      "prompt_delegate": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical.{WMHINT}",
+      "prompt_direct": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE = 'on'. A hint (which may be wrong): it is around line 12. Locate the target with a Grep that you narrow until it matches a single line, then make a targeted Read of the original at that line and confirm the text before you Edit; if the pattern cannot be narrowed to one line, make no edit. Keep everything else byte-identical. Report the updated marker line verbatim.",
+      "prompt_delegate": "In {FIX}/gen/edit_hint.py change the function render_header so its marker line reads HDR_MODE = 'on'. A hint (which may be wrong): it is around line 12. Locate the target with a Grep that you narrow until it matches a single line, then make a targeted Read of the original at that line and confirm the text before you Edit; if the pattern cannot be narrowed to one line, make no edit. Keep everything else byte-identical. Report the updated marker line verbatim.{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
@@ -1001,8 +1007,8 @@
         "not unique",
         "一意"
       ],
-      "prompt_direct": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.",
-      "prompt_delegate": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE=on. A hint (which may be wrong): it is around line 12. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.{WMHINT}",
+      "prompt_direct": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE = 'on'. A hint (which may be wrong): it is around line 12. Locate the target with a Grep that you narrow until it matches a single line, then make a targeted Read of the original at that line and confirm the text before you Edit; if the pattern cannot be narrowed to one line, make no edit. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.",
+      "prompt_delegate": "In {FIX}/gen/edit_ambiguous.py change the function render_header so its marker line reads HDR_MODE = 'on'. A hint (which may be wrong): it is around line 12. Locate the target with a Grep that you narrow until it matches a single line, then make a targeted Read of the original at that line and confirm the text before you Edit; if the pattern cannot be narrowed to one line, make no edit. Keep everything else byte-identical. If the target cannot be identified unambiguously, make no edit at all and report why.{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {
         "direct": {
@@ -1154,7 +1160,7 @@
       "gold": [
         "def task_fifty"
       ],
-      "prompt_direct": "In {FIX}/gen/bounds/l50.py, what is the name of the function defined on line 50? Read the file and answer.",
+      "prompt_direct": "In {FIX}/gen/bounds/l50.py, what is the name of the function defined on line 50? Use the Read tool to read the specified file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
       "prompt_delegate": "In {FIX}/gen/bounds/l50.py, what is the name of the function defined on line 50?{WMHINT}",
       "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
       "expect": {

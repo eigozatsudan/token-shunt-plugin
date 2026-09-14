@@ -1,5 +1,15 @@
 [
  {
+  "id": "bash-safety-process-substitution",
+  "cmd": "cat <(cat @FIX@/large-80k.txt)",
+  "expect": "deny_safety"
+ },
+ {
+  "id": "bash-safety-unresolved-cd",
+  "cmd": "cd @FIX@ 2>/dev/null; cat large-80k.txt",
+  "expect": "deny_safety"
+ },
+ {
   "id": "bash-unrelated",
   "cmd": "git status",
   "expect": "pass"

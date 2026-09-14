@@ -8,7 +8,7 @@ from test_routing_checks import transcript
 
 
 def tool(tid, name, inp, result, error=False, extra=None):
-    block = {'type': 'tool_result', 'tool_use_id': tid, 'content': result, 'is_error': error}
+    block = {'resolvedModel': 'claude-haiku', 'type': 'tool_result', 'tool_use_id': tid, 'content': result, 'is_error': error}
     if extra:
         block.update(extra)
     return [
@@ -37,8 +37,19 @@ class JudgeIntegrationTests(unittest.TestCase):
     def case(self, cid):
         cases = json.loads(Path(judge.__file__).with_name('cases.json').read_text())['cases']
         raw = json.dumps(next(c for c in cases if c['id'] == cid))
-        return json.loads(raw.replace('{TMP}', str(self.root)).replace('{FIX}', str(self.root)).replace(
+        spec = json.loads(raw.replace('{TMP}', str(self.root)).replace('{FIX}', str(self.root)).replace(
             '{JUDGE_DIR}', str(Path(judge.__file__).parent)))
+        if cid in {'writer-verification-levels', 'writer-bounds'}:
+            # These transcript controls need their own source bodies now that
+            # every writer reply is checked, even without child_no_body flags.
+            spec['fixture_root'] = str(self.root)
+            bodies = {'config_ref.json': '{"required_key":"rk-1"}\n',
+                      'notes_ref.md': '# Notes\n', 'notes_ref.yaml': 'title: Notes\n'}
+            for relative in spec.get('fixtures', []):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(bodies[path.name])
+        return spec
 
     def run_judge(self, events, spec, mode='auto'):
         init = {'type': 'system', 'subtype': 'init', 'plugins':
@@ -49,6 +60,7 @@ class JudgeIntegrationTests(unittest.TestCase):
 
     def test_actual_edit_case_enforces_order(self):
         spec = self.case('auto-edit-grep-location')
+        spec['gold'] = ['HDR_MODE=on']
         path = spec['expect']['direct']['edit_flow']['path']
         Path(path).parent.mkdir(parents=True)
         Path(path).write_text('padding\n'*100 + "HDR_MODE = 'off'\n" + 'padding\n'*100)
@@ -97,7 +109,7 @@ class JudgeIntegrationTests(unittest.TestCase):
         req = [c for c in artifacts if c['level'] == 'requirements']
         self.assertTrue(req, 'case must carry a requirements positive example')
         self.assertTrue(all(c.get('require_keys') for c in req))
-        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete')
+        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete\nstop_reason: complete')
         commands = self._writer_commands(artifacts)
         name = Path(req[0]['path']).name
         # GREEN: acceptance keys checked -> requirements + complete is accepted.
@@ -118,7 +130,7 @@ class JudgeIntegrationTests(unittest.TestCase):
 
     def test_actual_writer_case_requires_parent_execution_and_honest_report(self):
         spec = self.case('writer-verification-levels')
-        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete')
+        agent = tool('a', 'Agent', self.WRITER_AGENT, 'status: complete\nstop_reason: complete')
         artifacts = spec['expect']['delegate']['verification_artifacts']
         report = self._writer_report(artifacts)
         final = [{'type': 'result', 'result': report}]
@@ -195,7 +207,7 @@ class JudgeIntegrationTests(unittest.TestCase):
         def events(n_files):
             agent = tool('a', 'Agent', {
                 'subagent_type': 'token-shunt:code-writer', 'model': 'haiku',
-                'prompt': 'generate the artifact'}, 'wrote target; 12 lines')
+                'prompt': 'generate the artifact'}, 'wrote target; 12 lines\nstatus: partial\nstop_reason: budget_exhausted')
             reads = []
             for i in range(n_files):
                 reads += child_read('a', 'r%d' % i, '/repo/file%02d.py' % i)
@@ -247,7 +259,7 @@ class JudgeIntegrationTests(unittest.TestCase):
         v, ok = self.run_judge(self._no_ref_events(spec, silent), spec)
         self.assertFalse(ok)
         self.assertFalse(v['checks'].get('child_mentions'))
-        good = 'reference missing_ref.py is unreadable (ENOENT). status: partial'
+        good = 'reference missing_ref.py is unreadable (ENOENT).\nstatus: partial\nstop_reason: unreadable_reference'
         v, ok = self.run_judge(self._no_ref_events(spec, good), spec)
         self.assertTrue(ok, v['reasons'])
 

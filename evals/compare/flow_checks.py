@@ -72,7 +72,7 @@ def edit_flow_errors(tr, cfg, spec, targets, full_read):
                 continue
             old = edit['input'].get('old_string')
             original = re.sub(r'(?m)^\s*\d+[→\t]', '', tr.result_of(read['id'])['text'])
-            if not old or old not in original:
+            if not isinstance(old, str) or not old or old not in original:
                 continue
             for grep, line in greps:
                 try:
@@ -138,21 +138,30 @@ def report_fields(section):
     if not levels:
         levels = re.findall(r'(?:^|[|+])\s*(minimal|syntax|requirements)\s*(?:\([^|\n]*\)\s*)?(?=[|+]|$)', cleaned.strip(), re.I)
     if not statuses:
-        statuses = re.findall(r'(?:^|[|+])\s*(partial|complete|error|failed)\s*(?:\([^|\n]*\)\s*)?(?=[|+]|$)', cleaned.strip(), re.I)
+        statuses = re.findall(r'(?:^|[|+])\s*(partial|complete|error|failed)\s*(?:\([^|\n]*\)\s*)?(?=[|+]|$|[—–]| - )', cleaned.strip(), re.I)
     return {s.lower() for s in levels}, {s.lower() for s in statuses}
+
+
+def split_verification_exit_echo(line):
+    """Recognize only the literal terminal status label, not general shell lists."""
+    match = re.fullmatch(r'(.*);[ \t]*echo[ \t]+"EXIT:\$\?"[ \t]*', line)
+    return (match.group(1), True) if match else (line, False)
 
 
 def verification_commands(command, cwd):
     """Recognize literal verification batches; never execute shell input.
 
-    Only newline-separated cd, echo labels and checker calls are supported.
+    Newline-separated cd, echo labels and checker calls are supported,
+    including a literal initial `cd DIR && python3 ...` and a terminal
+    `; echo "EXIT:$?"` status label.
     Echo labels may include the exit status ($?); other expansions,
     conditionals, pipelines and other commands are not evidence.
     """
-    if '`' in command:
+    if not isinstance(command, str) or '`' in command:
         return []
     commands = []
     for line in command.splitlines():
+        line, exit_echo = split_verification_exit_echo(line)
         lexer = shlex.shlex(line, posix=True, punctuation_chars=';&|<>()')
         lexer.whitespace_split = True
         lexer.commenters = ''
@@ -167,7 +176,14 @@ def verification_commands(command, cwd):
         expansion_text = line.replace('$?', '') if argv[0] == 'echo' else line
         if '$' in expansion_text:
             return []
+        if len(argv) > 3 and argv[0] == 'cd' and argv[2] == '&&' and not commands:
+            cwd = os.path.normpath(os.path.join(cwd or '', argv[1]))
+            if not os.path.isabs(cwd) or argv[3] != 'python3':
+                return []
+            argv = argv[3:]
         if any(a and all(c in ';&|<>()' for c in a) for a in argv):
+            return []
+        if exit_echo and argv[0] != 'python3':
             return []
         if argv[0] == 'cd' and len(argv) == 2 and not commands:
             cwd = os.path.normpath(os.path.join(cwd or '', argv[1]))
@@ -267,7 +283,22 @@ def verification_errors(tr, spec, exp):
                         or evidence.get('verification') != argv[3]
                         or not isinstance(evidence.get('ok'), bool)):
                     valid = False
-            if not valid or bool(r['is_error']) == evidence_rows[-1]['ok']:
+            # A terminal echo succeeds even when the checker failed. Its
+            # observed EXIT value, not Bash's success bit, describes the checker.
+            command_lines = u['input'].get('command', '').strip().splitlines()
+            exit_echo = bool(command_lines and split_verification_exit_echo(command_lines[-1])[1])
+            if exit_echo:
+                # Native Bash results can append cwd-reset diagnostics from
+                # stderr to the rendered text. Prefer the paired raw stdout.
+                native = r.get('tool_use_result')
+                stdout = native.get('stdout') if isinstance(native, dict) else None
+                output_lines = (stdout if isinstance(stdout, str) else r['text']).strip().splitlines()
+                status = re.fullmatch(r'EXIT:([01])', output_lines[-1]) if output_lines else None
+                exit_matches = (not r['is_error'] and status is not None
+                                and (status.group(1) == '0') == evidence_rows[-1]['ok'])
+            else:
+                exit_matches = bool(r['is_error']) != evidence_rows[-1]['ok']
+            if not valid or not exit_matches:
                 continue
             if any(argv == expected_cmd and ev['ok'] is ok
                    for (argv, _), ev in zip(commands, evidence_rows)):

@@ -25,6 +25,8 @@ class AggregateTests(unittest.TestCase):
 
     def add(self, cid='auto-bulk-facts', modes=('direct', 'auto')):
         spec = next(c for c in self.catalog if c['id'] == cid)
+        if spec.get('gold_file'):
+            spec = dict(spec, gold=['fixture gold'])
         for rel in spec.get('fixture_bytes', []):
             f = self.root / 'f' / rel
             f.parent.mkdir(parents=True, exist_ok=True)

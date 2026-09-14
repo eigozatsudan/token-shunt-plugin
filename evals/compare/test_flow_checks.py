@@ -53,6 +53,22 @@ class EditEvidenceTest(unittest.TestCase):
     def test_grep_ambiguous(self):
         ev = self.events(); ev[1] = result('g', "5:HDR_MODE = 'off'\n50:HDR_MODE = 'off'")
         self.assertTrue(self.errors(ev))
+    def test_grep_context_lines_are_not_matches(self):
+        # rg -C prints context with a '-' separator; only ':' lines are matches,
+        # so a single real match stays unique (§11.6 "short unique pattern").
+        ev = self.events()
+        ev[0]['message']['content'][0]['input']['-C'] = 2
+        ev[1] = result('g', "3-pad\n4-def render_header():\n5:HDR_MODE = 'off'\n6-    return HDR_MODE\n7-pad")
+        self.assertEqual([], self.errors(ev))
+    def test_grep_several_real_matches_in_one_function_is_ambiguous(self):
+        # Live 2026-09-14 shape: 'def render_header|HDR_MODE' matched three
+        # adjacent real lines. Adjacency does not make the pattern unique.
+        ev = self.events()
+        ev[0]['message']['content'][0]['input']['pattern'] = 'def render_header|HDR_MODE'
+        ev[1] = result('g', "4:def render_header():\n5:HDR_MODE = 'off'\n6:    return HDR_MODE")
+        ev[2]['message']['content'][0]['input'].update(offset=3, limit=6)
+        ev[3] = result('r', "3→pad\n4→def render_header():\n5→HDR_MODE = 'off'\n6→    return HDR_MODE")
+        self.assertTrue(self.errors(ev))
     def test_grep_location_not_in_read(self):
         ev = self.events(); ev[1] = result('g', "50:HDR_MODE = 'off'")
         self.assertTrue(self.errors(ev))
@@ -135,6 +151,67 @@ class VerificationEvidenceTest(unittest.TestCase):
             'config.json\n', 'config.json\necho "exit: $?"\n')
         inp['command'] += '\necho "exit: $?"'
         self.assertEqual([], self.errors(ev))
+
+    def test_cd_and_checker_with_and_separator(self):
+        ev = self.batch_events()
+        inp = ev[0]['message']['content'][0]['input']
+        inp['command'] = inp['command'].replace('cd /tmp\necho "--- config ---"\n',
+                                                'cd /tmp && ')
+        self.assertEqual([], self.errors(ev))
+        for prefix in ('false && ', 'cd /missing || ', 'echo cd /tmp && ',
+                       'cd "$DIR" && ', 'cd /tmp; '):
+            broken = copy.deepcopy(ev)
+            broken[0]['message']['content'][0]['input']['command'] = inp['command'].replace('cd /tmp && ', prefix)
+            self.assertTrue(self.errors(broken), prefix)
+
+    def test_terminal_exit_echo_preserves_checker_success_and_failure(self):
+        for use_cd in (False, True):
+            for ok in (False, True):
+                with self.subTest(cd=use_cd, ok=ok):
+                    ev = self.events()
+                    self.artifacts[-1]['ok'] = ok
+                    for i in range(len(self.artifacts)):
+                        inp = ev[2 * i]['message']['content'][0]['input']
+                        if use_cd:
+                            inp['command'] = inp['command'].replace(
+                                'python3 /eval/flow_checks.py', 'cd /eval && python3 flow_checks.py')
+                        inp['command'] += '; echo "EXIT:$?"'
+                        block = ev[2 * i + 1]['message']['content'][0]
+                        evidence = json.loads(block['content'])
+                        evidence['ok'] = self.artifacts[i].get('ok', True)
+                        block['content'] = json.dumps(evidence) + '\nEXIT:' + ('0' if evidence['ok'] else '1')
+                    self.assertEqual([], self.errors(ev))
+                    for bad_output in ('EXIT:0', json.dumps(evidence),
+                                       json.dumps(evidence) + '\nEXIT:' + ('1' if ok else '0')):
+                        broken = copy.deepcopy(ev)
+                        broken[-2]['message']['content'][0]['content'] = bad_output
+                        self.assertTrue(self.errors(broken), bad_output)
+                    for suffix in ('; echo "EXIT:0"', '; echo "EXIT:$(true)"',
+                                   '; echo "EXIT:$?"; true', ' || echo "EXIT:$?"'):
+                        broken = copy.deepcopy(ev)
+                        inp = broken[-3]['message']['content'][0]['input']
+                        inp['command'] = inp['command'].replace('; echo "EXIT:$?"', suffix)
+                        self.assertTrue(self.errors(broken), suffix)
+
+    def test_exit_echo_uses_native_stdout_before_cwd_reset_diagnostic(self):
+        ev = self.events()
+        self.artifacts[-1]['ok'] = False
+        for i in range(len(self.artifacts)):
+            inp = ev[2 * i]['message']['content'][0]['input']
+            inp['command'] = inp['command'].replace(
+                'python3 /eval/flow_checks.py', 'cd /eval && python3 flow_checks.py') + '; echo "EXIT:$?"'
+            reply = ev[2 * i + 1]
+            block = reply['message']['content'][0]
+            evidence = json.loads(block['content'])
+            evidence['ok'] = self.artifacts[i].get('ok', True)
+            stdout = json.dumps(evidence) + '\nEXIT:' + ('0' if evidence['ok'] else '1')
+            stderr = '\nShell cwd was reset to /tmp/work/cwd'
+            reply['tool_use_result'] = {'stdout': stdout, 'stderr': stderr}
+            block['content'] = stdout + stderr
+        self.assertEqual([], self.errors(ev))
+        # A rendered label or diagnostic must not replace missing native stdout.
+        ev[-2]['tool_use_result']['stdout'] = ''
+        self.assertTrue(self.errors(ev))
     def test_batch_still_rejects_other_expansions(self):
         for label in ('echo "$VALUE"', 'echo "$(true)"', 'echo "`true`"',
                       'echo "${value:=changed}"', 'echo "$((1 + 1))"',

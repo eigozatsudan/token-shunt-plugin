@@ -1,5 +1,6 @@
 """Per-invocation routing contracts for the comparison evaluator (§26.1/26.3)."""
 import re
+from report_text import plain_report
 
 
 def _prompt(agent):
@@ -10,7 +11,9 @@ def _paths(prompt):
     # Preserve quoted paths with spaces; slash commands are not file paths.
     quoted = re.findall(r"[\"'](/[^\"']+)[\"']", prompt)
     remainder = re.sub(r"[\"'](/[^\"']+)[\"']", '', prompt)
-    bare = re.findall(r'(?<![\w:])/(?:[^\s\"\'<>;,()]+)', remainder)
+    # A prose suffix such as `after_create`/callback is not a declaration.
+    # Keep unknown explicit paths visible so extra-path checks still work.
+    bare = re.findall(r'(?:^|(?<=[\s(]))/(?:[^\s\"\'`<>;,()]+)', remainder)
     return {p.rstrip('.:') for p in quoted + bare
             if not p.startswith('/token-shunt:')}
 
@@ -65,8 +68,46 @@ def _overlaps(a, b):
 # consecutive non-overlapping ranges (plugin/agents/bulk-reader.md). Native
 # successful results can also stop before EOF without a truncation notice;
 # verified returned line labels authorize continuation in that case. Thus the
-# contract is "each region once", not "each path once". maxTurns is 6.
+# contract is "each region once", not "each path once". maxTurns is 7, reserving a final reporting turn.
 MAX_CHILD_READS = 6
+
+
+def reader_contract_denial(tr, call):
+    """Recognize only a matching failed Read carrying a runtime contract reason.
+
+    Matcher-only hook events cannot identify a child call. The paired native
+    tool result supplies call identity, invocation identity and ordering.
+    """
+    result = tr.result_of(call['id'])
+    if (call['name'] != 'Read' or not result or not result.get('is_error')
+            or result.get('parent_tool_use_id') != call.get('parent_tool_use_id')
+            or result.get('position', (-1, -1)) <= call.get('position', (-1, -1))):
+        return None
+    reason = result.get('text', '').strip()
+    patterns = (
+        r'Read budget exhausted; stop partial with stop_reason: budget_exhausted\.',
+        r'A Read is still pending\. Issue Reads serially; do not read ahead\.',
+        r'Read requires an absolute file_path\.',
+        r'At most three paths per invocation\.',
+        r'No further Read is supported for this path; report its unread range partial\.',
+        r'Read must start at offset=\d+ with a positive limit\.',
+        r'Retry at offset=\d+ with limit=\d+ \(floor half\)\.',
+    )
+    return reason if any(re.fullmatch('token-shunt: ' + p, reason) for p in patterns) else None
+
+
+def reader_attempt_metrics(tr, agents):
+    records = []
+    for agent in agents:
+        if tr.agent_type_of(agent) != 'token-shunt:bulk-reader':
+            continue
+        reads = [c for c in tr.child_tool_uses(agent['id']) if c['name'] == 'Read']
+        blocked = [{'tool_use_id': c['id'], 'reason': reason}
+                   for c in reads if (reason := reader_contract_denial(tr, c))]
+        records.append({'agent_id': agent['id'], 'attempts': len(reads),
+                        'budget_consumed': min(len(reads), MAX_CHILD_READS),
+                        'blocked_attempts': blocked})
+    return records
 
 
 def check_reader_reads(tr, exp, agents):
@@ -85,8 +126,13 @@ def check_reader_reads(tr, exp, agents):
         declared = _paths(_prompt(agent))
         expected = allowed & declared
         children = tr.child_tool_uses(agent['id'])
-        reads = [c for c in children if c['name'] == 'Read']
-        if not expected or len(declared) > 3 or len(reads) > MAX_CHILD_READS:
+        attempts = [c for c in children if c['name'] == 'Read']
+        reads = [c for c in attempts if not reader_contract_denial(tr, c)]
+        # The hook charges the first six attempts, including its own denials.
+        # Later denied requests do not execute and cannot exceed that budget.
+        overflow = any(not reader_contract_denial(tr, c)
+                       for c in attempts[MAX_CHILD_READS:])
+        if not expected or len(declared) > 3 or overflow:
             errors.append(('child_reads_once',
                            'Agent %s must carry 1-3 explicit paths and stay within %d Reads'
                            % (agent['id'], MAX_CHILD_READS)))
@@ -162,6 +208,11 @@ def check_reader_reads(tr, exp, agents):
                 actual = returned if returned is not None else span
                 next_line = actual[1] + 1 if actual[1] is not None else None
                 got.append((c, actual))
+            if (not got and retry_stopped
+                    and path in exp.get('allow_unreadable_line_partial', [])
+                    and total_lines == 1):
+                covered.add(path)
+                continue
             if not got:
                 errors.append(('child_reads_once', 'Read did not succeed: %s' % path))
                 continue
@@ -177,13 +228,36 @@ def check_reader_reads(tr, exp, agents):
     return errors
 
 
+def rejected_model_launch(tr, agent):
+    """A model hook denial before any worker activity is not an invocation."""
+    inp = agent.get('input', {})
+    if (tr.agent_type_of(agent) not in
+            ('token-shunt:bulk-reader', 'token-shunt:code-writer')
+            or inp.get('model') in ('haiku', 'sonnet')):
+        return False
+    result = tr.result_of(agent['id'])
+    if (not result or not result.get('is_error')
+            or 'token-shunt: Agent model must be explicitly haiku or sonnet.'
+            not in result.get('text', '')
+            or result.get('parent_tool_use_id') is not None
+            or result.get('position', (-1, -1)) <= agent.get('position', (-1, -1))):
+        return False
+    if tr.child_tool_uses(agent['id']):
+        return False
+    return not any(e.get('parent_tool_use_id') == agent['id']
+                   for e in tr.events)
+
+
 def check_routing(tr, spec, exp, mode, agents, resolved_models):
+    mode = 'auto' if mode == 'delegate' else mode
     errors = []
     for agent in tr.agent_uses():
         if agent.get('input', {}).get('resume'):
             errors.append(('retry_policy', 'Agent resume is forbidden'))
     configured = spec.get('expected_resolved_model') or exp.get('expected_resolved_model')
-    enabled = bool(configured or exp.get('retry_policy') or exp.get('batch_invocation'))
+    enabled = bool(configured or exp.get('retry_policy') or exp.get('batch_invocation')
+                   or any(tr.agent_type_of(agent) in
+                          {'token-shunt:bulk-reader', 'token-shunt:code-writer'} for agent in agents))
     if not enabled or mode == 'direct':
         return errors
     if len(tr.agent_uses()) > 4:
@@ -249,6 +323,70 @@ def check_routing(tr, spec, exp, mode, agents, resolved_models):
         # Even a boundary reread cannot invent a relationship.
         if not re.search(r'\bunconfirmed\b', final, re.I) or not re.search(r'\bpartial\b', final, re.I):
             errors.append(('batch_evidence', 'ambiguous TOKEN relationship must remain unconfirmed and partial'))
-        if any(re.search(r'(?<!un)\bconfirmed\s*[:：]', line, re.I) and re.search(r'refers? to|references?|depends? on|relationship|関係|参照|依存', line, re.I) and 'TOKEN' in line for line in final.splitlines()):
+        def absence_only(line):
+            # A whole, explicit absence statement is not a positive link.
+            # Do not exempt mixed claims merely because they contain "No".
+            return bool(re.fullmatch(
+                r'\s*(?:[-*+]\s+)?confirmed\s*[:：]\s*(?:/[^\s—–]+|[\w.-]+\.\w+)'
+                r'\s[—–]\s+No TOKEN (?:definitions?|references?|imports?)'
+                r'(?:(?:,\s*(?:or\s+)?|\s+or\s+)(?:definitions?|references?|imports?))*'
+                r' (?:found|present)(?: in (?:this|the) file)?[.!]?'
+                r'(?:\s+\(entire \d+-line file read\))?[.!]?\s*', line, re.I))
+        if any(re.search(r'(?<!un)\bconfirmed\s*[:：]', line, re.I) and re.search(r'refers? to|references?|depends? on|relationship|関係|参照|依存', line, re.I) and 'TOKEN' in line and not absence_only(line) for line in final.splitlines()):
             errors.append(('batch_evidence', 'unsupported confirmed relationship for colliding symbols'))
     return errors
+
+
+def unreadable_line_partial(tr, exp, agents):
+    """Accept an unsupported input outcome only with native refusal evidence."""
+    paths = exp.get('allow_unreadable_line_partial', [])
+    if not paths or len(paths) != 1 or len(agents) != 1:
+        return False
+    agent = agents[0]
+    if tr.agent_type_of(agent) != 'token-shunt:bulk-reader':
+        return False
+    path = paths[0]
+    children = tr.child_tool_uses(agent['id'])
+    reads = [c for c in children if not reader_contract_denial(tr, c)]
+    if (not reads or any(c['name'] != 'Read' for c in children)):
+        return False
+    for call in reads:
+        result = tr.result_of(call['id'])
+        if (call['input'].get('file_path', call['input'].get('path')) != path
+                or not result or not result['is_error']
+                or not re.search(r'File content .*exceeds maximum allowed tokens',
+                                 result.get('text', ''), re.I)):
+            return False
+    if _read_range(reads[-1]) != (1, 1) or _line_count(path) != 1:
+        return False
+    if check_reader_reads(tr, exp, agents):
+        return False
+    reply = tr.child_return_of(agent)
+    if not reply or reply['is_error']:
+        return False
+    for text in (reply['text'], tr.final_text()):
+        text = plain_report(text)
+        if (re.findall(r'(?m)^[ \t]*(?:[-*+][ \t]+)?status:[ \t]*([^\n]*)$', text) != ['partial']
+                or re.findall(r'(?m)^[ \t]*(?:[-*+][ \t]+)?stop_reason:[ \t]*([^\n]*)$', text) != ['unreadable_line']
+                or not any(line.lstrip('-*+ ').startswith('unconfirmed: ' + path + ' —')
+                           for line in text.splitlines())
+                or has_confirmed_claim(text)
+                or 'unread line 1' not in text):
+            return False
+    return True
+
+
+def has_confirmed_claim(text):
+    """Empty/explicitly absent facts are not evidence; arbitrary suffixes are."""
+    in_confirmed = False
+    for line in text.splitlines():
+        field = re.match(r'^(confirmed|unconfirmed|inferred|status|stop_reason):[ \t]*(.*)$', line, re.I)
+        if field:
+            in_confirmed = field[1].lower() == 'confirmed'
+            if in_confirmed and not re.fullmatch(
+                    r'(?:none\.?|none[ \t]+—[ \t]+unable to retrieve [A-Za-z_]\w* value\.)?',
+                    field[2], re.I):
+                return True
+        elif in_confirmed and line.strip():
+            return True
+    return False

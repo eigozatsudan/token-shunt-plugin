@@ -20,7 +20,7 @@ class AsyncRetryRoutingTests(unittest.TestCase):
         launch['tool_use_result'] = {'isAsync': True, 'agentId': 'task-1'}
         notification = dict(type='system', subtype='task_notification',
                             tool_use_id='a0', task_id='task-1', status='completed',
-                            summary='partial: missing evidence')
+                            summary='status: partial\nstop_reason: missing evidence')
         notification.update(changes)
         if notification_position == 'before-retry':
             events.insert(events.index(launch) + 1, notification)

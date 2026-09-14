@@ -1,0 +1,934 @@
+{
+  "archive": "/home/dev/token-shunt-evidence/live-rerun-2026-09-14/run.mnVnW1FU.tar.gz",
+  "verified_fixture_files": 33,
+  "runs": 75,
+  "before": {
+    "fail": 60,
+    "pass": 15
+  },
+  "after": {
+    "pass": 48,
+    "fail": 27
+  },
+  "remaining_failed_checks": {
+    "accuracy": 11,
+    "edit_flow": 4,
+    "gold_confirmed": 2,
+    "child_status": 5,
+    "single_invocation": 1,
+    "child_reads_once": 1,
+    "retry_policy": 2,
+    "child_msg_cap": 2,
+    "child_ref_before_write": 2,
+    "run": 8,
+    "child_extra_read": 1,
+    "batch_evidence": 1
+  },
+  "new_failures": [],
+  "scope": "Offline judge replay only; archived disk results and live aggregate were not recomputed.",
+  "cases": [
+    {
+      "case": "auto-bulk-facts.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01YBCxfXwCouYB9wiEyVbpmw",
+          "attempts": 2,
+          "budget_consumed": 2,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-bulk-facts.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-bulk-facts.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01LzDGwtqw35LQFRw2V5yL9Q",
+          "attempts": 4,
+          "budget_consumed": 4,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-bulk-facts.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_013MT8C4Suhh7ExhJqMwmtDo",
+          "attempts": 6,
+          "budget_consumed": 6,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-edit-grep-ambiguous.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-ambiguous.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-ambiguous.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-ambiguous.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer contains none of: ambiguous, ambiguity, 曖昧, multiple, 複数, not unique, 一意"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-location.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: HDR_MODE=on",
+        "edit_flow: Edit lacks completed target-identifying Grep -> original targeted Read evidence on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/gen/edit_hint.py"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-location.direct",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: HDR_MODE=on",
+        "edit_flow: Edit lacks completed target-identifying Grep -> original targeted Read evidence on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/gen/edit_hint.py"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-location.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: HDR_MODE=on",
+        "edit_flow: Edit lacks completed target-identifying Grep -> original targeted Read evidence on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/gen/edit_hint.py"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-edit-grep-location.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: HDR_MODE=on",
+        "edit_flow: Edit lacks completed target-identifying Grep -> original targeted Read evidence on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/gen/edit_hint.py"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-explicit-multifile.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_019HgGH9hNjCCDWYSpzidYMC",
+          "attempts": 7,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_0112Z6qLCeFkVBp2fWU7Fn9b",
+              "reason": "token-shunt: Read must start at offset=184 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_015DnWaUwseNjykavqSruGfH",
+              "reason": "token-shunt: Read must start at offset=284 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_015cZoyZrdCqDg7YgCxYRWKV",
+              "reason": "token-shunt: Read budget exhausted; stop partial with stop_reason: budget_exhausted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "auto-explicit-multifile.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-explicit-multifile.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob",
+        "child_status: reader toolu_01WhRKfUMSZpuzUBLgEpKDhQ lacks explicit status and stop_reason"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01WhRKfUMSZpuzUBLgEpKDhQ",
+          "attempts": 7,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01NxMxzoAR8vbM6mGfZXEaw4",
+              "reason": "token-shunt: Read budget exhausted; stop partial with stop_reason: budget_exhausted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "auto-explicit-multifile.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: WelcomeEmailJob",
+        "single_invocation: no Agent prompt contains all 3 paths",
+        "child_reads_once: no successful carrier Read: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/rails/app/jobs/welcome_email_job.rb",
+        "child_reads_once: no successful carrier Read: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work/fixtures/rails/app/models/concerns/notifiable.rb",
+        "retry_policy: only one auto Sonnet retry is permitted",
+        "retry_policy: only one auto Sonnet retry is permitted"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01SHnQtgq6DVYbi8ojVR5jGY",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        },
+        {
+          "agent_id": "toolu_019jHJo6sCnC9EZ1JCnusb98",
+          "attempts": 5,
+          "budget_consumed": 5,
+          "blocked_attempts": []
+        },
+        {
+          "agent_id": "toolu_011ew9tnHqSXwJLH7oycS2sC",
+          "attempts": 3,
+          "budget_consumed": 3,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-known-range.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-known-range.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-known-range.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-known-range.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-large-writer.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "child_msg_cap: agent result 1042 chars > 800"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-large-writer.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-large-writer.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "child_msg_cap: agent result 1910 chars > 800",
+        "child_ref_before_write: Write of target before successful Read of reference"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-large-writer.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "child_ref_before_write: Write of target before successful Read of reference"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-one-line.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01GybL8ZLo8af2HmRVBLjZXW",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-one-line.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-one-line.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: sha256:0a1b2c3d4e5f6666666666666666666666666666666666666666",
+        "child_status: reader toolu_01MqBSw2YGFoJ91Cm18ihuM1 lacks explicit status and stop_reason"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01MqBSw2YGFoJ91Cm18ihuM1",
+          "attempts": 2,
+          "budget_consumed": 2,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01JLsZw34Z5MGyucicfmHCUZ",
+              "reason": "token-shunt: No further Read is supported for this path; report its unread range partial."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "auto-one-line.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: sha256:0a1b2c3d4e5f6666666666666666666666666666666666666666",
+        "retry_policy: only one auto Sonnet retry is permitted"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01L8nkZhCB26Nahh2WbvCwUd",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        },
+        {
+          "agent_id": "toolu_017TodXRvxrBRVi6jRzkyJeY",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-routing-boundary-16k-equal.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-16k-equal.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-16k-minus.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-16k-minus.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-16k-plus.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01M7VAJ7g12DVHwrPa9uD8c7",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "auto-routing-boundary-16k-plus.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer.direct",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer.sonnet",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines-writer.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines-writer.direct",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: def task_fifty"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines.direct",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: def task_fifty"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-known-range-deny.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-routing-boundary-known-range-deny.direct",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "run: result is_error: You've hit your session limit · resets 8am (Asia/Tokyo)"
+      ],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-files.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-files.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-files.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-files.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-writer.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-writer.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-writer.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "auto-small-writer.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-bulk-facts.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_018FV9x8cpfWnF8KqBNu4whY",
+          "attempts": 4,
+          "budget_consumed": 4,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "compare-bulk-facts.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-bulk-facts.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01XTEMGBprqySjXChAgZHoYL",
+          "attempts": 6,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_014HpAeBZc5pe7mfQ6R5rZqi",
+              "reason": "token-shunt: Read must start at offset=201 with a positive limit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-bulk-facts.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01S61brGFBzJWJT71KXiGprW",
+          "attempts": 6,
+          "budget_consumed": 6,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "compare-code-writer-no-ref.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-code-writer-ok.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-edit-dense-lines.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: EM-9z8x7",
+        "child_status: reader toolu_01DDsHVpQDH21nET6zxvkeUS lacks explicit status and stop_reason"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01DDsHVpQDH21nET6zxvkeUS",
+          "attempts": 5,
+          "budget_consumed": 5,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01BE1dTCrsUaEkudihayhZun",
+              "reason": "token-shunt: Read must start at offset=10001 with a positive limit."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-explicit-multifile.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_017hrEo8yw5nYcU9C2W8UYBN",
+          "attempts": 7,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_013LZL53i33G3pwBctvtp1j6",
+              "reason": "token-shunt: Read must start at offset=101 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_01FHDbvsxGN7F7FF52JmQwdF",
+              "reason": "token-shunt: Read must start at offset=251 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_01WN8m3N2r7xmdYg6ECfBGDh",
+              "reason": "token-shunt: Read budget exhausted; stop partial with stop_reason: budget_exhausted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-explicit-multifile.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-explicit-multifile.haiku",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01FdEGT8TPchikpehbfMs9kp",
+          "attempts": 7,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01BAZhwiU47ySNB8iPazRBg4",
+              "reason": "token-shunt: Read must start at offset=101 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_01TpidmQaw8SF5tHatXm1joD",
+              "reason": "token-shunt: Read budget exhausted; stop partial with stop_reason: budget_exhausted."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-explicit-multifile.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01Qc7agjRxAkp2cdB2aRAvrR",
+          "attempts": 6,
+          "budget_consumed": 6,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "compare-hook-deny-route.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01YNdo88sRUKFZfL6RuUVTWp",
+          "attempts": 5,
+          "budget_consumed": 5,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01FMXX1v1KoU99CcNfMxe29g",
+              "reason": "token-shunt: Retry at offset=1 with limit=259 (floor half)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-one-line.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_018JxEyBWDW1NYNT58Ktndx2",
+          "attempts": 2,
+          "budget_consumed": 2,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_018SEwMgb4qRWmHp47rMd75m",
+              "reason": "token-shunt: No further Read is supported for this path; report its unread range partial."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-one-line.direct",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "compare-one-line.haiku",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "accuracy: final answer missing: sha256:0a1b2c3d4e5f6666666666666666666666666666666666666666",
+        "child_extra_read: Read outside this invocation: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.mnVnW1FU/work"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01AkxrwEj5FwSvLJp9Wvmv65",
+          "attempts": 3,
+          "budget_consumed": 3,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_0186WkTiEJ9DFR8c5fDhfrcX",
+              "reason": "token-shunt: No further Read is supported for this path; report its unread range partial."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "compare-one-line.sonnet",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_01MR9MtMuJhLTwF9fPZ1K17k",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "reader-batch-ambiguous.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "batch_evidence: unsupported confirmed relationship for colliding symbols"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_017n5i9fmbeVCK7famH867Pa",
+          "attempts": 7,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01A6e6ef5xgif6F6FWAs1uak",
+              "reason": "token-shunt: Retry at offset=1 with limit=133 (floor half)."
+            },
+            {
+              "tool_use_id": "toolu_01RhnAnpYyF5R7ABmP2o2qpx",
+              "reason": "token-shunt: Retry at offset=1 with limit=133 (floor half)."
+            },
+            {
+              "tool_use_id": "toolu_01BeutFpbn2vxYd7VPdMF99v",
+              "reason": "token-shunt: Read budget exhausted; stop partial with stop_reason: budget_exhausted."
+            }
+          ]
+        },
+        {
+          "agent_id": "toolu_018f3VXbQiAgMCnKdTrPYmJC",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "reader-batch-evidence.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "child_status: reader toolu_012AaJXv8JXwbVwvSQoyqoCq lacks explicit status and stop_reason",
+        "child_status: reader toolu_01VSNst3bD7Kr1KDuvMn5nLD lacks explicit status and stop_reason"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_012AaJXv8JXwbVwvSQoyqoCq",
+          "attempts": 5,
+          "budget_consumed": 5,
+          "blocked_attempts": []
+        },
+        {
+          "agent_id": "toolu_01VSNst3bD7Kr1KDuvMn5nLD",
+          "attempts": 1,
+          "budget_consumed": 1,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "reader-bounds.auto",
+      "before": "fail",
+      "after": "fail",
+      "remaining_reasons": [
+        "child_status: reader toolu_015HgNdqM8FESizgRhyqYsYK lacks explicit status and stop_reason"
+      ],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_015HgNdqM8FESizgRhyqYsYK",
+          "attempts": 6,
+          "budget_consumed": 6,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01LE1NZckkYozWukmc1utsyk",
+              "reason": "token-shunt: Read must start at offset=351 with a positive limit."
+            },
+            {
+              "tool_use_id": "toolu_015XAnShcb69zRX9gPgJXKAu",
+              "reason": "token-shunt: Retry at offset=351 with limit=84 (floor half)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "retry-policy.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": [
+        {
+          "agent_id": "toolu_015rVJmKMYPB1XrWQcmTCF5k",
+          "attempts": 5,
+          "budget_consumed": 5,
+          "blocked_attempts": [
+            {
+              "tool_use_id": "toolu_01QQvSduJtLYxgxWia7XeeA6",
+              "reason": "token-shunt: Retry at offset=351 with limit=84 (floor half)."
+            }
+          ]
+        },
+        {
+          "agent_id": "toolu_014DqMyqX7kP9fCvjfDHayAa",
+          "attempts": 4,
+          "budget_consumed": 4,
+          "blocked_attempts": []
+        }
+      ]
+    },
+    {
+      "case": "worker-model-invalid.auto",
+      "before": "pass",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "writer-bounds.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    },
+    {
+      "case": "writer-verification-levels.auto",
+      "before": "fail",
+      "after": "pass",
+      "remaining_reasons": [],
+      "reader_attempts": []
+    }
+  ]
+}
