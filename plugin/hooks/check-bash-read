@@ -170,18 +170,26 @@ bash_reason() { # tool lines bytes read_bytes elapsed undetermined
 # --- reader call contract (spec 2026-09-14 §4) ---
 CONTRACT_FILE=$HOOK_DIR/reader-call-contract
 CONTRACT_PATHS=()
+CONTRACT_RAW=()
 
 contract_add_path() { # absolute-path size-or-empty
   local abs=$1
   [[ $abs == /* ]] || abs=$PWD/$abs
   local existing
-  for existing in ${CONTRACT_PATHS[@]+"${CONTRACT_PATHS[@]}"}; do
-    [[ $existing == "$abs "* ]] && return 0
+  for existing in ${CONTRACT_RAW[@]+"${CONTRACT_RAW[@]}"}; do
+    [[ $existing == "$abs" ]] && return 0
   done
+  CONTRACT_RAW+=("$abs")
+  # A newline or CR in the path would break out of its line in the rendered
+  # contract, indistinguishable from real contract text. Escape rather than
+  # drop: the path stays recognizable and confined to a single line.
+  local disp=$abs
+  disp=${disp//$'\r'/\\r}
+  disp=${disp//$'\n'/\\n}
   if [[ $2 =~ ^[0-9]+$ ]]; then
-    CONTRACT_PATHS+=("$abs ($2 B)")
+    CONTRACT_PATHS+=("$disp ($2 B)")
   else
-    CONTRACT_PATHS+=("$abs (size unknown)")
+    CONTRACT_PATHS+=("$disp (size unknown)")
   fi
 }
 
