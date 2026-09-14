@@ -1,5 +1,17 @@
 # reader プロトコル往復削減の実機比較（2026-09-14）
 
+**訂正 (fix round 1):** 当初の Step 4 判定スクリプト（ブリーフに書かれていたもの）は
+`gold_file` の有無だけで対象ケースを選んでおり、`expect.delegate.gold_confirmed` を
+見ていなかった。このため `gold_confirmed` 契約が課されていない2ケース
+（`auto-bulk-facts`、`auto-one-line`）にだけ誤ってチェックを適用し、実際に契約が
+課されている唯一のケース `auto-explicit-multifile`（gold をインライン宣言、
+`gold_file` 無し）を黙って対象外にしていた。最初の版はこの取り違えに気づかず、
+「`missing_gold` は測定アーティファクト」と全ケース一律に結論づけていたが、これは
+誤って適用した2ケースについてのみ正しい。訂正版は「gold_confirmed の内訳（訂正版）」
+節と「確認できたこと / まだ未確認のこと」節にある。新規の実機実行は行っていない
+（保存済み transcript の再判定のみ）。ゲート判定（`repeat.sh 3` に進まない）自体は
+Skill 読み込み基準で既に不成立だったため変わらない。
+
 ## 条件
 
 - ブランチ: `fix/design-impl-gaps-2026-09-13`、計測時 HEAD `1327bd3`
@@ -70,27 +82,73 @@ auto-one-line    skill  n=3 vals=[0.1201, 0.1198, 0.1098]
 | Skill 読み込みターン | 毎回1回 | 9回中1回 | rep1: auto-explicit-multifile skill で `Skill` ツール使用1回、他8回は0回 | 0回（初回定型・正常終了ケース限定） | **×** |
 | コスト（読み取り2ケース計、各周の対応差 skill−direct） | skill $0.2986 / direct $0.2492 | 中央値 **-0.0393**（skill優位） | rep1 -0.0198／rep2 -0.0554／rep3 -0.0393 | 差の中央値がマイナス、かつ3周すべて成立 | **○** |
 | コスト（`auto-one-line`、別掲） | skill ×2.98 | skill $0.1201/$0.1198/$0.1098、direct 一定 $0.175 前後、bare が $0.10〜$0.59 と不安定 | 上記 `vals=` 参照 | 参考値（合計に混ぜない） | 参考（今回は skill が direct より安い。bare の分散が著しい） |
-| gold_confirmed（パス省略） | 3周で15件 | 今回 **27実行中18実行（うち reader 対象2ケースが9+0=9件、`auto-one-line` が9件）で missing_gold あり、個別 gold 欠落は合計36件** | 下記参照 | 0件 | **×**（後述: 条件非依存の測定上の要因） |
+| gold_confirmed（パス省略、`expect.delegate.gold_confirmed: true` のケースのみ適用） | 3周で15件 | **`auto-explicit-multifile` の `bare`/`skill` 計6実行中6実行（3周とも）で `gold_confirmed_ok` が3件（`Notifiable`/`after_create`/`WelcomeEmailJob`）すべて欠落と判定** | 下記「gold_confirmed の内訳（訂正版）」参照 | 0件 | **×**（実測の失敗。原因は後述、Task 2〜8 由来かは未確定） |
 | モデル指定違反（reader 経路） | 3周で各11件 | **0件**（27実行すべて `requested` は `haiku` か空リスト、`unspecified_or_auto_model`/`first_call_not_haiku`/`sonnet_without_a_prior_attempt` いずれも検出なし） | `judge.agent_resolved_models` の resolved 値はすべて `claude-haiku-4-5-20251001` | 0件 | **○** |
 | deny 回数 / 注入バイト数 | 未計測 | `bare`: 全18実行中9(bare分)は deny=0/0B。`skill`: `auto-bulk-facts` 全周 deny=1/1112B、`auto-explicit-multifile` 全周 deny=0/0B、`auto-one-line` 全周 deny=1/1124B。`hooklog="ok"` の18実行すべてで計測できた（除外0件） | 上表参照 | 記録して削減幅と突き合わせ | **○**（計測完了、除外なし） |
 
-### gold_confirmed の内訳（Step 4、`judge.confirmed_items` / `judge.gold_confirmed_ok` を使用）
+### gold_confirmed の内訳（訂正版）
 
-`evals/compare/cases.json` を確認すると、今回計測に使った3ケースはいずれも
-`gold_confirmed` フィールドが未設定（`None`）で、`prompt_delegate`/`prompt_direct`
-（`cost_probe.py` が使うプロンプト）も「`confirmed:` 形式で答えよ」という指示を含んでいない
-（`confirmed:` 契約を明示するのは `skill` 条件でスキルが子エージェントに渡すワーカー向け
-レスポンス契約のみで、親の最終回答フォーマットは規定していない）。実際、
-`auto-bulk-facts` の transcript を見ると親の最終回答は箇条書きの平文で
-`confirmed:` 行を一切含まない（例: `- report_token() returns the string **"mgt_..."**`）。
-このため `judge.confirmed_items()` が0件を返し、`gold_confirmed_ok` は宣言された
-gold（`auto-bulk-facts` 3件、`auto-one-line` 1件、`auto-explicit-multifile` は
-`gold_file` 未設定のため0件）を **`direct`/`bare`/`skill` の3条件すべてで同一件数**
-欠落として報告する。`direct` 条件は今回のプラグイン変更と無関係であるにもかかわらず
-同じ欠落数を示しており、これは reader プロトコル往復削減（Task 2〜8）の副作用ではなく、
-**`cost_probe.py` のプロンプトが `confirmed:` フォーマットを要求していないことに起因する
-測定上のアーティファクト**と判断する。それでも Step 4 の指示どおり自前正規表現を使わず
-`judge.py` のヘルパーで機械的に数えた結果として、額面どおり記録する。
+**最初に提出した版の訂正について。** ブリーフ Step 4 のスクリプト（このタスクの
+著者が書いたもの、私が書いたものではない）は `case.get('gold_file')` だけで
+gold集合を組み立て、`case['gold']`（インライン宣言の gold）と
+`expect.delegate.gold_confirmed` を一切見ていなかった。その結果、実際には
+`gold_confirmed` 契約が課されていない2ケース（`auto-bulk-facts`、`auto-one-line`。
+どちらも `gold_file` はあるが `expect.delegate.gold_confirmed` は未設定）にだけ
+`gold_confirmed_ok` を適用し、契約が課されている唯一のケース
+（`auto-explicit-multifile`。`gold_file` は無く、gold をインライン
+`gold: ["Notifiable","after_create","WelcomeEmailJob"]` で宣言し、
+`expect.delegate.gold_confirmed: true`）を `gold_file` が無いという理由で
+黙って対象外にしていた。最初の版はこれに気づかず、全ケース一律「`confirmed:`
+形式を要求しない測定アーティファクト」と結論づけていたが、これは
+**チェック対象外だった2ケースについてのみ正しく、本来チェックすべきだった
+`auto-explicit-multifile` の結果を隠してしまっていた。**
+
+`evals/compare/run.sh` の spec 組み立て（run.sh:536-548 付近: `gold_file` が
+あればその内容を `spec.gold` に追加、無ければインラインの `gold` をそのまま使う）
+と `judge.py` の適用条件（`judge.py:1188`: `exp.get("gold_confirmed") and gold and
+not unsupported` の場合のみ `gold_confirmed_ok` を呼ぶ。`exp` は
+`spec["expect"].get(mode, spec["expect"].get("delegate", {}))`）を再現して、
+保存済みの transcript（新規実行なし、`evals/compare/tmp/cost-probe/20260914-204044/`
+の既存 transcript のみ）を再判定した。
+
+- `auto-bulk-facts`・`auto-one-line`: `gold_file` はあるが
+  `expect.delegate.gold_confirmed` は未設定 → `gold_confirmed_ok` は
+  **適用対象外**（`judge.py` 自身もこの2ケースにはこのチェックを課さない）。
+  よって最初の版が報告した「missing_gold 27実行中18実行」という数字は、
+  そもそも判定器が要求していないチェックを誤って全実行に適用した結果であり、
+  無効な測定である。
+- `auto-explicit-multifile`: `gold_file` は無く `gold` をインライン宣言、
+  `expect.delegate.gold_confirmed: true` → `direct` 以外の全実行が適用対象。
+  結果は **`bare` 3周・`skill` 3周、計6実行すべてで `gold_confirmed_ok` が
+  3件（`Notifiable`/`after_create`/`WelcomeEmailJob`）すべて欠落と判定
+  （3/3 失敗、`bare`/`skill` とも）**。`direct` はこのチェックの対象外
+  （`exp` が `expect.direct` にフォールバックし `gold_confirmed` を持たない）
+  なので判定していない。
+
+`skill` 条件3周の親最終回答（`judge.Transcript(...).final_text()`）を実際に
+確認すると、いずれも事実としては正確（`Notifiable` concern、`after_create`
+コールバック、`WelcomeEmailJob` の enqueue を正しく説明している）だが、
+すべて散文の段落・箇条書きであり、`confirmed: <絶対パス> — <事実>` という
+`judge.confirmed_items()` が要求する構造化形式を一度も使っていない
+（例 rep2: `"**Concern:** Notifiable — **Job:** WelcomeEmailJob"` のような
+太字強調はあるが `confirmed:` プレフィックスは無い）。`bare` 条件も同様。
+これは実際に測定された失敗であり、確認できたことの1つとして扱う。
+
+**この失敗が Task 2〜8（reader プロトコル往復削減）由来の退行なのか、
+それ以前から存在した既知の欠落なのかは、今回のデータだけでは判定できない。**
+今回は変更後の1点しか計測しておらず、同じ訂正版チェックを変更前のコミットに
+対して回した比較が無い。よって「プロトコル変更のせいではない」とも
+「プロトコル変更のせいだ」とも結論しない。
+
+`routing_checks.has_confirmed_claim` は今回使わなかった。この関数は
+「`confirmed:` 行に実質的な主張が一切無いこと」を検証する専用のヘルパーで
+（`unreadable_line_partial` が「読めなかった行について `unconfirmed:` だけを
+報告し、`confirmed:` に実質的な主張が無いこと」を確認するために使う否定的な
+チェック）、gold の引用元パスを `confirmed:` 項目から抽出して照合する今回の
+用途とは目的が逆であり、かつ `auto-explicit-multifile` は
+`allow_unreadable_line_partial` を宣言していないため `unreadable_line_partial`
+の対象でもない。gold 照合には `judge.confirmed_items()` /
+`judge.gold_confirmed_ok()` が正しいヘルパーであり、これを使った。
 
 ### モデル解決の3形状の確認
 
@@ -148,13 +206,19 @@ gold（`auto-bulk-facts` 3件、`auto-one-line` 1件、`auto-explicit-multifile`
   ばらつきか、`auto-explicit-multifile` のプロンプト（4ファイル境界確認を伴う
   ケースと異なり単純な3ファイル明示ケース）固有の何かが原因かは今回の
   データだけでは切り分けられない。
-- `gold_confirmed` の欠落は `direct`/`bare`/`skill` で同一件数発生しており、
-  `cost_probe.py` のプロンプトが `confirmed:` フォーマットを要求していない
-  ことに起因すると判断したが、これは本プローブの設計上の限界であって
-  Task 2〜8 の変更を裏付ける/否定する証拠にはならない。プロトコル変更の
-  「契約維持」を厳密に検証するには、`confirmed:` 形式を要求するプロンプトで
-  再計測するか、`evals/run.sh`（`gold_confirmed: true` を持つケース）の
-  結果を別途参照する必要がある。
+- `auto-bulk-facts`・`auto-one-line` の `missing_gold`（最初の版が報告した
+  18実行分）は `expect.delegate.gold_confirmed` が未設定のケースに誤って
+  チェックを適用した結果であり、無効な測定だったと訂正した。この2ケースに
+  ついては「`cost_probe.py` のプロンプトが `confirmed:` フォーマットを要求
+  していないため、そもそも判定器もこの契約を課していない」という説明で
+  正しい（上記「gold_confirmed の内訳（訂正版）」参照）。
+- **`auto-explicit-multifile`（`gold_confirmed: true` が実際に課されている
+  唯一のケース）は `bare`/`skill` 計6実行すべてで実際に失敗した。**
+  これが Task 2〜8 による退行か、変更前から存在した既知の欠落（親が
+  子エージェントの `confirmed:` 契約付き回答を受け取った後、自分の最終回答は
+  素の散文で書いてしまう、という構造）かは、**同じ訂正版チェックを
+  変更前のコミットの transcript に対して回した比較が無いため判定できない**。
+  次のセクションの未解決課題として残す。
 - 「未指定/`auto` → haiku に解決される」経路と「sonnet は再試行時のみ」の経路は、
   今回のプローブ設定（`--worker-model haiku` 固定・単発呼び出し）では
   一度も実際に踏まれておらず、「違反が0件だった」以上のことは言えない。
@@ -169,12 +233,14 @@ gold（`auto-bulk-facts` 3件、`auto-one-line` 1件、`auto-explicit-multifile`
 2. 読み取り2ケース合計の各周差（skill−direct）中央値がマイナス: **満たす**
    （`-0.0393`、3周とも負値）。
 3. `missing_gold` 0件かつ reader 経路のモデル指定違反0件: **満たさない**。
-   モデル指定違反は0件で満たすが、`missing_gold` は27実行中18実行で
-   非0（合計36件の gold 欠落）。上記のとおり `direct`/`bare`/`skill` で
-   同一件数であり、プロトコル変更由来ではなくプローブのプロンプト設計
-   （`confirmed:` 形式を要求していない）に起因すると判断されるが、
-   Step 4 のスクリプトを額面どおり実行した結果としては非0であり、
-   ゲート条件の文言（`missing_gold`（パス省略）0件）を機械的には満たさない。
+   モデル指定違反は0件で満たす。`missing_gold` は、`expect.delegate.gold_confirmed`
+   が実際に課されている唯一のケース `auto-explicit-multifile` で
+   `bare`/`skill` 計6実行すべて（3周とも）が失敗しており、非0。
+   （`auto-bulk-facts`・`auto-one-line` にはこのチェックはそもそも適用されない
+   ため対象外。訂正前の版はこの2ケースに誤って適用し、本来チェックすべき
+   `auto-explicit-multifile` を見落としていた。）この失敗が Task 2〜8 由来の
+   退行か既知の欠落かは今回のデータでは判定できないが、いずれにせよ
+   ゲート条件の文言（`missing_gold` 0件）を満たさない。
 4. 初回の定型・正常終了ケースで Skill 読み込み0回: **満たさない**。
    `skill` 条件9実行中1実行（`auto-explicit-multifile` rep1）で `Skill` ツールが
    使用された。
@@ -200,10 +266,23 @@ gold（`auto-bulk-facts` 3件、`auto-one-line` 1件、`auto-explicit-multifile`
   親が直接 Read している）と突き合わせて確認する。親がなぜ deny 経由の
   埋め込みテンプレートより先に `Skill` ツールや hooks ファイルを直接読みに
   行ったのか、プロンプトの誘導が不足していないかを調べる。
-- `cost_probe.py` のプロンプトに `confirmed:` フォーマット要求を追加するか、
-  `gold_confirmed_ok` を適用する対象を `cases.json` で `gold_confirmed: true`
-  が明示されたケースに限定するかを検討し、`missing_gold` 指標が
-  プロトコル変更を実際に反映するように計測方法を直す。
-- 上記2点を解消したうえで、あらためて3周（またはそれ以上）を回し、
-  ゲート条件5項目がすべて満たされることを確認してから `repeat.sh 3` の
-  判断を再度行う。
+- **`auto-explicit-multifile` の `gold_confirmed` 失敗（`bare`/`skill` 計6/6）が
+  Task 2〜8 由来の退行か、それ以前から存在した既知の欠落かを切り分ける。**
+  具体的な次の一手: Task 2〜8 の変更前のコミット（`reader-call-contract`
+  0f99da5 より前のチェックアウト）を、今回と同じ fixtures
+  （`evals/compare/tmp/cost-probe/20260914-204044/fixtures`）に対して
+  `auto-explicit-multifile` の `bare`/`skill` 条件で走らせ、今回訂正した
+  同じ `gold_confirmed_ok` チェック（`gold_file` ではなくインライン `gold` +
+  `expect.delegate.gold_confirmed` を見る版）を適用する。変更前でも同じ
+  3/3 失敗が出れば既知の欠落、変更後にのみ出るなら Task 2〜8 の退行と判定できる。
+- `cost_probe.py` のスクリプト自体を、run.sh と同じ spec 組み立て
+  （`gold_file` とインライン `gold` の両方をマージし、
+  `expect.delegate.gold_confirmed` を見て適用要否を判定する）に修正し、
+  今後同じ取り違えが起きないようにする。
+- `auto-explicit-multifile` に限らず、親が子エージェントの `confirmed:`
+  形式の回答を要約する際に構造化フォーマットを保持できていない（今回は
+  3/3 とも散文化していた）ことが、他の `gold_confirmed: true` ケース
+  （`evals/compare/cases.json` の他のケースや `evals/run.sh` の実行）でも
+  再現するか確認する。
+- 上記を解消し、必要なら追加の実機周を回したうえで、ゲート条件5項目が
+  すべて満たされることを確認してから `repeat.sh 3` の判断を再度行う。
