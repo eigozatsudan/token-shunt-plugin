@@ -157,6 +157,10 @@ CONTRACT_PATHS=()
 contract_add_path() { # absolute-path size-or-empty
   local abs=$1
   [[ $abs == /* ]] || abs=$PWD/$abs
+  local existing
+  for existing in ${CONTRACT_PATHS[@]+"${CONTRACT_PATHS[@]}"}; do
+    [[ $existing == "$abs "* ]] && return 0
+  done
   if [[ $2 =~ ^[0-9]+$ ]]; then
     CONTRACT_PATHS+=("$abs ($2 B)")
   else
@@ -190,6 +194,11 @@ contract_reason() { # lines bytes
   if [[ $1 == -1 ]]; then parts="bytes=${2}/${MIN_BYTES}"
   else parts="lines=${1}/${MIN_LINES}, bytes=${2}/${MIN_BYTES}"; fi
   printf 'File exceeds token-shunt thresholds (%s). For edits, use a targeted Read of the original that passes the hook.' "$parts"
+}
+
+scan_budget_reason() { # read_bytes elapsed_ms
+  printf 'Scan budget exceeded (read_bytes=%s/%s, ms=%s/%s); the size could not be established cheaply. For edits, use a targeted Read of the original that passes the hook.' \
+    "$1" "$SCAN_BUDGET_BYTES" "$2" "$SCAN_BUDGET_MS"
 }
 
 # --- common 4: worker allowlist (exact match only) ---
@@ -233,14 +242,26 @@ read -r fverdict flines fbytes frb fel <<<"$(full_file_verdict "$file_path")"
 limit=$(jq -r '.tool_input.limit // empty' <<<"$input")
 offset=$(jq -r '.tool_input.offset // empty' <<<"$input")
 
-# Size-exceeded denies route to delegation; scan-budget denies keep the
-# current wording until the worker-side limit check confirms continuation.
+# Size-exceeded denies route to delegation; byte-budget/scan-failure denies
+# do too (below), but a time-budget overrun keeps the current wording (§5).
 if [[ $fverdict == EXCEEDED ]]; then
   contract_add_path "$file_path" "$fbytes"
 fi
 if [[ -z $limit ]]; then
   un0=0; [[ $fverdict == UNDETERMINED ]] && un0=1
-  (( un0 )) && deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 1)"
+  if (( un0 )); then
+    # Byte-budget overruns and scan failures are delegable. A time-budget
+    # overrun is excluded by design 2026-09-14 5, so it keeps the current
+    # wording; the elapsed value distinguishes them without changing the
+    # verdict tuple.
+    if (( fel <= SCAN_BUDGET_MS )); then
+      sz=$(file_size "$file_path") || sz=""
+      contract_add_path "$file_path" "$sz"
+      deny_contract "$(scan_budget_reason "$frb" "$fel")" \
+                    "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 1)"
+    fi
+    deny "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 1)"
+  fi
   deny_contract "$(contract_reason "$flines" "$fbytes")" \
                 "$(deny_reason "$flines" "$fbytes" "$frb" "$fel" 0)"
 fi
@@ -259,7 +280,15 @@ fi
 
 read -r ex un rl rby rd el <<<"$(range_scan "$file_path" "$start" "$((10#$limit))")"
 if (( ex )); then
-  (( un )) && deny "$(deny_reason "$rl" "$rby" "$rd" "$el" 1)"
+  if (( un )); then
+    if (( el <= SCAN_BUDGET_MS )); then
+      sz=$(file_size "$file_path") || sz=""
+      contract_add_path "$file_path" "$sz"
+      deny_contract "$(scan_budget_reason "$rd" "$el")" \
+                    "$(deny_reason "$rl" "$rby" "$rd" "$el" 1)"
+    fi
+    deny "$(deny_reason "$rl" "$rby" "$rd" "$el" 1)"
+  fi
   deny_contract "$(contract_reason "$rl" "$rby")" \
                 "$(deny_reason "$rl" "$rby" "$rd" "$el" 0)"
 fi

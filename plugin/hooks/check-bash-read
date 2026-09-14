@@ -174,6 +174,10 @@ CONTRACT_PATHS=()
 contract_add_path() { # absolute-path size-or-empty
   local abs=$1
   [[ $abs == /* ]] || abs=$PWD/$abs
+  local existing
+  for existing in ${CONTRACT_PATHS[@]+"${CONTRACT_PATHS[@]}"}; do
+    [[ $existing == "$abs "* ]] && return 0
+  done
   if [[ $2 =~ ^[0-9]+$ ]]; then
     CONTRACT_PATHS+=("$abs ($2 B)")
   else
@@ -207,6 +211,11 @@ bash_contract_reason() { # tool lines bytes
   if [[ $2 == -1 ]]; then parts="bytes=${3}/${MIN_BYTES}"
   else parts="lines=${2}/${MIN_LINES}, bytes=${3}/${MIN_BYTES}"; fi
   printf "Bash '%s' on a large file exceeds token-shunt thresholds (%s). For edits, use a targeted Read of the original that passes the hook." "$1" "$parts"
+}
+
+scan_budget_reason() { # read_bytes elapsed_ms
+  printf 'Scan budget exceeded (read_bytes=%s/%s, ms=%s/%s); the size could not be established cheaply. For edits, use a targeted Read of the original that passes the hook.' \
+    "$1" "$SCAN_BUDGET_BYTES" "$2" "$SCAN_BUDGET_MS"
 }
 
 # One collection point for every Bash deny that can be delegated: list all
@@ -575,7 +584,18 @@ check_files_full() { # toolname; deny on first exceeding/undetermined target
     check_parse_budget
     read -r v nl rb rd el <<<"$(full_file_verdict "$f")"
     [[ $v == OK ]] && continue
-    [[ $v == UNDETERMINED ]] && deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 1)"
+    if [[ $v == UNDETERMINED ]]; then
+      # Byte-budget overruns and scan failures are delegable. A time-budget
+      # overrun is excluded by design 2026-09-14 5, so it keeps the current
+      # wording; the elapsed value distinguishes them without changing the
+      # verdict tuple.
+      if (( el <= SCAN_BUDGET_MS )); then
+        contract_add_all_files \
+          && deny_contract "$(scan_budget_reason "$rd" "$el")" \
+                           "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 1)"
+      fi
+      deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 1)"
+    fi
     contract_add_all_files \
       && deny_contract "$(bash_contract_reason "$tool" "$nl" "$rb")" \
                        "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 0)"
@@ -750,7 +770,14 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
         read -r ex un rl rby rd el <<<"$(tail_scan "$f" "$((10#$HT_VALUE))")"
       fi
       (( ex )) || continue
-      (( un )) && deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 1)"
+      if (( un )); then
+        if (( el <= SCAN_BUDGET_MS )); then
+          contract_add_all_files \
+            && deny_contract "$(scan_budget_reason "$rd" "$el")" \
+                             "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 1)"
+        fi
+        deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 1)"
+      fi
       contract_add_all_files \
         && deny_contract "$(bash_contract_reason "$tool" "$rl" "$rby")" \
                          "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 0)"
@@ -761,7 +788,15 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
     check_parse_budget
       # An explicit byte bound is sufficient regardless of the file size.
       (( 10#$HT_VALUE <= MIN_BYTES )) && continue
-      st=$(file_size "$f") && [[ $st =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      if ! { st=$(file_size "$f") && [[ $st =~ ^[0-9]+$ ]]; }; then
+        # No elapsed measurement has happened yet at this point in the loop;
+        # treat it as 0, which is always <= SCAN_BUDGET_MS -> templates as a
+        # scan failure (the file's size could not be established cheaply).
+        contract_add_all_files \
+          && deny_contract "$(scan_budget_reason 0 0)" \
+                           "$(bash_reason "$tool" 0 0 0 0 1)"
+        deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      fi
       if (( st > MIN_BYTES )); then
         contract_add_all_files \
           && deny_contract "$(bash_contract_reason "$tool" -1 "$st")" \
@@ -773,9 +808,19 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
       # establishes the size without buffering content or reading a long suffix.
       probe=$(( (MIN_BYTES < SCAN_BUDGET_BYTES ? MIN_BYTES : SCAN_BUDGET_BYTES) + 1 ))
       t0=$(now_ms)
-      actual=$(set -o pipefail; head -c "$probe" -- "$f" | wc -c) || deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      actual=$(set -o pipefail; head -c "$probe" -- "$f" | wc -c) || {
+        contract_add_all_files \
+          && deny_contract "$(scan_budget_reason 0 0)" \
+                           "$(bash_reason "$tool" 0 0 0 0 1)"
+        deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      }
       actual=${actual//[[:space:]]/}
-      [[ $actual =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      if ! [[ $actual =~ ^[0-9]+$ ]]; then
+        contract_add_all_files \
+          && deny_contract "$(scan_budget_reason 0 0)" \
+                           "$(bash_reason "$tool" 0 0 0 0 1)"
+        deny "$(bash_reason "$tool" 0 0 0 0 1)"
+      fi
       t1=$(now_ms); el=$((t1-t0))
       if (( actual > MIN_BYTES )); then
         contract_add_all_files \
@@ -783,7 +828,13 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
                            "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
         deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
       fi
-      (( actual > SCAN_BUDGET_BYTES || el > SCAN_BUDGET_MS )) && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 1)"
+      if (( actual > SCAN_BUDGET_BYTES )) && (( el <= SCAN_BUDGET_MS )); then
+        contract_add_all_files \
+          && deny_contract "$(scan_budget_reason "$actual" "$el")" \
+                           "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 1)"
+      fi
+      (( actual > SCAN_BUDGET_BYTES || el > SCAN_BUDGET_MS )) \
+        && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 1)"
     done
   fi
   pass

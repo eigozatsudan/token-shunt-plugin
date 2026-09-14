@@ -65,11 +65,11 @@ class RenderedDenyTests(unittest.TestCase):
         self.env = {k: v for k, v in os.environ.items()
                     if not k.startswith('TOKEN_SHUNT_') and k != 'CDPATH'}
 
-    def invoke(self, event, hook='check-file-size', hooks=None):
+    def invoke(self, event, hook='check-file-size', hooks=None, **extra_env):
         result = subprocess.run([str((hooks or HOOKS) / hook)],
                                 input=json.dumps(event), cwd=self.root,
-                                env=self.env, text=True, capture_output=True,
-                                timeout=30)
+                                env=dict(self.env, **extra_env), text=True,
+                                capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         if not result.stdout:
             return 'pass', ''
@@ -248,6 +248,34 @@ class BashRenderedDenyTests(RenderedDenyTests):
         for path in (self.big, second):
             self.assertIn('%s (%d B)' % (path, path.stat().st_size), reason)
 
+    def test_line_form_head_lists_every_target(self):
+        # A range (1..400) exceeding MIN_LINES (350) is determinate quickly:
+        # range_scan trips on line count long before the scan budget matters.
+        second = self.sized('big2.txt', b'y\n')
+        decision, reason = self.bash('head -n 400 big.txt big2.txt')
+        self.assertEqual(decision, 'deny')
+        self.assertTemplated(reason)
+        for path in (self.big, second):
+            self.assertIn('%s (%d B)' % (path, path.stat().st_size), reason)
+
+    def test_byte_form_probe_lists_every_target(self):
+        # The stat-reported size and the probed actual size can disagree
+        # (procfs, concurrent growth): stub `stat` to report a size under
+        # MIN_BYTES for every target so the probe (which reads real content,
+        # not stat) is what trips the actual>MIN_BYTES branch.
+        second = self.sized('big2.txt', b'y\n')
+        stub = self.root / 'bin'
+        stub.mkdir()
+        (stub / 'stat').write_text('#!/bin/sh\necho 100\n', encoding='utf-8')
+        (stub / 'stat').chmod(0o755)
+        decision, reason = self.bash(
+            'head -c 100000 big.txt big2.txt',
+            PATH='%s:%s' % (stub, self.env['PATH']))
+        self.assertEqual(decision, 'deny')
+        self.assertTemplated(reason)
+        for path in (self.big, second):
+            self.assertIn('%s (100 B)' % path, reason)
+
     def test_non_routing_denies_keep_their_wording(self):
         cases = {
             'heredoc': 'cat <<EOF\n$(cat big.txt)\nEOF',
@@ -267,6 +295,78 @@ class BashRenderedDenyTests(RenderedDenyTests):
                                        hook='check-bash-read')
         self.assertEqual(decision, 'deny')
         self.assertNotIn(MARKERS[0], reason)
+
+
+class ScanBudgetContractTests(unittest.TestCase):
+    """Scan-budget denies only exist for files under both size thresholds."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.tiny = self.root / 'tiny.txt'
+        self.tiny.write_bytes(b'abc\n')
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith('TOKEN_SHUNT_') and k != 'CDPATH'}
+
+    def run_hook(self, hook, tool_input, **extra_env):
+        result = subprocess.run(
+            [str(HOOKS / hook)],
+            input=json.dumps({'cwd': str(self.root), 'tool_input': tool_input}),
+            cwd=self.root, env=dict(self.env, **extra_env), text=True,
+            capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        if not result.stdout:
+            return 'pass', ''
+        out = json.loads(result.stdout)['hookSpecificOutput']
+        return out['permissionDecision'], out['permissionDecisionReason']
+
+    def test_byte_budget_templates_with_the_real_size(self):
+        for hook, tool_input in (('check-file-size', {'file_path': 'tiny.txt'}),
+                                 ('check-bash-read', {'command': 'cat tiny.txt'})):
+            with self.subTest(hook=hook):
+                decision, reason = self.run_hook(
+                    hook, tool_input, TOKEN_SHUNT_SCAN_BUDGET_BYTES='1')
+                self.assertEqual(decision, 'deny')
+                for marker in MARKERS:
+                    self.assertIn(marker, reason)
+                self.assertIn('Scan budget exceeded', reason)
+                self.assertNotIn('File exceeds token-shunt thresholds', reason)
+                self.assertIn('%s (%d B)' % (self.tiny, self.tiny.stat().st_size),
+                              reason)
+                self.assertNotIn('size unknown', reason)
+
+    def test_unobtainable_size_renders_size_unknown(self):
+        # Control the stat failure directly instead of hunting for a file type
+        # whose size cannot be read: a stub earlier on PATH makes file_size
+        # fail while the operand itself stays valid.
+        stub = self.root / 'bin'
+        stub.mkdir()
+        (stub / 'stat').write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+        (stub / 'stat').chmod(0o755)
+        decision, reason = self.run_hook(
+            'check-file-size', {'file_path': 'tiny.txt'},
+            PATH='%s:%s' % (stub, self.env['PATH']))
+        self.assertEqual(decision, 'deny')
+        self.assertIn(MARKERS[0], reason)
+        self.assertIn('%s (size unknown)' % self.tiny, reason)
+
+    def test_time_budget_is_not_templated(self):
+        decision, reason = self.run_hook(
+            'check-file-size', {'file_path': 'tiny.txt'},
+            TOKEN_SHUNT_SCAN_BUDGET_MS='0')
+        self.assertEqual(decision, 'deny')
+        self.assertNotIn(MARKERS[0], reason)
+        self.assertIn('Scan budget exceeded', reason)
+
+    def test_size_exceeded_file_never_reaches_the_scan_budget(self):
+        (self.root / 'big.txt').write_bytes(b'x\n' * 200000)
+        decision, reason = self.run_hook(
+            'check-file-size', {'file_path': 'big.txt'},
+            TOKEN_SHUNT_SCAN_BUDGET_BYTES='1')
+        self.assertEqual(decision, 'deny')
+        self.assertNotIn('Scan budget exceeded', reason)
+        self.assertIn('File exceeds token-shunt thresholds', reason)
 
 
 # New test classes from later tasks go ABOVE this block. unittest.main() must
