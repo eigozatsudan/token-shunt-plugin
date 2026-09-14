@@ -159,6 +159,116 @@ class RenderedDenyTests(unittest.TestCase):
         self.assertEqual(reason, self.legacy())
 
 
+class BashRenderedDenyTests(RenderedDenyTests):
+    """Same contract obligations on the Bash path, plus its non-routing denies."""
+
+    def bash(self, command, **kw):
+        return self.invoke({'cwd': str(self.root),
+                            'tool_input': {'command': command}},
+                           hook='check-bash-read', **kw)
+
+    # The Read-shaped cases in the parent class do not apply here.
+    def test_bad_limit_on_an_oversized_file_carries_the_contract(self):
+        self.skipTest('Read-only case')
+
+    def test_oversized_range_carries_the_contract(self):
+        self.skipTest('Read-only case')
+
+    def test_size_exceeded_read_carries_the_contract_and_real_size(self):
+        decision, reason = self.bash('cat big.txt')
+        self.assertEqual(decision, 'deny')
+        self.assertTemplated(reason)
+        self.assertIn('%s (%d B)' % (self.big, self.big.stat().st_size), reason)
+
+    def test_worker_read_still_passes(self):
+        decision, _ = self.invoke({'cwd': str(self.root),
+                                   'agent_type': 'token-shunt:bulk-reader',
+                                   'tool_input': {'command': 'cat big.txt'}},
+                                  hook='check-bash-read')
+        self.assertEqual(decision, 'pass')
+
+    def test_small_file_still_passes(self):
+        decision, _ = self.bash('cat small.txt')
+        self.assertEqual(decision, 'pass')
+
+    def legacy(self):
+        return LEGACY_BASH_SIZE % self.big.stat().st_size
+
+    def test_missing_contract_falls_back_to_the_current_wording(self):
+        alt = self.broken_contract('hooks1', lambda f: f.unlink())
+        decision, reason = self.bash('cat big.txt', hooks=alt)
+        self.assertEqual(decision, 'deny')
+        self.assertEqual(reason, self.legacy())
+
+    def test_unreadable_contract_falls_back_to_the_current_wording(self):
+        if os.geteuid() == 0:
+            self.skipTest('root ignores the unreadable mode')
+        alt = self.broken_contract('hooks2', lambda f: f.chmod(0o000))
+        self.addCleanup((alt / 'reader-call-contract').chmod, 0o644)
+        decision, reason = self.bash('cat big.txt', hooks=alt)
+        self.assertEqual(decision, 'deny')
+        self.assertEqual(reason, self.legacy())
+
+    def test_placeholderless_contract_falls_back(self):
+        alt = self.broken_contract(
+            'hooks3',
+            lambda f: f.write_text('no placeholders\n', encoding='utf-8'))
+        decision, reason = self.bash('cat big.txt', hooks=alt)
+        self.assertEqual(decision, 'deny')
+        self.assertEqual(reason, self.legacy())
+
+    def sized(self, name, unit):
+        path = self.root / name
+        path.write_bytes(unit * 200000)
+        return path
+
+    def test_every_resolved_path_is_listed_up_to_three(self):
+        second = self.sized('big2.txt', b'y\n')
+        third = self.sized('big3.txt', b'z\n')
+        decision, reason = self.bash('cat big.txt big2.txt big3.txt')
+        self.assertEqual(decision, 'deny')
+        for path in (self.big, second, third):
+            self.assertIn('%s (%d B)' % (path, path.stat().st_size), reason)
+
+    def test_four_or_more_paths_stay_on_the_batch_route(self):
+        # The worker contract reads at most 3 explicit paths per call, so a
+        # wider operand list is a batch decision for the skill, not a template.
+        for name, unit in (('big2.txt', b'y\n'), ('big3.txt', b'z\n'),
+                           ('big4.txt', b'w\n')):
+            self.sized(name, unit)
+        decision, reason = self.bash('cat big.txt big2.txt big3.txt big4.txt')
+        self.assertEqual(decision, 'deny')
+        self.assertNotIn(MARKERS[0], reason)
+        self.assertEqual(reason, self.legacy())
+
+    def test_bounded_head_lists_every_target(self):
+        second = self.sized('big2.txt', b'y\n')
+        decision, reason = self.bash('head -c 100000 big.txt big2.txt')
+        self.assertEqual(decision, 'deny')
+        for path in (self.big, second):
+            self.assertIn('%s (%d B)' % (path, path.stat().st_size), reason)
+
+    def test_non_routing_denies_keep_their_wording(self):
+        cases = {
+            'heredoc': 'cat <<EOF\n$(cat big.txt)\nEOF',
+            'expansion': 'cat $PWD/big.txt',
+            'unbounded_pipe': 'cat big.txt | head',
+            'parse_budget': 'echo ' + 'x' * 100000,
+        }
+        for name, command in cases.items():
+            with self.subTest(case=name):
+                decision, reason = self.bash(command)
+                self.assertEqual(decision, 'deny')
+                self.assertNotIn(MARKERS[0], reason)
+
+    def test_invalid_cwd_keeps_its_wording(self):
+        decision, reason = self.invoke({'cwd': 'relative',
+                                        'tool_input': {'command': 'cat big.txt'}},
+                                       hook='check-bash-read')
+        self.assertEqual(decision, 'deny')
+        self.assertNotIn(MARKERS[0], reason)
+
+
 # New test classes from later tasks go ABOVE this block. unittest.main() must
 # stay the last thing in this file: evals/run.sh executes this module
 # directly (python3 -B evals/test_reader_call_contract.py), so anything

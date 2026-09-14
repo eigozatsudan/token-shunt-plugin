@@ -8,11 +8,12 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
 fi
 export LC_ALL=C
 HOOK_NAME=check-bash-read
+HOOK_DIR=$(CDPATH= builtin cd -- "${BASH_SOURCE[0]%/*}" && pwd)
 
 # --- common 1-2: jq required, stdin must be JSON ---
 command -v jq >/dev/null 2>&1 || { printf 'token-shunt: jq is required\n' >&2; exit 2; }
 input=$(cat)
-jq -e . >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
+jq -se 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1 <<<"$input" || { printf 'token-shunt: invalid hook stdin JSON\n' >&2; exit 2; }
 
 # --- common 3: env thresholds ---
 int_env() {
@@ -44,9 +45,10 @@ now_ms() {
 
 hook_log() {
   [[ -n ${TOKEN_SHUNT_HOOK_LOG-} ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
   jq -c --arg h "$HOOK_NAME" --arg d "$1" --arg r "${2-}" \
     '{hook:$h,decision:$d,reason:$r,tool_use_id:.tool_use_id,session_id:.session_id,
-      command:.tool_input.command}' <<<"$input" >>"$TOKEN_SHUNT_HOOK_LOG" 2>/dev/null || true
+      command:.tool_input.command}' <<<"$input" | python3 "$HOOK_DIR/write-hook-log" 3>&2 2>/dev/null || true
 }
 pass() { hook_log pass ""; exit 0; }
 deny() {
@@ -165,12 +167,85 @@ bash_reason() { # tool lines bytes read_bytes elapsed undetermined
   fi
 }
 
+# --- reader call contract (spec 2026-09-14 §4) ---
+CONTRACT_FILE=$HOOK_DIR/reader-call-contract
+CONTRACT_PATHS=()
+
+contract_add_path() { # absolute-path size-or-empty
+  local abs=$1
+  [[ $abs == /* ]] || abs=$PWD/$abs
+  if [[ $2 =~ ^[0-9]+$ ]]; then
+    CONTRACT_PATHS+=("$abs ($2 B)")
+  else
+    CONTRACT_PATHS+=("$abs (size unknown)")
+  fi
+}
+
+# Fail closed to the current wording: a missing, unreadable, or malformed
+# source of truth must never drop the deny itself.
+render_contract() { # reason
+  local body paths
+  (( ${#CONTRACT_PATHS[@]} )) || return 1
+  body=$(cat -- "$CONTRACT_FILE" 2>/dev/null) || return 1
+  [[ $body == *'{REASON}'* && $body == *'{PATHS}'* ]] || return 1
+  printf -v paths 'paths:\n%s' "$(printf '%s\n' "${CONTRACT_PATHS[@]}")"
+  body=${body/'{REASON}'/"$1"}
+  body=${body/'{PATHS}'/"$paths"}
+  printf '%s' "$body"
+}
+
+# The template reason and the fallback reason are different texts: rendering
+# failure must return the current wording, never the shortened template reason.
+deny_contract() { # template-reason fallback-reason
+  local rendered
+  rendered=$(render_contract "$1") && deny "$rendered"
+  deny "$2"
+}
+
+bash_contract_reason() { # tool lines bytes
+  local parts
+  if [[ $2 == -1 ]]; then parts="bytes=${3}/${MIN_BYTES}"
+  else parts="lines=${2}/${MIN_LINES}, bytes=${3}/${MIN_BYTES}"; fi
+  printf "Bash '%s' on a large file exceeds token-shunt thresholds (%s). For edits, use a targeted Read of the original that passes the hook." "$1" "$parts"
+}
+
+# One collection point for every Bash deny that can be delegated: list all
+# resolved operands, not just the one that tripped the check. The worker
+# contract reads at most 3 explicit paths per call, so a wider operand list
+# is a batch decision and stays on the skill route (return 1 -> no template).
+contract_add_all_files() {
+  local other sz
+  (( ${#FILES[@]} >= 1 && ${#FILES[@]} <= 3 )) || return 1
+  for other in "${FILES[@]}"; do
+    check_parse_budget
+    sz=$(file_size "$other") || sz=""
+    contract_add_path "$other" "$sz"
+  done
+}
+
 # --- common 4: worker allowlist (bulk-reader only; code-writer has no Bash) ---
 # agent_type is harness-set at top level; tool_input is model-controlled.
 agent=$(jq -r '.agent_type // empty' <<<"$input")
 [[ $agent == token-shunt:bulk-reader ]] && pass
 
+# Resolve tool-relative operands against the harness-provided directory.
+if jq -e 'has("cwd")' >/dev/null <<<"$input"; then
+  cwd=$(jq -ejr '.cwd | select(type == "string" and startswith("/") and (contains("\u0000") | not))' <<<"$input" && printf '.') || deny 'Invalid hook cwd.'
+  cwd=${cwd%.}
+  CDPATH= builtin cd -- "$cwd" 2>/dev/null || deny 'Hook cwd is unavailable.'
+fi
+
+# Cooperative guard also bounds dense commands with many subprocess probes.
+# Individual blocked filesystem calls still require the harness timeout.
+PARSE_DEADLINE=$((SECONDS + 3))
+check_parse_budget() {
+  (( SECONDS < PARSE_DEADLINE )) || deny 'Bash inspection time budget exceeded. Split the command into smaller calls.'
+}
+
 cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
+# Bound all per-character Bash parsing before comment/heredoc masking.
+# Fixed (not model-configurable): oversized calls must be split by the caller.
+(( ${#cmd} <= 8192 )) || deny 'Bash command exceeds the 8192-byte inspection limit. Split it into smaller calls.'
 cmd="${cmd#"${cmd%%[![:space:]]*}"}"
 cmd="${cmd%"${cmd##*[![:space:]]}"}"
 [[ -z $cmd ]] && pass
@@ -178,10 +253,11 @@ cmd="${cmd%"${cmd##*[![:space:]]}"}"
 # Remove shell comments before either operator scanning or tokenization. Keep
 # newlines so a command following a comment remains a separate command.
 strip_comments() {
-  local s=$1 i=0 n=${#1} qs=0 c nxt word=0 j dq dc delim hd line end trim delimiter_quoted arithmetic_depth=0
+  local s=$1 i=0 n=${#1} qs=0 c nxt word=0 j dq dc delim hd line end trim body_i delimiter_quoted arithmetic_depth=0
   local -a heredocs=() heredoc_tabs=() heredoc_quoted=()
   COMMENT_FREE=''
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     c=${s:i:1}; nxt=${s:i+1:1}
     if (( qs == 0 )) && [[ $c == '#' ]] && (( !word )); then
       while (( i < n )) && [[ ${s:i:1} != $'\n' ]]; do ((i++)); done
@@ -216,7 +292,11 @@ strip_comments() {
                '\')
                  ((j++))
                  if [[ ${s:j:1} != $'\n' ]]; then delimiter_quoted=1; delim+=${s:j:1}; fi ;;
+               '`') deny 'Complex heredoc delimiter cannot be checked safely. Quote the entire delimiter.' ;;
                '$')
+                 if [[ ${s:j+1:1} == '(' ]]; then
+                   deny 'Complex heredoc delimiter cannot be checked safely. Quote the entire delimiter.'
+                 fi
                  if [[ ${s:j+1:1} == "'" || ${s:j+1:1} == '"' ]]; then
                    deny 'token-shunt: Expanded heredoc delimiters cannot be checked safely. Use a literal delimiter.'
                  fi
@@ -227,7 +307,13 @@ strip_comments() {
         hd=1; ((j++))
       done
       (( dq == 0 )) || deny "token-shunt: Unclosed heredoc delimiter cannot be checked safely."
-      if (( hd )); then heredocs+=("$delim"); heredoc_tabs+=("$trim"); heredoc_quoted+=("$delimiter_quoted"); fi
+      if (( hd )); then
+        heredocs+=("$delim"); heredoc_tabs+=("$trim"); heredoc_quoted+=("$delimiter_quoted")
+        # Delimiter words are never expanded by Bash. The body is masked, so
+        # normalize this header too rather than misclassifying literal $D.
+        COMMENT_FREE+="<<'TOKEN_SHUNT_HEREDOC'"
+        i=$j; word=1; continue
+      fi
     fi
     COMMENT_FREE+=$c
     if (( qs == 0 )) && [[ $c == $'\n' ]] && ((${#heredocs[@]})); then
@@ -246,6 +332,19 @@ strip_comments() {
             while [[ $line == $'\t'* ]]; do line=${line:1}; done
           fi
           [[ $line == "${heredocs[hd]}" ]] && break
+          if (( !heredoc_quoted[hd] )); then
+            # Quotes in a heredoc body are data. Only backslash protects $, `,
+            # and backslash; active substitutions execute before the command.
+            for ((body_i=0; body_i<${#line}; body_i++)); do
+              dc=${line:body_i:1}
+              if [[ $dc == '\' && ( ${line:body_i+1:1} == '$' || ${line:body_i+1:1} == '`' || ${line:body_i+1:1} == '\' ) ]]; then
+                ((body_i++)); continue
+              fi
+              if [[ $dc == '`' || ( $dc == '$' && ${line:body_i+1:1} == '(' ) ]]; then
+                deny 'Executable substitutions in an unquoted heredoc cannot be checked safely. Quote the delimiter.'
+              fi
+            done
+          fi
         done
       done
       heredocs=(); heredoc_tabs=(); heredoc_quoted=(); i=$j; word=0
@@ -288,6 +387,7 @@ is_isolating_target() {
   case $target in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*) return 1;; esac
   case $target in *'$'*|*'`'*|*'~'*|*'<'*|*'>'*|*'*'*|*'?'*|*'['*|*'('*|*')'*|*'{'*) return 1;; esac
   [[ $target -ef /dev/stdout || $target -ef /dev/stderr ]] && return 1
+  [[ $target -ef /dev/null ]] && return 0
   resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
   case $resolved in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*|*'pipe:['*|*'socket:['*) return 1;; esac
   [[ $target -ef /dev/null ]] && return 0
@@ -302,19 +402,22 @@ scan_ops() {
   local i=0 n=${#s} qs=0 c nxt prv
   S_PROCESS=0; S_EXPANSION=0; S_UNINTERP=0; PIPES=(); SEPS=(); CLEAN_GT=0; SPECIAL_GT=0
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     c=${s:i:1}
     prv=''; (( i > 0 )) && prv=${s:i-1:1}
     nxt=${s:i+1:1}
     case $qs in
       1) [[ $c == "'" ]] && qs=0 ;;
       2) if [[ $c == '"' ]]; then qs=0
-         elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then ((i++)); fi ;;
+         elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then ((i++))
+         elif [[ $c == '$' ]]; then S_EXPANSION=1; [[ $nxt == '(' ]] && S_UNINTERP=1
+         elif [[ $c == '`' ]]; then S_UNINTERP=1; fi ;;
       3) qs=0 ;;
       0) case $c in
          "\\") qs=3 ;;
          "'")  qs=1 ;;
          '"')  qs=2 ;;
-         '$')  [[ $nxt == \( ]] && S_UNINTERP=1 ;;
+         '$')  S_EXPANSION=1; [[ $nxt == \( ]] && S_UNINTERP=1 ;;
          '`')  S_UNINTERP=1 ;;
          '|')  if   [[ $nxt == '|' ]]; then SEPS+=("$i:2"); ((i++))
                elif [[ $nxt == '&' ]]; then PIPES+=("$i:2"); ((i++))
@@ -340,6 +443,7 @@ scan_ops() {
   local fd t
   tokenize "$s"
   for ((i=0; i<${#TOKS[@]}; i++)); do
+    (( i % 16 )) || check_parse_budget
     if [[ ${TOK_KINDS[i]} == input_redirect ]]; then
       fd=${TOKS[i]%%<*}
       [[ $fd =~ ^0*1$ ]] && SPECIAL_GT=1
@@ -366,6 +470,7 @@ tokenize() {
   TOKS=(); TOK_KINDS=(); TOK_EXP=()
   local expanded=0
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     c=${s:i:1}; nxt=${s:i+1:1}
     case $qs in
       1) [[ $c == "'" ]] && qs=0 || { cur+=$c; have=1; } ;;
@@ -373,7 +478,7 @@ tokenize() {
          elif [[ $c == '\' && ( $nxt == '"' || $nxt == '\' || $nxt == '$' || $nxt == '`' || $nxt == $'\n' ) ]]; then
            [[ $nxt != $'\n' ]] && cur+=$nxt
            ((i++))
-         else cur+=$c; have=1; fi ;;
+         else [[ $c == '$' ]] && expanded=1; cur+=$c; have=1; fi ;;
       3) cur+=$c; qs=0 ;;
       0) case $c in
          "\\") qs=3; have=1; quoted=1 ;;
@@ -404,7 +509,7 @@ tokenize() {
               fi
               TOK_EXP[${#TOKS[@]}]=0; TOKS+=("$redir"); TOK_KINDS+=("$kind"); cur=''; have=0; quoted=0; expanded=0 ;;
          [[:space:]]) (( have )) && { TOK_EXP[${#TOKS[@]}]=$expanded; TOKS+=("$cur"); TOK_KINDS+=(word); cur=''; have=0; quoted=0; expanded=0; } ;;
-         '*'|'?'|'['|'~'|'{') expanded=1; cur+=$c; have=1 ;;
+         '$'|'*'|'?'|'['|'~'|'{') expanded=1; cur+=$c; have=1 ;;
          *) cur+=$c; have=1 ;;
        esac ;;
     esac
@@ -421,6 +526,7 @@ strip_vars() {
   local -a prefix=() kinds=()
   VTOKS=(); VTOK_KINDS=(); COMMAND_EXPANSION=0
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     if [[ ${TOK_KINDS[i]} == word && ${TOKS[i]} =~ ^[A-Za-z_][A-Za-z0-9_]*\+?= ]]; then
       ((i++)); continue
     fi
@@ -453,6 +559,7 @@ split_at() { # str cuts... -> SPLIT
 collect_file_args() {
   FILES=(); local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     t=${TOKS[i]}
     if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]];  then eoo=1; ((i++)); continue; fi
@@ -465,9 +572,13 @@ collect_file_args() {
 check_files_full() { # toolname; deny on first exceeding/undetermined target
   local tool=$1 f v nl rb rd el
   for f in ${FILES[@]+"${FILES[@]}"}; do
+    check_parse_budget
     read -r v nl rb rd el <<<"$(full_file_verdict "$f")"
     [[ $v == OK ]] && continue
     [[ $v == UNDETERMINED ]] && deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 1)"
+    contract_add_all_files \
+      && deny_contract "$(bash_contract_reason "$tool" "$nl" "$rb")" \
+                       "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 0)"
     deny "$(bash_reason "$tool" "$nl" "$rb" "$rd" "$el" 0)"
   done
 }
@@ -477,6 +588,7 @@ ht_parse() {
   FILES=(); HT_OPTS=0; HT_FORM=''; HT_VALUE=''; HT_BAD=0
   local i=1 n=${#TOKS[@]} t eoo=0
   while (( i < n )); do
+    (( i % 128 )) || check_parse_budget
     t=${TOKS[i]}
     if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
     if (( !eoo )) && [[ $t == -- ]]; then eoo=1; ((i++)); continue; fi
@@ -629,8 +741,9 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
     check_files_full "$tool"; pass   # uninterpretable -> full threshold
   fi
   if [[ $HT_FORM == line ]]; then
-    (( 10#$HT_VALUE < 1 )) && { check_files_full "$tool"; pass; }
+    (( 10#$HT_VALUE == 0 )) && pass
     for f in ${FILES[@]+"${FILES[@]}"}; do
+    check_parse_budget
       if [[ $tool == head ]]; then
         read -r ex un rl rby rd el <<<"$(range_scan "$f" 1 "$((10#$HT_VALUE))")"
       else
@@ -638,14 +751,23 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
       fi
       (( ex )) || continue
       (( un )) && deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 1)"
+      contract_add_all_files \
+        && deny_contract "$(bash_contract_reason "$tool" "$rl" "$rby")" \
+                         "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 0)"
       deny "$(bash_reason "$tool" "$rl" "$rby" "$rd" "$el" 0)"
     done
   else
     for f in ${FILES[@]+"${FILES[@]}"}; do
+    check_parse_budget
       # An explicit byte bound is sufficient regardless of the file size.
       (( 10#$HT_VALUE <= MIN_BYTES )) && continue
       st=$(file_size "$f") && [[ $st =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
-      (( st > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$st" 0 0 0)"
+      if (( st > MIN_BYTES )); then
+        contract_add_all_files \
+          && deny_contract "$(bash_contract_reason "$tool" -1 "$st")" \
+                           "$(bash_reason "$tool" 0 "$st" 0 0 0)"
+        deny "$(bash_reason "$tool" 0 "$st" 0 0 0)"
+      fi
       # A small stat is not proof of a small output (procfs, concurrent growth).
       # Both head and tail emit min(C, actual file bytes), so a bounded prefix
       # establishes the size without buffering content or reading a long suffix.
@@ -655,7 +777,12 @@ run_head_tail() { # TOKS[0] is head|tail; per-target verdict
       actual=${actual//[[:space:]]/}
       [[ $actual =~ ^[0-9]+$ ]] || deny "$(bash_reason "$tool" 0 0 0 0 1)"
       t1=$(now_ms); el=$((t1-t0))
-      (( actual > MIN_BYTES )) && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
+      if (( actual > MIN_BYTES )); then
+        contract_add_all_files \
+          && deny_contract "$(bash_contract_reason "$tool" -1 "$actual")" \
+                           "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
+        deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 0)"
+      fi
       (( actual > SCAN_BUDGET_BYTES || el > SCAN_BUDGET_MS )) && deny "$(bash_reason "$tool" 0 "$actual" "$actual" "$el" 1)"
     done
   fi
@@ -686,7 +813,7 @@ stage_may_mutate() {
     fi
   done
   case $base in
-    cat|head|tail|less|more|wc|stat|true|false|pwd|echo|printf) return 1;;
+    cat|head|tail|less|more|wc|grep|stat|true|false|pwd|echo|printf) return 1;;
     cd) (( ${TRACK_CD:-0} && ! ${CD_UNCERTAIN:-0} )) && return 1;;
     '') return 1;;
   esac
@@ -695,7 +822,7 @@ stage_may_mutate() {
 
 check_command_expansion() {
   tokenize "$1"; strip_vars
-  (( COMMAND_EXPANSION )) && deny "Shell-expanded command words cannot be checked safely. Use a literal command name."
+  (( COMMAND_EXPANSION )) && deny "Shell-expanded command words cannot be checked safely. Use a literal command name or /token-shunt:bulk-reader."
   return 0
 }
 
@@ -720,12 +847,14 @@ check_stage_full() {
 # subshell contains run_head_tail's terminating pass without recording a
 # premature whole-hook pass; a deny keeps its normal JSON and log entry.
 check_stage_output() {
-  local base verdict
+  local base verdict CMD_EXPANSION
+  scan_ops "$1"; CMD_EXPANSION=$S_EXPANSION
   tokenize "$1"; strip_vars
   ((${#VTOKS[@]})) || return 0
   base=${VTOKS[0]##*/}
   case $base in
     head|tail)
+      (( ${CD_UNCERTAIN:-0} )) && deny 'A preceding cd cannot be resolved safely.'
       verdict=$(
         pass() { exit 0; }
         TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
@@ -793,7 +922,12 @@ if ((${#SEPS[@]})); then
   TRACK_CD=1
   # A cd in a branch/subshell/pipeline must not change the inspection cwd.
   # Disable tracking for such lists instead of guessing their shell semantics.
-  case $cmd in *'('*|*')'*|*'{'*|*'}'*) TRACK_CD=0;; esac
+  tokenize "$cmd"
+  for ((token_i=0; token_i<${#TOKS[@]}; token_i++)); do
+    [[ ${TOK_KINDS[token_i]} == operator && ( ${TOKS[token_i]} == '(' || ${TOKS[token_i]} == ')' ) ]] && TRACK_CD=0
+  done
+  # Brace grouping is outside the parser; quoted braces in paths are harmless.
+  (( CMD_EXPANSION )) && TRACK_CD=0
   for sep in "${SEPS[@]}"; do
     pos=${sep%%:*}; len=${sep##*:}; op=${cmd:pos:len}
     case $op in '||'|'&') TRACK_CD=0;; esac
@@ -831,9 +965,9 @@ if ((${#PIPES[@]})); then
   scan_ops "${SPLIT[last_idx]}"
   tail_uninterp=$S_UNINTERP
   tokenize "${SPLIT[last_idx]}"
-  # uninterpretable or empty tail command -> fail-closed on pipeline head (§10-4)
+  # No interpretable limiter: inspect every supported stage.
   if (( tail_uninterp )) || (( !${#TOKS[@]} )); then
-    check_stage_full "${SPLIT[0]}"
+    for stage in "${bounded_stages[@]}"; do check_stage_output "$stage"; done
     pass
   fi
   strip_vars
@@ -863,9 +997,13 @@ if ((${#PIPES[@]})); then
         deny "Piped '$base' output has no byte bound; use 'head -c N file' / 'tail -c N file' with explicit bytes or /token-shunt:bulk-reader."
       fi ;;
     cat|tee|less|more)
-      for stage in "${SPLIT[@]}"; do check_stage_full "$stage"; done
+      for stage in "${bounded_stages[@]}"; do check_stage_output "$stage"; done
       pass ;;
-    *) pass ;;   # unknown tail command: intended fail-open (§10-4, §15)
+    *)
+      # An unknown transformer is no proof of bounded output. Inspect every
+      # supported reader, including explicit files on intermediate stages.
+      for stage in "${bounded_stages[@]}"; do check_stage_output "$stage"; done
+      pass ;;
   esac
 fi
 
