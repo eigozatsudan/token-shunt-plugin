@@ -209,6 +209,10 @@ echo "== model selection regression checks =="
 python3 -B -m unittest discover -s "$ROOT/evals/compare" -p test_unreadable_and_model.py \
   && record model-selection-regressions 0 "" || record model-selection-regressions 1 "model selection regression failed"
 
+echo "== cost probe metric checks =="
+python3 -B -m unittest discover -s "$ROOT/evals/compare" -p test_cost_probe_metrics.py \
+  && record cost-probe-metrics 0 "" || record cost-probe-metrics 1 "cost probe metric regression failed"
+
 # These standalone suites are part of the result-accounted release checks.
 for suite in reader_contract reader_call_contract bash_finding_fixes doctor_record; do
   echo "== $suite regression checks =="
