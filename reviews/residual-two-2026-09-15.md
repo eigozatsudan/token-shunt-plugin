@@ -135,7 +135,7 @@ description 第1文の義務対象を Read から本文接触一般へ広げる�
 
 | # | 項目 | 状態 |
 |---|---|---|
-| 1 | `head_limit` の §26.5 / §11.6 基準不一致 | 方針確定（手段基準を維持）。文言案と影響範囲は `reviews/head-limit-proposal-2026-09-15.md` |
-| 2 | `4+ paths` と `file count alone is not a trigger` の整合性 | 設計確認事項、判断待ち |
+| 1 | `head_limit` の §26.5 / §11.6 基準不一致 | **完了**。本文整合・判定側検出・過去実行の検証まで（`reviews/head-limit-consistency-2026-09-15.md`） |
+| 2 | `4+ paths` と `file count alone is not a trigger` の整合性 | description を C 案に変更、検証ケース追加（`reviews/batch-count-consistency-2026-09-15.md`）。**動作は検証待ち** |
 | 3 | `gold_confirmed`（`*-explicit-multifile`） | 本プランとは独立の既存失敗 |
 | 4 | **検索前メタデータ確認の動作検証** | **検証待ち**（`83e1c91` を適用済みだが、`auto-edit-grep-location` の道具列が変わるかは未測定） |

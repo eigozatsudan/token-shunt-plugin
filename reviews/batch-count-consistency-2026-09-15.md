@@ -30,9 +30,11 @@ description に届いていない）。
   `auto-explicit-multifile` rep1 の親は、deny が出ていない状況で
   この節を根拠にスキルを開いている
   （`reviews/reader-protocol-reduction-2026-09-14.md`）。
-- 開けば本文 1. の `File count alone is not a trigger` を読むので、
-  ルートは正される。**誤読が直接ルート誤りになるのは、description だけで
-  委譲を決めた場合に限られる。**
+- 開けば本文 1. の `File count alone is not a trigger` に**到達できる**。
+  ただし**到達と遵守は別**であり、読んだうえで従うかは保証されない
+  （`head_limit` の件では、本文を読んだ実行が本文の形式要件を満たさなかった）。
+  言えるのは、description だけで委譲を決めた場合にはルート判断規則を
+  参照する機会がない、ということまでである。
 
 ## 3. 観測できているか — できていない
 
@@ -58,7 +60,7 @@ description に届いていない）。
 | 案 | 文言 | Δ | 結果 |
 |---|---|---|---|
 | A | 変更しない | 0 | 6997 |
-| **C（推奨）** | `how to batch (4+ paths) and cross-file relationships` | **−1** | **6996** |
+| **C（採用）** | `how to batch (4+ paths) and cross-file relationships` | **−1** | **6996** |
 | D | `splitting 4+ paths into batches, cross-file relationships` | +4 | 7001 ✗ |
 | B | `batching a delegation (4+ paths, cross-file relationships)` | +5 | 7002 ✗ |
 | E | `batch boundaries once delegating (4+ paths, ...)` | +16 | 7013 ✗ |
@@ -69,7 +71,53 @@ D・B・E は上限を超えるため、採るなら上限の移動か他所の�
 
 本文側は変更不要。1.（ルート）と 2.（分割）の役割分担は既に明確である。
 
-## 5. 検証方法
+## 5. 適用（2026-09-15）
+
+C 案を適用。SKILL.md **6997 → 6996 B**。
+
+```
+-  batch boundaries (4+ paths, cross-file relationships)
++  how to batch (4+ paths) and cross-file relationships
+```
+
+これは**誤読の余地を減らす修正であり、誤読の解消を保証するものではない**。
+本文側は未変更。
+
+検証ケース `auto-small-files-four` を `evals/compare/cases.json` に追加した。
+
+| 項目 | 値 |
+|---|---|
+| パス | `gen/small3/{a,b,c}.txt` + `gen/collide/alpha.py` |
+| 合計 | 234 B（≤ 16384） |
+| プロンプト | スキル名・`token-shunt:` を含まない |
+| modes | `direct`, `auto` |
+| 期待 | `agent_zero: true`、`parent_reads` 4件 |
+
+既存の4パスケース（`reader-batch-evidence` / `reader-batch-ambiguous`）は
+どちらも予算超過かつ明示委譲なので、**パス数だけで委譲したかを切り分けられる
+のはこのケースだけ**である。新しいフィクスチャは追加していない（既存の
+生成物を組み合わせた）。
+
+### 静的確認
+
+`evals/test_reader_call_contract.py` に2件追加（54 tests, OK）。
+
+- description が `how to batch (4+ paths)` を含み、
+  `batch boundaries (4+ paths` を含まないこと。本文の
+  `File count alone is not a trigger` が残っていること。
+- `auto-small-files-four` が 4パス以上・合計 ≤16384 B・
+  プロンプトにスキル名を含まない・両モードで `agent_zero` であること。
+
+`judge.py --selftest` 全件 ok、`./evals/run.sh` 125 pass / 0 fail、
+`evals/compare` の 272 tests OK。
+
+### 未検証
+
+**動作上の解消は未検証。** ケースを追加しただけで、まだ実行していない
+（課金を伴う3周測定は今回見送り）。検索前メタデータ確認と同じ扱いで
+「検証待ち」に残す。
+
+## 6. 検証方法
 
 静的検証では「誤読しないこと」は確かめられない。動作検証をするなら:
 

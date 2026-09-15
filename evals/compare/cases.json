@@ -806,6 +806,49 @@
       }
     },
     {
+      "id": "auto-small-files-four",
+      "suite": "B",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "fixtures": [
+        "gen/small3/a.txt",
+        "gen/small3/b.txt",
+        "gen/small3/c.txt",
+        "gen/collide/alpha.py"
+      ],
+      "gold": [
+        "ALPHA-111",
+        "BRAVO-222",
+        "CHARLIE-333",
+        "ALPHA-TOKEN"
+      ],
+      "prompt_direct": "What are the marker values in {FIX}/gen/small3/a.txt, {FIX}/gen/small3/b.txt and {FIX}/gen/small3/c.txt, and what is TOKEN in {FIX}/gen/collide/alpha.py? Read them and answer.",
+      "prompt_delegate": "What are the marker values in {FIX}/gen/small3/a.txt, {FIX}/gen/small3/b.txt and {FIX}/gen/small3/c.txt, and what is TOKEN in {FIX}/gen/collide/alpha.py?{WMHINT}",
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/gen/small3/a.txt",
+            "{FIX}/gen/small3/b.txt",
+            "{FIX}/gen/small3/c.txt",
+            "{FIX}/gen/collide/alpha.py"
+          ],
+          "agent_zero": true
+        },
+        "delegate": {
+          "parent_reads": [
+            "{FIX}/gen/small3/a.txt",
+            "{FIX}/gen/small3/b.txt",
+            "{FIX}/gen/small3/c.txt",
+            "{FIX}/gen/collide/alpha.py"
+          ],
+          "agent_zero": true
+        }
+      }
+    },
+    {
       "id": "auto-known-range",
       "suite": "B",
       "modes": [

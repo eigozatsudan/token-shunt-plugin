@@ -546,6 +546,38 @@ class SkillDocumentTests(unittest.TestCase):
         # earlier files_with_matches call licenses a later unbounded one.
         self.assertNotIn('break', src)
 
+    def test_path_count_reads_as_a_batching_question_not_a_route_trigger(self):
+        # The body says "File count alone is not a trigger"; the
+        # description must not imply the opposite to a parent that never
+        # opens it (reviews/batch-count-consistency-2026-09-15.md).
+        head = self.SKILL.read_text(encoding='utf-8').split('---')[1]
+        self.assertIn('how to batch (4+ paths)', head)
+        self.assertNotIn('batch boundaries (4+ paths', head)
+        body = ' '.join(self.SKILL.read_text(encoding='utf-8').split())
+        self.assertIn('File count alone is not a trigger', body)
+
+    def test_a_four_path_within_budget_case_exists_to_measure_it(self):
+        # Both existing 4-path cases are over budget AND name the skill,
+        # so neither can show whether count alone triggered a delegation.
+        # This case is the one that can: 4 paths, small, no skill named,
+        # agent_zero expected. Behaviour is unmeasured until it is run.
+        cases = json.loads(
+            (ROOT / 'evals/compare/cases.json').read_text(encoding='utf-8'))
+        case = next(c for c in cases['cases']
+                    if c['id'] == 'auto-small-files-four')
+        self.assertGreaterEqual(len(case['fixtures']), 4)
+        total = 0
+        for rel in case['fixtures']:
+            total += (ROOT / 'evals/compare/fixtures' / rel).stat().st_size
+        self.assertLessEqual(total, 16384, total)
+        for key in ('prompt_direct', 'prompt_delegate'):
+            self.assertNotIn('bulk-reader', case[key])
+            self.assertNotIn('token-shunt:', case[key])
+        for mode in ('direct', 'delegate'):
+            self.assertTrue(case['expect'][mode]['agent_zero'])
+            self.assertEqual(len(case['expect'][mode]['parent_reads']),
+                             len(case['fixtures']))
+
     def test_skill_stays_far_below_its_pre_reduction_size(self):
         # Was < 6144 while the description omitted the no-deny triggers.
         # v2 adds the metadata-first step and the whole-file/needed-I/O
