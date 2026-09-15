@@ -252,7 +252,9 @@ def decide_worker(event):
     rec['checks'] = {'child_items': check['status']}
     rec['items'] = len(check['items'])
     rec['unconfirmed'] = len(demoted)
-    if demoted and not check['usable']:
+    claims = [l for l in check['items'] if not rc.vacuous_item(l)]
+    rec['claims'] = len(claims)
+    if demoted and not check['usable'] and not claims:
         # The worker said, in the contracted form, that it could not verify
         # what it was asked for -- an unreadable file, a line past the token
         # limit. Demanding a `confirmed:` line here would be demanding it
@@ -260,6 +262,12 @@ def decide_worker(event):
         # a placeholder head (`confirmed: none`, `confirmed: (none)`): the
         # placeholder is not a citation, and what the report actually says
         # is that nothing could be confirmed.
+        #
+        # It does not cover a report that states real facts without usable
+        # paths and adds an `unconfirmed:` line about something else. That
+        # worker has the facts and wrote them outside the contract, which
+        # is exactly what a send-back repairs (observed live 2026-09-15:
+        # three elided-path items plus one honest `unconfirmed:` line).
         rec.update(outcome=NO_BLOCK,
                    reason='worker reported only unconfirmed items')
         return rec, {}

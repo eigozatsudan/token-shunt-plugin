@@ -86,6 +86,29 @@ def citation(line):
     return m.group(1).rstrip('.,;:)')
 
 
+# A head that states no file: `confirmed:` alone, or a placeholder where a
+# path belongs. Such an item claims nothing, so it is not a citation the
+# worker failed to write -- it is the worker saying it confirmed nothing.
+_VACUOUS_HEAD = re.compile(r"^\(?\s*(none|n/?a|nothing|unknown)\s*\)?$", re.I)
+
+
+def vacuous_item(line):
+    """Does this `confirmed:` line assert anything at all?
+
+    Separating this from `citation()` matters at the worker hook: a report
+    whose only confirmed line is `confirmed: none` must not be sent back
+    for a missing path, while a report of real facts written without paths
+    must be.
+    """
+    body = line.strip()
+    if body.lower().startswith(CONFIRMED):
+        body = body[len(CONFIRMED):].strip()
+    if not body:
+        return True
+    head = re.split(r'\s+[\u2014\u2013]\s+| - ', body, maxsplit=1)[0].strip()
+    return bool(_VACUOUS_HEAD.match(head))
+
+
 def classify_path(path, exists=os.path.exists):
     """OK / VIOLATION (elided or not absolute) / UNDETERMINED (gone).
 

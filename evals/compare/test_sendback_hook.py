@@ -500,6 +500,19 @@ class WorkerTests(HookFixture):
                 self.assertEqual(rec['outcome'], sh.NO_BLOCK)
                 self.assertEqual(out, {})
 
+    def test_real_items_without_paths_are_not_excused_by_an_unconfirmed_line(self):
+        # Observed live 2026-09-15: three elided-path items plus one honest
+        # `unconfirmed:` line about a file outside the request. The worker
+        # holds the facts; only the form is wrong, so it is sent back.
+        rec, out = sh.decide(self.worker_event(
+            'confirmed: /tmp/.../user.rb — after_create :send_welcome_email\n'
+            'confirmed: /tmp/.../notifiable.rb — concern Notifiable\n'
+            'unconfirmed: UserMailer was not among the paths given'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertEqual(rec['claims'], 2)
+        self.assertEqual(rec['unconfirmed'], 1)
+        self.assertIn('absolute path', out['reason'])
+
     def test_a_usable_item_beside_an_unconfirmed_one_is_still_judged(self):
         rec, out = sh.decide(self.worker_event(
             self.line + '\nunconfirmed: /srv/two.json — unreadable line'))

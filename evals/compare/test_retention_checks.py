@@ -31,6 +31,24 @@ def item(path, fact):
     return 'confirmed: %s — %s' % (path, fact)
 
 
+class VacuousItemTests(unittest.TestCase):
+    """`confirmed: none` claims nothing; a pathless fact claims something."""
+
+    def test_placeholder_and_empty_heads_are_vacuous(self):
+        for line in ('confirmed:', 'confirmed: none', 'confirmed: (none)',
+                     'confirmed: N/A',
+                     'confirmed: none — the line exceeds the read limit'):
+            with self.subTest(line=line):
+                self.assertTrue(rc.vacuous_item(line))
+
+    def test_a_stated_fact_is_never_vacuous(self):
+        for line in ('confirmed: %s — one' % A,
+                     'confirmed: user.rb — class User',
+                     'confirmed: /tmp/.../user.rb — class User'):
+            with self.subTest(line=line):
+                self.assertFalse(rc.vacuous_item(line))
+
+
 class ConfirmedLineTests(unittest.TestCase):
     def test_list_markers_and_indentation_are_stripped(self):
         text = '  - confirmed: %s — one\n* confirmed: %s — two\n' % (A, B)
