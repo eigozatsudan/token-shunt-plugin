@@ -34,7 +34,25 @@ _PARTIAL = re.compile(r'PARTIAL output|stopped at its \d+-turn limit')
 _NEUTRALIZED = re.compile(r'^\[harness:[^\]]*\]\s*', re.S)
 
 
-def read_jsonl(path):
+class TooLarge(Exception):
+    """A session file above the caller's byte cap.
+
+    Raised instead of parsing: this module runs inside a Stop hook, at
+    every turn end, and a session grows without bound. Refusing a file is
+    the caller's cue to leave the parent alone, never to judge it.
+    """
+
+    def __init__(self, path, size, cap):
+        super().__init__('%s is %d bytes, over the %d byte cap'
+                         % (path, size, cap))
+        self.path, self.size, self.cap = path, size, cap
+
+
+def read_jsonl(path, max_bytes=None):
+    if max_bytes is not None:
+        size = os.path.getsize(path)
+        if size > max_bytes:
+            raise TooLarge(path, size, max_bytes)
     rows = []
     with open(path, encoding='utf-8') as fh:
         for line in fh:
@@ -88,10 +106,10 @@ def agent_tool_uses(rows):
     return out
 
 
-def worker_final_text(path):
+def worker_final_text(path, max_bytes=None):
     """The last text block a worker emitted in its own transcript."""
     last = None
-    for entry in read_jsonl(path):
+    for entry in read_jsonl(path, max_bytes):
         if entry.get('type') != 'assistant':
             continue
         for block in _content(entry) or []:
@@ -116,15 +134,19 @@ def _clean_result(result):
     return text, partial
 
 
-def launches(session_path, agent_type=None):
+def launches(session_path, agent_type=None, rows=None, max_bytes=None):
     """Correlate notification, worker transcript and meta for each launch.
 
     `agent_id` ties all three together: it is the notification's `task-id`,
     the `subagents/agent-<id>.jsonl` basename, and the name of the
     `<output-file>`. `tool_use_id` ties that back to the parent's own Agent
     call, which is what `.meta.json` records.
+
+    `rows` is the already-parsed session; pass it to avoid re-reading a file
+    the caller has in hand. Worker transcripts are still read here, each
+    under the same `max_bytes` cap.
     """
-    rows = read_jsonl(session_path)
+    rows = read_jsonl(session_path, max_bytes) if rows is None else rows
     base = session_path[:-6] if session_path.endswith('.jsonl') \
         else session_path
     tool_uses = agent_tool_uses(rows)
@@ -170,23 +192,31 @@ def launches(session_path, agent_type=None):
                'notifications': len(notes),
                'status': final_note['status'] if final_note
                          else (notes[-1]['status'] if notes else None)}
-        rec.update(_reconcile(final_note, transcript))
+        rec.update(_reconcile(final_note, transcript, max_bytes))
         out.append(rec)
     if agent_type is not None:
         out = [r for r in out if r['agent_type'] == agent_type]
     return out
 
 
-def _reconcile(final_note, transcript):
+def _reconcile(final_note, transcript, max_bytes=None):
     """Compare the two copies of a worker's answer.
 
     'complete'      both agree (or only one exists and carries no warning)
     'partial'       the harness marked the output incomplete
     'mismatch'      the copies differ for an unexplained reason
-    'unavailable'   neither source produced text
+    'unavailable'   neither source produced text, or one is unreadable
     """
     noted, partial = _clean_result(final_note['result'] if final_note else None)
-    written = worker_final_text(transcript) if transcript else None
+    try:
+        written = worker_final_text(transcript, max_bytes) if transcript else None
+    except TooLarge as exc:
+        # One copy of the worker's answer cannot be read, so the two cannot
+        # be compared. Reporting it unavailable keeps the parent unjudged;
+        # falling back to the notification alone would drop the cross-check.
+        return {'text': None, 'completeness': 'unavailable',
+                'detail': 'worker transcript over the size cap (%d bytes)'
+                          % exc.size}
     if partial:
         # The worker stopped early, so what the parent received is not the
         # answer it was owed. Retention cannot be judged against it.
@@ -223,7 +253,7 @@ def _is_interruption(entry):
     return False
 
 
-def final_answer(session_path):
+def final_answer(session_path, max_bytes=None):
     """The text the parent ended its turn with.
 
     Not simply the last assistant text: a parent narrates between tool calls
@@ -238,7 +268,7 @@ def final_answer(session_path):
     tool result, an MCP end-turn or a loop tick -- the endings whose
     Stop-hook block is discarded -- so the two must not be equated here.
     """
-    return final_answer_from_rows(read_jsonl(session_path))
+    return final_answer_from_rows(read_jsonl(session_path, max_bytes))
 
 
 def final_answer_from_rows(rows):
@@ -267,12 +297,20 @@ def final_answer_from_rows(rows):
     return {'text': '\n'.join(texts), 'status': 'ok', 'detail': ''}
 
 
-def check_inputs(session_path, agent_type='token-shunt:bulk-reader'):
-    """Worker texts and final answer, or None where they cannot be had."""
-    runs = launches(session_path, agent_type=agent_type)
+def check_inputs(session_path, agent_type='token-shunt:bulk-reader',
+                 rows=None, max_bytes=None):
+    """Worker texts and final answer, or None where they cannot be had.
+
+    Parses the session once: `rows`, when given, is used for both the
+    launches and the final answer.
+    """
+    if rows is None:
+        rows = read_jsonl(session_path, max_bytes)
+    runs = launches(session_path, agent_type=agent_type, rows=rows,
+                    max_bytes=max_bytes)
     usable = [r for r in runs if r['text'] is not None]
     blocked = [r for r in runs if r['text'] is None]
-    final = final_answer(session_path)
+    final = final_answer_from_rows(rows)
     return {'launches': runs,
             'child_texts': [r['text'] for r in usable] if usable and not blocked
                            else None,

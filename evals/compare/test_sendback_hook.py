@@ -262,3 +262,75 @@ class EventKindTests(HookFixture):
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
         self.assertEqual(rec['reason'], 'not a parent Stop')
         self.assertEqual(out, {})
+
+
+class SizeTests(HookFixture):
+    """The cap bounds the work a turn end pays for (decision §3 item 2)."""
+
+    def test_an_oversized_session_leaves_the_parent_alone(self):
+        self.session_with('Here is a summary with no citations.')
+        os.environ[sh.SIZE_ENV] = '10'
+        self.addCleanup(os.environ.pop, sh.SIZE_ENV, None)
+        rec, out = sh.decide(self.event())
+        # Same session that blocks under the default cap.
+        self.assertEqual(rec['outcome'], sh.TOO_LARGE)
+        self.assertGreater(rec['size'], rec['cap'])
+        self.assertEqual(out, {})
+
+    def test_the_default_cap_is_used_for_an_unusable_setting(self):
+        for raw in ('', 'plenty', '0', '-1'):
+            with self.subTest(raw=raw):
+                os.environ[sh.SIZE_ENV] = raw
+                self.addCleanup(os.environ.pop, sh.SIZE_ENV, None)
+                self.assertEqual(sh.max_bytes(), sh.DEFAULT_MAX_BYTES)
+
+    def test_an_oversized_worker_transcript_is_undetermined(self):
+        # One copy of the worker's answer is unreadable, so the two cannot
+        # be compared -- which is not evidence the parent dropped anything.
+        self.session_with('Here is a summary with no citations.')
+        sub = os.path.join(self.dir, 'sess', 'subagents')
+        big = os.path.join(sub, 'agent-%s.jsonl' % ts.AGENT)
+        with open(big, 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(ts.assistant(ts.text('x' * 4096))) + '\n')
+        os.environ[sh.SIZE_ENV] = str(os.path.getsize(self.session) + 1)
+        self.addCleanup(os.environ.pop, sh.SIZE_ENV, None)
+        rec, out = sh.decide(self.event())
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertIn('unobtainable', rec['reason'])
+        self.assertEqual(out, {})
+
+
+class SingleParseTests(HookFixture):
+    """The session file is read once per invocation, block path included."""
+
+    def counted(self):
+        reads = []
+        real = sh.se.read_jsonl
+
+        def spy(path, max_bytes=None):
+            reads.append(path)
+            return real(path, max_bytes)
+
+        sh.se.read_jsonl = spy
+        self.addCleanup(setattr, sh.se, 'read_jsonl', real)
+        return reads
+
+    def test_a_block_reads_the_session_once(self):
+        self.session_with('Here is a summary with no citations.')
+        reads = self.counted()
+        rec, _ = sh.decide(self.event())
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertEqual(reads.count(self.session), 1)
+
+    def test_the_baseline_comes_from_that_one_parse(self):
+        self.session_with('Here is a summary with no citations.')
+        rec, _ = sh.decide(self.event())
+        self.assertEqual(rec['baseline'],
+                         sh.parent_progress(sh.se.read_jsonl(self.session)))
+
+    def test_a_no_block_reads_the_session_once(self):
+        self.session_with('Findings.\n' + self.line)
+        reads = self.counted()
+        rec, _ = sh.decide(self.event())
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(reads.count(self.session), 1)

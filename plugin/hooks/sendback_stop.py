@@ -25,7 +25,16 @@ import sendback_retention as rc
 import sendback_session as se
 
 LOG_ENV = 'SENDBACK_TRIAL_LOG'
+SIZE_ENV = 'TOKEN_SHUNT_SESSION_MAX_BYTES'
 
+# The hook runs at every turn end and a session file only grows. The cap
+# bounds the worst case rather than excluding ordinary work: the largest
+# session on hand when this was written was 17 MB, which parses once in
+# about 0.15 s, so 64 MB is roughly four times the observed ceiling and
+# still well under a second. Over it, the parent is left alone.
+DEFAULT_MAX_BYTES = 64 * 1024 * 1024
+
+TOO_LARGE = 'too_large'
 BLOCKED = 'blocked'
 NO_BLOCK = 'no_block'
 SUPPRESSED = 'reblock_suppressed'
@@ -132,6 +141,15 @@ def final_from_event(event, rows):
     return None, 'final answer not identified'
 
 
+def max_bytes():
+    raw = os.environ.get(SIZE_ENV)
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_BYTES
+    return val if val > 0 else DEFAULT_MAX_BYTES
+
+
 def block_reason(lost):
     head = ('Your answer dropped lines the reader worker confirmed. Restate '
             'every line below verbatim, each on its own line, before you '
@@ -169,9 +187,16 @@ def decide(event):
     if not path or not os.path.isfile(path):
         rec.update(outcome=NO_BLOCK, reason='no transcript to read')
         return rec, {}
-    rows = se.read_jsonl(path)
+    cap = max_bytes()
+    try:
+        # One parse of the session, reused for the final answer, the worker
+        # correlation and the resumption baseline.
+        rows = se.read_jsonl(path, cap)
+        got = se.check_inputs(path, rows=rows, max_bytes=cap)
+    except se.TooLarge as exc:
+        rec.update(outcome=TOO_LARGE, reason=str(exc), size=exc.size, cap=cap)
+        return rec, {}
     final, source = final_from_event(event, rows)
-    got = se.check_inputs(path)
     checks = rc.run_all(got['child_texts'], final)
     rec['checks'] = {k: v['status'] for k, v in checks.items()}
     rec['final_identified'] = final is not None
@@ -193,7 +218,7 @@ def decide(event):
     lost = lr['demoted'] + lr['altered'] + lr['dropped']
     rec.update(outcome=BLOCKED, reason=lr['reason'], lost_lines=len(lost),
                kept_lines=len(lr['kept']),
-               baseline=parent_progress(se.read_jsonl(path)))
+               baseline=parent_progress(rows))
     return rec, {'decision': 'block', 'reason': block_reason(lost)}
 
 
