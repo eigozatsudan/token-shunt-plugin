@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Serialize bulk-reader Reads and enforce six attempts and exact continuation.
 
-State is private to (session_id, agent_id), contains metadata only, and remains
-for the OS temporary-directory lifecycle so resumed invocations cannot reset it.
+State is private to (session_id, agent_id) and contains metadata only. Resumed
+invocations share it while retained; temporary-file deletion can reset it.
+An expired pending result stops the invocation; elapsed time cannot prove the
+underlying Read has finished and never authorizes another concurrent Read.
 """
 import fcntl
 import hashlib
@@ -12,6 +14,38 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import time
+
+
+PENDING_SECONDS = 300
+LOCK_WAIT_SECONDS = 0.25
+
+
+def recover_pending(state):
+    pending = state.get('pending')
+    if not pending:
+        return
+    now = time.time()
+    # Legacy metadata gets a full grace period, never immediate abandonment.
+    if 'started_at' not in pending:
+        pending['started_at'] = now
+    if now - pending['started_at'] >= PENDING_SECONDS:
+        # A missing result provides no safe continuation endpoint.
+        state['paths'][pending['path']]['stopped'] = True
+        state['pending'] = None
+        state['missing_result'] = True
+
+
+def lock_state(source):
+    deadline = time.monotonic() + LOCK_WAIT_SECONDS
+    while True:
+        try:
+            fcntl.flock(source, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise ValueError('reader state is busy; issue Reads serially')
+            time.sleep(0.01)
 
 
 def transition(state, event):
@@ -23,9 +57,13 @@ def transition(state, event):
     if not call:
         raise ValueError('missing tool_use_id')
     if kind == 'PreToolUse':
+        recover_pending(state)
         if state['calls'] >= 6:
             return 'Read budget exhausted; stop partial with stop_reason: budget_exhausted.'
         state['calls'] += 1  # Refused attempts also consume budget.
+        if state.get('missing_result'):
+            return ('A Read result is missing after five minutes; stop this invocation partial '
+                    'without guessing its endpoint. Use a new invocation for further work.')
         if state.get('pending'):
             return 'A Read is still pending. Issue Reads serially; do not read ahead.'
         path = inp.get('file_path')
@@ -43,7 +81,8 @@ def transition(state, event):
             return 'Read must start at offset=%s with a positive limit.' % cursor['next']
         if 'retry' in cursor and limit != cursor['retry']:
             return 'Retry at offset=%s with limit=%s (floor half).' % (cursor['next'], cursor['retry'])
-        state['pending'] = {'id': call, 'path': path, 'offset': offset, 'limit': limit}
+        state['pending'] = {'id': call, 'path': path, 'offset': offset, 'limit': limit,
+                            'started_at': time.time()}
         return None
     pending = state.get('pending')
     # Denied parallel/invalid calls must not finalize another outstanding Read.
@@ -98,7 +137,7 @@ def main():
         raise ValueError('reader state directory must be private and owned by this user')
     fd = os.open(root / (key + '.json'), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'r+') as source:
-        fcntl.flock(source, fcntl.LOCK_EX)
+        lock_state(source)
         raw = source.read()
         state = json.loads(raw) if raw else {'calls': 0, 'paths': {}}
         reason = transition(state, event)

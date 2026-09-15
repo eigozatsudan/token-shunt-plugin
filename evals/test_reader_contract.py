@@ -9,6 +9,9 @@ import subprocess
 import shutil
 import tempfile
 import uuid
+import fcntl
+import hashlib
+from unittest.mock import patch
 
 path = Path(__file__).resolve().parents[1] / 'plugin/hooks/check-reader-contract'
 loader = importlib.machinery.SourceFileLoader('reader_contract', str(path))
@@ -58,6 +61,42 @@ class ReaderContractTests(unittest.TestCase):
         self.post()
         self.assertIsNone(self.pre(id='next', offset=176))
 
+    def test_orphan_expiry_stops_invocation_and_preserves_budget(self):
+        with patch.object(hook.time, 'time', return_value=1000):
+            self.pre()
+        with patch.object(hook.time, 'time', return_value=1299):
+            self.assertIn('still pending', self.pre('live', path='/b'))
+        with patch.object(hook.time, 'time', return_value=1300):
+            self.assertIn('stop this invocation partial', self.pre('other', path='/b'))
+        self.assertEqual(3, self.state['calls'])
+        self.assertTrue(self.state['paths']['/a']['stopped'])
+        self.assertEqual(1, self.state['paths']['/a']['next'])
+        self.post('r')  # A late orphan result cannot reopen a stopped invocation.
+        self.assertIsNone(self.state['pending'])
+        self.assertEqual(1, self.state['paths']['/a']['next'])
+        self.assertIn('stop this invocation partial', self.pre('old', path='/a'))
+        self.assertNotIn('/b', self.state['paths'])
+
+    def test_legacy_pending_gets_full_grace_period(self):
+        self.pre()
+        del self.state['pending']['started_at']
+        with patch.object(hook.time, 'time', return_value=1000):
+            self.assertIn('still pending', self.pre('legacy', path='/b'))
+        with patch.object(hook.time, 'time', return_value=1299):
+            self.assertIn('still pending', self.pre('live', path='/b'))
+        with patch.object(hook.time, 'time', return_value=1300):
+            self.assertIn('stop this invocation partial', self.pre('other', path='/b'))
+        self.assertEqual(4, self.state['calls'])
+        self.assertTrue(self.state['paths']['/a']['stopped'])
+
+    def test_expiry_does_not_reset_exhausted_budget(self):
+        self.pre()
+        self.state['calls'] = 6
+        self.state['pending']['started_at'] = 0
+        self.assertIn('budget exhausted', self.pre('other', path='/b'))
+        self.assertEqual(6, self.state['calls'])
+        self.assertTrue(self.state['paths']['/a']['stopped'])
+
     def test_six_attempts_across_files_including_refusals(self):
         for i in range(6):
             self.assertIsNone(self.pre(str(i), limit=64 // (2**i)))
@@ -94,6 +133,26 @@ class ReaderContractTests(unittest.TestCase):
 
 
 class RuntimeHookTests(unittest.TestCase):
+    def test_held_state_lock_fails_closed_before_hook_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ('token-shunt-reader-%s' % os.getuid())
+            root.mkdir(mode=0o700)
+            key = hashlib.sha256(b'session\0worker').hexdigest()
+            state_path = root / (key + '.json')
+            initial = json.dumps({'calls': 2, 'paths': {}})
+            state_path.write_text(initial)
+            with state_path.open('r+') as source:
+                fcntl.flock(source, fcntl.LOCK_EX)
+                event = {'hook_event_name': 'PreToolUse', 'session_id': 'session',
+                         'agent_id': 'worker', 'agent_type': 'token-shunt:bulk-reader',
+                         'tool_use_id': 'r', 'tool_input': {'file_path': '/a'}}
+                result = subprocess.run([str(path)], input=json.dumps(event),
+                    text=True, capture_output=True, env=dict(os.environ, TMPDIR=directory),
+                    timeout=2)
+            self.assertEqual(2, result.returncode)
+            self.assertIn('state is busy', result.stderr)
+            self.assertEqual(initial, state_path.read_text())
+
     def test_malformed_events_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             base = {'hook_event_name': 'PreToolUse', 'session_id': 'session',
