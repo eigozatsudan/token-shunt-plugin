@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 """Trial Stop hook: send a parent back when it dropped a worker's lines.
 
-This is the trial instrument described in
-`reviews/sendback-trial-spec-2026-09-15.md`, not a product hook. It is
-deliberately NOT registered in `plugin/hooks/hooks.json`: wiring it up is
-part of setting up the billable trial, and until then the plugin must
-behave exactly as it does today.
+It lives with the plugin so it ships with it, but it is still NOT
+registered in `plugin/hooks/hooks.json`. Registration waits on the
+remaining conditions in `reviews/sendback-registration-decision-2026-09-15.md`;
+until then the plugin behaves exactly as it does today. `check-final-answer`
+is the executable a registration would name.
 
 It blocks only where the offline checks can actually judge the parent
 (spec section 1): worker output obtained, worker items usable, final
@@ -22,8 +21,8 @@ import json
 import os
 import sys
 
-import retention_checks as rc
-import session_extract as se
+import sendback_retention as rc
+import sendback_session as se
 
 LOG_ENV = 'SENDBACK_TRIAL_LOG'
 
@@ -224,7 +223,3 @@ def main(stdin=None, stdout=None):
     log(rec)
     json.dump(out, stdout)
     return 0
-
-
-if __name__ == '__main__':
-    sys.exit(main())

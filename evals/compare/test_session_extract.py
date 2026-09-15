@@ -9,11 +9,18 @@ parent that narrates between tool calls before writing its answer.
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 
-import retention_checks as rc
-import session_extract as se
+# The hook ships with the plugin, so the tests reach into
+# `plugin/hooks/` rather than keeping a second copy here.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'plugin', 'hooks'))
+
+import sendback_retention as rc
+import sendback_session as se
 
 AGENT = 'a1234567890abcdef'
 TOOL_USE = 'toolu_01example'

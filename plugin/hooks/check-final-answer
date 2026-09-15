@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Stop hook entry point: send a parent back when it dropped worker lines.
+
+The decision lives in `sendback_stop`, which sits beside this file so the
+tests can import it; running a script puts that directory on the path.
+
+Not registered in hooks.json yet -- see
+`reviews/sendback-registration-decision-2026-09-15.md`.
+"""
+import sys
+
+import sendback_stop
+
+if __name__ == '__main__':
+    sys.exit(sendback_stop.main())

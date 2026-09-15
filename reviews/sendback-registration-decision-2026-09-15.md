@@ -35,10 +35,30 @@
 
 | # | 前提 | 現状 |
 |---|---|---|
-| 1 | フック本体を `plugin/hooks/` に置き、`evals/` へ依存しない形にする | 現在は `evals/compare/sendback_hook.py` で、`retention_checks` と `session_extract` を同ディレクトリから import している。配布物（`token-shunt.zip`）には `agents/` `hooks/` `skills/` しか入らない |
+| 1 | フック本体を `plugin/hooks/` に置き、`evals/` へ依存しない形にする | **完了**（下記 §3.1）。`plugin/hooks/` に `check-final-answer`（入口）、`sendback_stop.py`、`sendback_session.py`、`sendback_retention.py` を置いた。`evals/` への依存はない |
 | 2 | セッションファイルの解析を1回にし、サイズに上限を設ける | 現在 `decide()` 内で2回読んでいる。15–17 MB のセッションで **525–752 ms** かかる。毎ターン末に走る処理としては見直しが要る |
 | 3 | CLI 版の下限を決める | `last_assistant_message` は 2.1.271 で確認した optional フィールド。無い CLI では transcript 経路に落ち、`sendback-trial` と同じ「block 0件」に**黙って**戻る。下限を宣言するか、フィールド不在を記録に残す |
 | 4 | 評価がフック込み／抜きのどちらを測るかを決める | 未決。§2 の3点目 |
+
+### 3.1 前提1の実施内容（2026-09-15）
+
+- 移設。`evals/compare/{retention_checks,session_extract,sendback_hook}.py`
+  を `plugin/hooks/{sendback_retention,sendback_session,sendback_stop}.py`
+  へ移した。`sendback_retention` と `sendback_session` は**バイト単位で同一**、
+  `sendback_stop` の差分は import 2行・docstring・`__main__` ブロックの削除だけで、
+  `decide()` の判定経路には手を入れていない。3モジュールの import は標準ライブラリのみ。
+- 入口。`plugin/hooks/check-final-answer`（実行可能、拡張子なし）を追加した。
+  既存フックの登録形式（`${CLAUDE_PLUGIN_ROOT}/hooks/<name>`）に合わせたもので、
+  **`hooks.json` には登録していない**。登録は前提2〜4の後である。
+- 配布物。`scripts/build-zip.sh` は `plugin/` 配下をそのまま格納するため、
+  4ファイルは追加の指定なしで zip に入る。
+- テスト。`evals/compare` の3つのテストは同ディレクトリの複製を持たず、
+  `plugin/hooks` を `sys.path` に足して移設先を import する（単一の出所）。
+  `evals/compare` 全体 335件 OK、`evals/run.sh` は pass 125 / fail 0。
+- 再現。保存済みセッションに対する `decide()` の再実行（1521件）で
+  block 301件・no_block 1220件。例外は0件で、block は親の保持違反だけに出た。
+  母数は記録時の456件と同じ集合ではない（以後の実行でセッションが増えている）ため、
+  **308件との直接比較ではない**。
 
 ## 4. 判断の限界
 

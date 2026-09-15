@@ -6,9 +6,17 @@ one file, a partial drop, a demoted line, a vanished file -- is synthetic
 here, because that is exactly where file coverage and line retention stop
 agreeing.
 """
+import os
+import sys
 import unittest
 
-import retention_checks as rc
+# The hook ships with the plugin, so the tests reach into
+# `plugin/hooks/` rather than keeping a second copy here.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'plugin', 'hooks'))
+
+import sendback_retention as rc
 
 A = '/srv/app/models/user.rb'
 B = '/srv/app/jobs/welcome_email_job.rb'

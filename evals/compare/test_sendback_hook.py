@@ -9,9 +9,16 @@ transcript lines carried as auxiliary information only.
 import io
 import json
 import os
+import sys
 import unittest
 
-import sendback_hook as sh
+# The hook ships with the plugin, so the tests reach into
+# `plugin/hooks/` rather than keeping a second copy here.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'plugin', 'hooks'))
+
+import sendback_stop as sh
 import test_session_extract as ts
 
 class HookFixture(ts.SessionFixture):
