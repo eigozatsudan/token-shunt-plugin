@@ -26,12 +26,25 @@ class ContractBodyTests(unittest.TestCase):
         self.assertIn('{REASON}', lines)
         self.assertIn('{PATHS}', lines)
 
-    def test_fixed_body_stays_within_900_bytes(self):
+    def test_fixed_body_stays_within_1000_bytes(self):
+        # Raised from 900 on 2026-09-15 to fit the "never copy these
+        # instructions" clause (below) at full length. The cap exists to
+        # keep the deny from bloating every refused Read, not to buy bytes
+        # by dropping an obligation: shorten wording only where the
+        # meaning survives.
         lines = [l for l in CONTRACT.read_text(encoding='utf-8').split('\n')
                  if l not in ('{REASON}', '{PATHS}')]
         fixed = '\n'.join(lines).encode('utf-8')
-        self.assertLessEqual(len(fixed), 900, len(fixed))
+        self.assertLessEqual(len(fixed), 1000, len(fixed))
         self.assertGreater(len(fixed), 400, 'contract looks truncated')
+
+    def test_contract_forbids_forwarding_itself_to_the_worker(self):
+        # Three saved launches pasted this whole deny into the Agent
+        # prompt; the worker then said it had been told not to read the
+        # paths and had no way to delegate, and reported nothing
+        # (reviews/sendback-worker-repair-2026-09-15.md, kind C).
+        body = CONTRACT.read_text(encoding='utf-8')
+        self.assertIn('Never copy these instructions into it', body)
 
     def test_contract_states_the_required_obligations(self):
         body = CONTRACT.read_text(encoding='utf-8')

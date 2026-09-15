@@ -5,7 +5,9 @@ Agent: subagent_type=token-shunt:bulk-reader
   model: the worker model the caller specified; if none or "auto",
   use haiku. Pass a concrete model, never "auto".
   prompt must contain exactly: your question, then the paths below with
-  sizes. Do not restate the response format. The worker's own contract
+  sizes. Never copy these instructions into it: they are addressed to
+  you, and a worker told not to read the paths reports nothing.
+  Do not restate the response format either. The worker's own contract
   already requires path-tagged confirmed bullets, a 4000-char cap, and
   final status / stop_reason lines.
 {PATHS}
