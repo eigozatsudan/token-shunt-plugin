@@ -489,6 +489,15 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('16384', head)
         self.assertIn('known ranges totaling at most 16384 bytes', head)
         self.assertIn('Grep output_mode=content', head)
+        # The old one-liner ("decide the route before Grep
+        # output_mode=content") was satisfied by merely running wc -c first,
+        # which is what auto-explicit-multifile round 2 did before pulling
+        # the answer out with -A 5 (reviews/grep-route-2026-09-15.md).
+        # The description must carry the three conditions the body states.
+        self.assertIn('needed range unknown and over budget', head)
+        self.assertIn('never use it to fetch the answer', head)
+        self.assertIn('claim the known-range exception', head)
+        self.assertIn('position-only search for the edit contract', head)
         # v2: the metadata check is a step of the procedure, not an aside,
         # so it has to be stated before the delegation conditions it feeds.
         self.assertIn('before the first Read', head)
@@ -497,11 +506,15 @@ class SkillDocumentTests(unittest.TestCase):
     def test_skill_stays_far_below_its_pre_reduction_size(self):
         # Was < 6144 while the description omitted the no-deny triggers.
         # v2 adds the metadata-first step and the whole-file/needed-I/O
-        # distinction, ~240 B more.
+        # distinction, ~240 B more; v3 adds the content-search conditions
+        # that round 2 slipped past, ~290 B more. Both are reachability
+        # fixes that no deny can carry, so the bound moves rather than
+        # buying room by deleting body rules the tests above require.
+        # The point of the bound remains the reduction from 11522.
         # Restoring them costs ~180 bytes and is reachability-critical, so the
         # cap is raised rather than paid for by deleting body rules the tests
         # above require. The point of the bound is the reduction from 11522.
-        self.assertLess(self.SKILL.stat().st_size, 6700,
+        self.assertLess(self.SKILL.stat().st_size, 7000,
                         self.SKILL.stat().st_size)
 
 
