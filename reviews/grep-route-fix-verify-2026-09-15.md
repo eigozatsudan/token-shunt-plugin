@@ -1,0 +1,64 @@
+# content search 規則の description 修正：確認結果（2026-09-15）
+
+修正: `849d6bd`。5ケース × 3周、`mode=auto`。
+判定は**トランスクリプトの道具列**で行い、description の文言 assert は
+使っていない（文言テストは到達性の担保であって行動の証拠ではない）。
+
+## 1. 結果（15実行すべてルート一致）
+
+| ケース | 性質 | 期待ルート | 結果 | 代表的な道具列 |
+|---|---|---|---|---|
+| `auto-explicit-multifile` | 22546 B・レンジ未知 | 委譲 | **3/3 委譲** | `meta → Agent(haiku)` |
+| `auto-known-range` | 25953 B の一部・**レンジ事前既知** | 親保持 | **3/3 親保持** | `meta → Read(range)` |
+| `auto-routing-boundary-16k-equal` | 全体 16384 B | 親保持 | **3/3 親保持** | `meta → Read(full)` |
+| `auto-edit-grep-location` | 5613 B・位置特定＋編集 | 親保持 | **3/3 親保持** | `Grep(content) → Read(range) → Edit` |
+| `compare-edit-dense-lines` | 80034 B・委譲後に位置特定＋編集 | 委譲 | **3/3 委譲** | `Skill → meta → Read(contract) → Agent(haiku) → Grep → Read(range) → Edit` |
+
+## 2. 再発ケースの解消
+
+`auto-explicit-multifile` は3周とも **content search を1回も実行していない**
+（`cGrep=0`）。周2で観測された
+「`wc -c` → `Grep -A 5` で答えを取得し委譲を回避」の経路は消えている。
+道具列は `meta → Agent(haiku)` の2手番のみで、
+**メタデータ確認の後、検索を挟まずに委譲**している。
+
+## 3. 維持されたこと
+
+- **既知レンジの親保持**（`auto-known-range`）。25953 B のファイルに対し、
+  プロンプトが lines 200-210 を明示しているため検索は不要。
+  3周とも `meta → Read(range)` で、委譲も content search も発生しない。
+  **今回の修正は既知レンジ保持を壊していない。**
+- **予算内の全体読み**（`boundary-16k-equal`）。3周とも `meta → Read(full)`。
+- **許可された位置特定＋編集**。`grep-location`（予算内）と
+  `dense-lines`（予算超過だが**委譲後**）のいずれも3周とも編集まで完走。
+  `dense-lines` の content Grep は3周とも delegate の**後**にあり
+  （`preDelegate=False`）、ルーティングを無効化していない。
+
+## 4. モデル指定（ルーティングとは別軸）
+
+| 項目 | 15実行での結果 |
+|---|---|
+| 起動前却下（モデル起因） | **0件** |
+| 再送 | **0件** |
+| 委譲実行の初回 model | すべて `haiku`（リテラル `auto` 0件、省略 0件） |
+
+`dense-lines` 周3 のみ `haiku → sonnet` のエスカレーションが1件あるが、
+起動前却下ではなくケースの許容範囲内（ハーネスのチェックは通過）。
+**モデル指定の欠陥は今回の測定範囲では再発していない**ため、
+ルーティング修正の効果と混ざっていない。
+
+## 5. 残る逸脱・未確定
+
+1. **`auto-edit-grep-location` はメタデータを確認していない**（3周とも
+   `meta1st=False`）。ファイルは 5613 B で予算内のためルートは正しいが、
+   **親は測らずに検索へ進んでいる**ので、正しいと知って選んだのではない。
+   §2.1.1 で境界以下に見つけたのと同型の残存ギャップで、今回の修正の
+   対象外。
+2. **`dense-lines` 周1 の content Grep は `head_limit` なし**（周2・周3 は
+   `files_with_matches` → 短い content Grep の形に収まっている）。
+   用途は §11.6 の位置特定で許可範囲だが、形式は §26.5 が挙げる
+   `files_with_matches` / 短い `head_limit` から外れる。委譲後なので
+   ルーティングへの影響はない。
+3. `gold_confirmed` は `auto-explicit-multifile` の既知失敗として3周とも継続。
+4. 3周であり、再現頻度の主張はしない。言えるのは
+   「15実行でルート不一致0件、モデル起因の却下・再送0件」まで。
