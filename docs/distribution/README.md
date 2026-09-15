@@ -10,7 +10,7 @@
 scripts/build-zip.sh
 ```
 
-スクリプトは5つのフックに実行権限を付け、既存の `token-shunt.zip` を置き換えて `plugin/` を圧縮し、配置と実行権限を検証します。作成には `zip` または Python 3、検証には Python 3 または `zipinfo` が必要です。検証に失敗すると終了コードは非0になります。
+スクリプトは7つのフックに実行権限を付け、既存の `token-shunt.zip` を置き換えて `plugin/` を圧縮し、配置と実行権限を検証します。作成には `zip` または Python 3、検証には Python 3 または `zipinfo` が必要です。検証に失敗すると終了コードは非0になります。
 
 生成するZIPの主な構成は次のとおりです。
 
@@ -24,11 +24,19 @@ hooks/check-bash-read
 hooks/check-jq
 hooks/check-agent-model
 hooks/check-reader-contract
+hooks/check-grep-bounds
+hooks/check-final-answer
+hooks/grep_bounds.py
+hooks/sendback_retention.py
+hooks/sendback_session.py
+hooks/sendback_stop.py
+hooks/reader-call-contract
+hooks/write-hook-log
 skills/bulk-reader/SKILL.md
 skills/code-writer/SKILL.md
 ```
 
-検証では `.claude-plugin/plugin.json` がアーカイブ直下または1階層下にあることと、5つのフックにUnixの実行権限があることを確認します。Python / zipinfo の両検証経路で、manifest と同じルートに5フックが揃っていることを要求します。重複エントリや複数の manifest も拒否します。実際のビルドはアーカイブ直下に配置します。フックは直接実行されるため、展開後も実行権限が必要です。
+検証では `.claude-plugin/plugin.json` がアーカイブ直下または1階層下にあることと、7つのフックにUnixの実行権限があることを確認します。Python / zipinfo の両検証経路で、manifest と同じルートに7フックが揃っていることを要求します（実行されるのはこの7本で、`grep_bounds.py` などはそこから読み込まれるモジュールです）。重複エントリや複数の manifest も拒否します。実際のビルドはアーカイブ直下に配置します。フックは直接実行されるため、展開後も実行権限が必要です。
 
 リポジトリのルートにある `.claude-plugin/marketplace.json` はZIPに含みません。
 
