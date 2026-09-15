@@ -524,8 +524,18 @@ class SkillDocumentTests(unittest.TestCase):
         # (reviews/gold-confirmed-2026-09-15.md).
         text = self.SKILL.read_text(encoding='utf-8')
         head, body = text.split('---')[1], text.split('---', 2)[2]
-        self.assertIn('`confirmed: <absolute path> — <fact>`', head)
-        self.assertIn('path unabbreviated', head)
+        # "keep" held 0/9 on auto-explicit-multifile while the verbatim copy
+        # of status:/stop_reason: held 3/3 everywhere
+        # (reviews/behaviour-measurement-2026-09-15.md §3.1), so the duty is
+        # stated as a copy procedure, with both edge cases named: exact-match
+        # de-duplication, and a path that is not absolute — relative or
+        # shortened, not merely missing — demoted rather than dropped.
+        self.assertIn('Copy each worker `confirmed:` line', head)
+        self.assertIn('verbatim, one per line', head)
+        self.assertIn('collapse only identical lines', head)
+        self.assertIn('path is not absolute', head)
+        self.assertIn('keeps its text but becomes `unconfirmed:`', head)
+        self.assertNotIn('pathless', head)
         # Stated once. The description is in context whenever the body is,
         # so restating it in the body would be paid for twice.
         self.assertNotIn('per corroborated fact in the final', body)
