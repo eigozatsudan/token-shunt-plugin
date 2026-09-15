@@ -11,14 +11,19 @@ import test_unreadable_and_model
 
 class HookIsolationTests(unittest.TestCase):
     def test_post_read_hooks_only_in_delegate_and_with_owned_output(self):
+        # PostToolUse:Bash and PreToolUse:Grep became ours when
+        # check-grep-bounds was registered on them
+        # (reviews/grep-hook-implementation-2026-09-15.md).
         for name in ('PostToolUse:Read', 'PostToolUseFailure:Read',
+                     'PostToolUse:Bash', 'PreToolUse:Grep',
                      '/plugin/hooks/check-reader-contract'):
             for payload in ('', 'token-shunt: diagnostic'):
                 tr = Transcript([{'type': 'system', 'subtype': 'hook_response',
                                   'hook_name': name, 'stdout': payload}])
                 self.assertEqual([], foreign_hooks(tr))
                 self.assertTrue(foreign_hooks(tr, plugin_loaded=False))
-        for name, payload in (('PostToolUse:Bash', ''),
+        for name, payload in (('PostToolUse:Edit', ''),
+                              ('PreToolUse:Write', ''),
                               ('PostToolUse:Read', 'foreign plugin output')):
             tr = Transcript([{'type': 'system', 'subtype': 'hook_response',
                               'hook_name': name, 'stdout': payload}])

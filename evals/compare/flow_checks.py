@@ -38,6 +38,18 @@ POSITION_GREP_HEAD_LIMIT = 20
 SMALL_TASK_BUDGET = 16384
 
 
+def blocked_by_token_shunt(result):
+    """Did one of our own hooks deny this call?
+
+    A denied call never ran, so it is not evidence of anything the caller
+    did wrong beyond the round trip the deny already charged. The deny text
+    is the hook's own contract prefix.
+    """
+    if not (result and result.get('is_error')):
+        return False
+    return (result.get('text') or '').lstrip().startswith('token-shunt:')
+
+
 def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
     """§26.5 form for position-only Grep on an over-budget target.
 
@@ -67,6 +79,10 @@ def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
             if not (result and path in (result.get('text') or '')):
                 continue
         if str(inp.get('output_mode') or '') != 'content':
+            continue
+        if blocked_by_token_shunt(tr.result_of(u['id'])):
+            # The hook refused the call, so it returned no body. Judging it
+            # would fail the run for a search §26.5 successfully prevented.
             continue
         judged += 1
         limit = inp.get('head_limit')

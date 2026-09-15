@@ -639,10 +639,10 @@ class SkillDocumentTests(unittest.TestCase):
 class PositionGrepFormTests(unittest.TestCase):
     """§26.5 form for position-only Grep, judged per content call.
 
-    The rule was machine-unenforced: nothing in the judge or the hooks
-    looked at head_limit, and Grep is not hooked. These cases pin the
-    three outcomes — violation, conforming, out of scope
-    (reviews/head-limit-consistency-2026-09-15.md).
+    These cases pin the outcomes — violation, conforming, out of scope,
+    and (since `check-grep-bounds`) refused by our own hook
+    (reviews/head-limit-consistency-2026-09-15.md,
+    reviews/grep-hook-implementation-2026-09-15.md).
     """
 
     @staticmethod
@@ -664,12 +664,16 @@ class PositionGrepFormTests(unittest.TestCase):
         events = []
         for i, inp in enumerate(greps):
             inp = dict(inp, path=path)
+            denied = inp.pop('_denied', False)
             events.append({'type': 'assistant', 'message': {'content': [
                 {'type': 'tool_use', 'id': 'g%d' % i, 'name': 'Grep',
                  'input': inp}]}})
+            body = ('token-shunt: %s is over the 16384 B budget and its size '
+                    'has not been checked in this session.' % path
+                    if denied else '12:MARK')
             events.append({'type': 'user', 'message': {'content': [
                 {'type': 'tool_result', 'tool_use_id': 'g%d' % i,
-                 'content': '12:MARK', 'is_error': False}]}})
+                 'content': body, 'is_error': bool(denied)}]}})
         return judge.Transcript(events)
 
     def _run(self, size, greps):
@@ -686,6 +690,29 @@ class PositionGrepFormTests(unittest.TestCase):
         self.assertTrue(applicable)
         self.assertEqual(len(errors), 1, errors)
         self.assertIn('no head_limit', errors[0])
+
+    def test_a_grep_our_own_hook_refused_is_not_also_counted_as_a_violation(self):
+        # check-grep-bounds denies the unbounded call, so no body is
+        # returned. The run that then retries with a bound conformed; the
+        # refused attempt is the enforcement working, not a failure.
+        applicable, errors = self._run(20000, [
+            {'pattern': '^MARK', 'output_mode': 'content', '-n': True,
+             '_denied': True},
+            {'pattern': '^MARK', 'output_mode': 'content', '-n': True,
+             'head_limit': 5}])
+        self.assertTrue(applicable)
+        self.assertEqual(errors, [])
+
+    def test_a_refusal_from_somewhere_else_is_still_judged(self):
+        # Only our own deny text licenses the skip. Any other error leaves
+        # the call on the record.
+        fc = self._flow_checks()
+        self.assertFalse(fc.blocked_by_token_shunt(
+            {'is_error': True, 'text': 'Error: permission denied'}))
+        self.assertFalse(fc.blocked_by_token_shunt(
+            {'is_error': False, 'text': 'token-shunt: ...'}))
+        self.assertTrue(fc.blocked_by_token_shunt(
+            {'is_error': True, 'text': '  token-shunt: over budget'}))
 
     def test_over_budget_bounded_and_files_with_matches_conform(self):
         applicable, errors = self._run(20000, [
