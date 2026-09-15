@@ -135,9 +135,12 @@ description 第1文の義務対象を Read から本文接触一般へ広げる�
 
 ### 4.1 未解決
 
-| 項目 | 状態 |
-|---|---|
-| `gold_confirmed` の既存失敗（`*-explicit-multifile`） | 本プランとは独立の既存失敗。親が `confirmed:` 項目の引用元を絶対パスで書かないことが根（変更前後12実行で絶対パス付き0件） |
+（2026-09-15 更新）原因を特定し、到達性修正を適用した。
+`reviews/gold-confirmed-2026-09-15.md` を参照。子は絶対パス付き
+`confirmed:` を返しており（359項目中344）、親が落としていた（85実行中69）。
+保持義務が §2 の分割時段落と `hooks/reader-call-contract` にしかなく、
+3パス単一起動には届いていなかった。description へ移して解消（−24 B）。
+**行動が変わるかは未検証**なので、§4.2 と同じ扱いで動作測定を待つ。
 
 ### 4.2 動作検証待ち
 
@@ -147,6 +150,7 @@ description 第1文の義務対象を Read から本文接触一般へ広げる�
 |---|---|---|
 | 検索前メタデータ確認 | `83e1c91`（description に `before the first Read or content search`） | 実際の道具列でメタデータ確認が content search より先に来るか |
 | `4+ paths` での親保持 | `03f9fb4`（description を C 案に、検証ケース `auto-small-files-four` を追加） | 4パス・合計 ≤16384 B・明示委譲なしで親保持になるか |
+| `confirmed:` 項目の保持 | description へ移設（`reviews/gold-confirmed-2026-09-15.md`） | 親が絶対パス付き `confirmed:` 項目を実際に残すか |
 
 ### 4.3 実装・判定整備済み
 

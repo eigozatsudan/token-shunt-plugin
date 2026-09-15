@@ -511,6 +511,26 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('before the first Read or content search', head)
         self.assertLess(head.index('metadata'), head.index('delegate'), head)
 
+    def test_evidence_retention_is_stated_where_the_parent_can_see_it(self):
+        # The child's contract already returns `confirmed: <absolute path>`
+        # bullets: across 85 existing runs whose spec asks for
+        # gold_confirmed, 344 of the children's 359 bullets carried the
+        # path. The parent dropped them in 69 of those 85 runs, because the
+        # only rule telling it to keep them sat inside §2's inter-batch
+        # paragraph, which governs splitting 4+ paths, and inside
+        # hooks/reader-call-contract, which the parent sees only after a
+        # deny or after opening the Explicit delegation section. Neither
+        # reaches a three-path single invocation
+        # (reviews/gold-confirmed-2026-09-15.md).
+        text = self.SKILL.read_text(encoding='utf-8')
+        head, body = text.split('---')[1], text.split('---', 2)[2]
+        self.assertIn('`confirmed: <absolute path> — <fact>`', head)
+        self.assertIn('path unabbreviated', head)
+        # Stated once. The description is in context whenever the body is,
+        # so restating it in the body would be paid for twice.
+        self.assertNotIn('per corroborated fact in the final', body)
+        self.assertNotIn("don't drop evidence labels", body)
+
     def test_position_grep_bound_uses_one_standard_in_body_and_judge(self):
         # "short head_limit" had no number, so the judge would have had to
         # invent one. The body states the number and flow_checks reuses it:

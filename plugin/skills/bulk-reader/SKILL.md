@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Judge size from metadata (stat / wc -c) before the first Read or content search, never from the body. Then route: delegate when the needed I/O — the whole file when the whole file is needed, otherwise the sum of the known ranges — exceeds 16384 bytes; keep known ranges totaling at most 16384 bytes in the parent when each targeted Read passes the hook. Not needed when the deny already carries the call spec — follow the deny and delegate. Also use for explicit delegation with no hook deny, how to batch (4+ paths) and cross-file relationships, ambiguity between confirmed/unconfirmed evidence, and retry or escalation decisions after a partial. After the metadata check: needed range unknown and over budget -> delegate before any content search. Grep output_mode=content is not hooked; never use it to fetch the answer, nor to discover a range and then claim the known-range exception. Ranges known in advance and within budget stay in the parent, and position-only search for the edit contract is unchanged. Resolve auto to haiku before calling Agent; never pass "auto". Not for debugging, architecture, or edits needing exact parent context. Do not @-mention large files.
+description: Judge size from metadata (stat / wc -c) before the first Read or content search, never from the body. Then route: delegate when the needed I/O — the whole file when the whole file is needed, otherwise the sum of the known ranges — exceeds 16384 bytes; keep known ranges totaling at most 16384 bytes in the parent when each targeted Read passes the hook. Not needed when the deny already carries the call spec — follow the deny and delegate. Also use for explicit delegation with no hook deny, how to batch (4+ paths) and cross-file relationships, ambiguity between confirmed/unconfirmed evidence, and retry or escalation decisions after a partial. After the metadata check: needed range unknown and over budget -> delegate before any content search. Grep output_mode=content is not hooked; never use it to fetch the answer, nor to discover a range and then claim the known-range exception. Ranges known in advance and within budget stay in the parent, and position-only search for the edit contract is unchanged. In the final answer keep one `confirmed: <absolute path> — <fact>` bullet per corroborated fact, path unabbreviated. Resolve auto to haiku before calling Agent; never pass "auto". Not for debugging, architecture, or edits needing exact parent context. Do not @-mention large files.
 ---
 
 # bulk-reader
@@ -53,9 +53,7 @@ Agent.
    If a relationship is missing or ambiguous, you may — at most once —
    run a boundary-check invocation naming the boundary files (each
    region still read at most once). If still unverifiable, mark it
-   `unconfirmed` and report the result as partial. Preserve one
-   `confirmed: <path> — <fact>` item per corroborated fact in the final
-   answer; don't drop evidence labels when summarizing. partial never
+   `unconfirmed` and report the result as partial. partial never
    counts as success.
 
 3. **Follow-ups.** Re-ask in a NEW invocation, re-sending the same
