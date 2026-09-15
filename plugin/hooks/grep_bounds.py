@@ -7,7 +7,7 @@ the call:
   metadata first   a file past the small-task budget may be content
                    searched only after its size is known to the caller
   bounded output   that search returns `files_with_matches`, or
-                   `head_limit` 1-20 with no -A/-B/-C context window
+                   `head_limit` 1-20 with no context window (-A/-B/-C, context)
 
 Only a single existing file is judged. A directory, a bare cwd search and
 a `glob` set do not resolve to one size here, and enumerating them at
@@ -34,7 +34,10 @@ import shlex
 BUDGET = 16384
 HEAD_LIMIT_MAX = 20
 DENY_CAP = 6
-CONTEXT_FLAGS = ('-A', '-B', '-C')
+# Every spelling of a context window the Grep schema accepts. `context`
+# is that schema's name for rg's -C; naming only the dashed flags left the
+# window that the tool actually documents unbounded.
+CONTEXT_FLAGS = ('-A', '-B', '-C', 'context')
 # Metadata commands whose operands are files the caller has just measured.
 _STAT_FLAG = re.compile(r'^-[A-Za-z]+$|^--[A-Za-z-]+(=.*)?$')
 # Flags whose value is the next word, not a file: stat's format strings.
@@ -184,7 +187,7 @@ def _form_error(inp):
         # A context window multiplies the returned lines, so head_limit
         # no longer bounds the output.
         return ('head_limit with a %d-line context window does not bound '
-                'the returned lines. Drop -A/-B/-C' % context)
+                'the returned lines. Drop -A/-B/-C and context' % context)
     return None
 
 

@@ -80,8 +80,12 @@ class MeasuredStateTests(TargetTests):
             with self.subTest(limit=limit):
                 self.assertIn('not a bound', self.decide(
                     grep_event(self.big, head_limit=limit), state))
-        self.assertIn('context window', self.decide(
-            grep_event(self.big, head_limit=5, **{'-C': 3}), state))
+        # Every spelling of the window, including the one the Grep schema
+        # uses for rg's -C, which named none of the banned flags.
+        for key in ('-A', '-B', '-C', 'context'):
+            with self.subTest(key=key):
+                self.assertIn('context window', self.decide(
+                    grep_event(self.big, head_limit=5, **{key: 3}), state))
 
     def test_a_changed_file_is_no_longer_measured(self):
         state = self.measured_state()

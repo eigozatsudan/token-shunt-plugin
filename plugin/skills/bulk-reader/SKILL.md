@@ -33,7 +33,7 @@ Agent.
    read. Content search there stays allowed only to establish
    *positions* for the §11.6 edit contract or confirm a known range,
    with `files_with_matches`, or `content` with `head_limit`
-   1-20 and no `-A`/`-B`/`-C`. After a denied Read, never
+   1-20 and no `-A`/`-B`/`-C`/`context`. After a denied Read, never
    recover the answer through Bash, Grep, or smaller parent Reads;
    follow-ups go to a new bounded worker call, and parent Reads stay
    reserved for the edit contract in step 4.
