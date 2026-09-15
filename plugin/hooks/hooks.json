@@ -66,6 +66,18 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-final-answer",
+            "args": [],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUseFailure": [
       {
         "matcher": "Read",

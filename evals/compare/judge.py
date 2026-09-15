@@ -21,7 +21,8 @@ FIXTURES_DIR = os.environ.get("TOKEN_SHUNT_EVAL_FIXTURES", os.path.join(COMPARE_
 
 READ_TOOLS = {"Read"}
 BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
-TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq", "check-agent-model", "check-reader-contract")
+TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq", "check-agent-model",
+            "check-reader-contract", "check-final-answer")
 # Observed bootstrap matcher; the name alone cannot establish provenance.
 BUILTIN_HOOKS = {"SessionStart:startup"}
 # This CLI reports only the matcher in `hook_name` ("PreToolUse:Read"), never
@@ -31,7 +32,7 @@ BUILTIN_HOOKS = {"SessionStart:startup"}
 # hook responses it may produce. See `foreign_hooks` for the residual gap.
 TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash", "PreToolUse:Agent",
                  "PreToolUse:Task", "PreToolUse:Agent|Task",
-                 "PostToolUse:Read", "PostToolUseFailure:Read"}
+                 "PostToolUse:Read", "PostToolUseFailure:Read", "Stop"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 

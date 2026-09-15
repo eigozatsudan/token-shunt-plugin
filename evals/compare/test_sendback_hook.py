@@ -48,7 +48,8 @@ class HookFixture(ts.SessionFixture):
     def run_hook(self, event=None):
         out = io.StringIO()
         sh.main(io.StringIO(json.dumps(event or self.event())), out)
-        return json.loads(out.getvalue())
+        # A hook with nothing to say writes nothing.
+        return json.loads(out.getvalue() or '{}')
 
     def session_with(self, final, worker=None):
         worker = self.line if worker is None else worker
@@ -168,12 +169,17 @@ class LoggingTests(HookFixture):
 
     def test_unparsable_input_does_not_fail_the_turn(self):
         out = io.StringIO()
-        sh.main(io.StringIO('not json'), out)
-        self.assertEqual(json.loads(out.getvalue()), {})
+        rc = sh.main(io.StringIO('not json'), out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue(), '')
 
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_a_block_is_the_only_thing_written_to_stdout(self):
+        self.session_with('Here is a summary with no citations.')
+        self.assertEqual(self.run_hook()['decision'], 'block')
+        self.session_with('Findings.\n' + self.line)
+        out = io.StringIO()
+        sh.main(io.StringIO(json.dumps(self.event())), out)
+        self.assertEqual(out.getvalue(), '')
 
 
 class StopInputTests(HookFixture):
@@ -426,3 +432,7 @@ class SwitchTests(HookFixture):
                 self.off(value)
                 rec, _ = sh.decide(self.event())
                 self.assertEqual(rec['outcome'], sh.DISABLED)
+
+
+if __name__ == '__main__':
+    unittest.main()

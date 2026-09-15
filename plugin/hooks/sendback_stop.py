@@ -197,7 +197,11 @@ def max_bytes():
 
 
 def block_reason(lost):
-    head = ('Your answer dropped lines the reader worker confirmed. Restate '
+    # The text names token-shunt: it is what the parent (and anyone reading
+    # the transcript) sees, and the eval's isolation check attributes a
+    # hook response by its payload, not by the matcher name.
+    head = ('token-shunt: your answer dropped lines the reader worker '
+            'confirmed. Restate '
             'every line below verbatim, each on its own line, before you '
             'finish:')
     return '\n'.join([head] + list(lost))
@@ -305,14 +309,15 @@ def main(stdin=None, stdout=None):
         event = json.load(stdin)
     except (json.JSONDecodeError, ValueError):
         log({'outcome': NO_BLOCK, 'reason': 'unparsable hook input'})
-        json.dump({}, stdout)
         return 0
     try:
         rec, out = decide(event)
     except Exception as exc:           # never fail a turn over the trial
         log({'outcome': NO_BLOCK, 'reason': 'hook error: %s' % exc})
-        json.dump({}, stdout)
         return 0
     log(rec)
-    json.dump(out, stdout)
+    if out:
+        json.dump(out, stdout)
+    # Nothing to say is said by saying nothing: an empty response keeps the
+    # turn end clean for anything reading hook output.
     return 0
