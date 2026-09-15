@@ -31,6 +31,64 @@ def timeline(tr):
     return uses, results, min(reports) if reports else (len(tr.events), 0)
 
 
+# Shared with SKILL.md §26.5: "short" is not left to the judge's taste.
+# The body states `head_limit` <= 20; this constant is the same standard.
+POSITION_GREP_HEAD_LIMIT = 20
+SMALL_TASK_BUDGET = 16384
+
+
+def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
+    """§26.5 form for position-only Grep on an over-budget target.
+
+    Returns (applicable, errors). Applicable only when the target is
+    larger than the small-task budget: within budget the edit path keeps
+    §11.6's limited-output basis and this check stays silent.
+
+    Every content Grep is judged on its own. An earlier
+    output_mode=files_with_matches call does not license a later
+    unbounded content call — the bound has to hold before each call.
+    """
+    path = os.path.normpath(target or '')
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False, []
+    if size <= budget:
+        return False, []
+    errors = []
+    for n, u in enumerate(tr.parent_tool_uses('Grep'), 1):
+        inp = u['input'] or {}
+        if os.path.normpath(inp.get('path', '')) != path:
+            result = tr.result_of(u['id'])
+            if not (result and path in (result.get('text') or '')):
+                continue
+        if str(inp.get('output_mode') or '') != 'content':
+            continue
+        limit = inp.get('head_limit')
+        context = max(int(inp.get(f) or 0) for f in ('-A', '-B', '-C'))
+        if limit is not None and context:
+            # §26.5 names -A/-B alongside head_limit: a context window
+            # multiplies the returned lines, so the bound no longer holds.
+            errors.append(
+                'Grep #%d on %s (%d B, over budget) combined head_limit=%r '
+                'with a %d-line context window; §26.5 requires the bound to '
+                'hold on the returned output'
+                % (n, os.path.basename(path), size, limit, context))
+        elif limit is None:
+            errors.append(
+                'Grep #%d on %s (%d B, over budget) used output_mode=content '
+                'with no head_limit; §26.5 requires files_with_matches or '
+                'head_limit <= %d' % (n, os.path.basename(path), size,
+                                      POSITION_GREP_HEAD_LIMIT))
+        elif not isinstance(limit, int) or limit > POSITION_GREP_HEAD_LIMIT:
+            errors.append(
+                'Grep #%d on %s (%d B, over budget) used head_limit=%r; '
+                '§26.5 allows at most %d'
+                % (n, os.path.basename(path), size, limit,
+                   POSITION_GREP_HEAD_LIMIT))
+    return True, errors
+
+
 def edit_flow_errors(tr, cfg, spec, targets, full_read):
     path = os.path.normpath(cfg['path'])
     uses, results, _ = timeline(tr)
@@ -144,8 +202,37 @@ def report_fields(section):
 
 def split_verification_exit_echo(line):
     """Recognize only the literal terminal status label, not general shell lists."""
-    match = re.fullmatch(r'(.*);[ \t]*echo[ \t]+"EXIT:\$\?"[ \t]*', line)
+    match = re.fullmatch(r'(.*);[ \t]*echo[ \t]+"EXIT:\$\?"[ \t]*', line, re.I)
     return (match.group(1), True) if match else (line, False)
+
+
+def has_quoted_shell_controls(command):
+    """Reject controls whose quoting shlex would discard before classification.
+
+    This evidence grammar deliberately excludes control characters in literal
+    arguments and multiline strings. Otherwise an echoed `&&` or a quoted
+    newline could be mistaken for execution of the following verifier.
+    """
+    quote = None
+    i = 0
+    while i < len(command):
+        char = command[i]
+        if char == "\\" and quote != "'":
+            if i + 1 < len(command) and command[i + 1] in ';&|<>\r\n':
+                # An unquoted line continuation is supported by batch parsing.
+                if quote is not None or command[i + 1] != '\n':
+                    return True
+            i += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            elif char in ';&|<>\r\n':
+                return True
+        elif char in "\"'":
+            quote = char
+        i += 1
+    return quote is not None
 
 
 def verification_commands(command, cwd):
@@ -157,8 +244,13 @@ def verification_commands(command, cwd):
     Echo labels may include the exit status ($?); other expansions,
     conditionals, pipelines and other commands are not evidence.
     """
-    if not isinstance(command, str) or '`' in command:
+    if not isinstance(command, str) or '`' in command or has_quoted_shell_controls(command):
         return []
+    # Retain continuation boundaries as statement boundaries for this narrow
+    # batch grammar; each accepted checker still needs an ordered JSON result.
+    command = command.replace('\\\n', '\n')
+    command = re.sub(r'&&[ \t]*\n', '\n', command)
+    command = re.sub(r'(;[ \t]*echo[ \t]+"(?:EXIT|exit):\$\?");[ \t]*(?=\n|$)', r'\1', command)
     commands = []
     for line in command.splitlines():
         line, exit_echo = split_verification_exit_echo(line)
@@ -203,6 +295,48 @@ def verification_commands(command, cwd):
     return commands
 
 
+def compile_command_matches(command, target):
+    """Recognize a compile call or a literal all-success AND chain.
+
+    An overall successful AND chain proves every component succeeded; `;`,
+    `||`, pipes, substitutions, and shell wrappers cannot provide that proof.
+    Only harmless line counting and literal echo labels may accompany compile.
+    """
+    if (not isinstance(command, str) or any(c in command for c in '$`')
+            or has_quoted_shell_controls(command) or '\n' in command.strip()
+            or '\r' in command.strip()):
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>()')
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    segments = [[]]
+    for token in tokens:
+        if token == '&&':
+            segments.append([])
+        elif token and all(c in ';&|<>()' for c in token):
+            return False
+        else:
+            segments[-1].append(token)
+    found = False
+    for argv in segments:
+        if (len(argv) == 4 and argv[0] in ('python', 'python3')
+                and argv[1:3] == ['-m', 'py_compile']
+                and os.path.normpath(argv[3]) == os.path.normpath(target)):
+            found = True
+        elif (len(argv) == 3 and argv[:2] == ['wc', '-l']
+              and os.path.normpath(argv[2]) == os.path.normpath(target)):
+            continue
+        elif argv and argv[0] == 'echo':
+            continue
+        else:
+            return False
+    return found
+
+
 def verification_errors(tr, spec, exp):
     errors = []
     compile_target = exp.get('parent_py_compile')
@@ -210,13 +344,7 @@ def verification_errors(tr, spec, exp):
         uses, results, report = timeline(tr)
         found = False
         for u in tr.parent_tool_uses('Bash'):
-            try:
-                argv = shlex.split(u['input'].get('command', ''))
-            except ValueError:
-                continue
-            if (len(argv) != 4 or argv[0] not in ('python', 'python3')
-                    or argv[1:3] != ['-m', 'py_compile']
-                    or os.path.normpath(argv[3]) != os.path.normpath(compile_target)):
+            if not compile_command_matches(u['input'].get('command', ''), compile_target):
                 continue
             r = tr.result_of(u['id'])
             if (r and not r['is_error'] and u['id'] in uses and u['id'] in results
@@ -293,7 +421,7 @@ def verification_errors(tr, spec, exp):
                 native = r.get('tool_use_result')
                 stdout = native.get('stdout') if isinstance(native, dict) else None
                 output_lines = (stdout if isinstance(stdout, str) else r['text']).strip().splitlines()
-                status = re.fullmatch(r'EXIT:([01])', output_lines[-1]) if output_lines else None
+                status = re.fullmatch(r'EXIT:([01])', output_lines[-1], re.I) if output_lines else None
                 exit_matches = (not r['is_error'] and status is not None
                                 and (status.group(1) == '0') == evidence_rows[-1]['ok'])
             else:

@@ -12,9 +12,9 @@ import shlex
 import sys
 
 from routing_checks import (check_reader_reads, check_routing, unreadable_line_partial,
-                            rejected_model_launch, reader_attempt_metrics)
+                            rejected_model_launch, reader_attempt_metrics, metadata_only_bash)
 from report_text import plain_report
-from flow_checks import edit_flow_errors, verification_errors
+from flow_checks import edit_flow_errors, position_grep_errors, verification_errors
 
 COMPARE_DIR = os.path.dirname(os.path.abspath(__file__))
 FIXTURES_DIR = os.environ.get("TOKEN_SHUNT_EVAL_FIXTURES", os.path.join(COMPARE_DIR, "fixtures"))
@@ -802,6 +802,8 @@ def bash_mentions_path(use, path):
 def bash_recovers_body(use, path):
     """Bash command that would dump (part of) the denied body to stdout."""
     cmd = use["input"].get("command", "")
+    if metadata_only_bash(cmd):
+        return False
     try:
         lexer = shlex.shlex(cmd, posix=True, punctuation_chars="|;&()<>")
         lexer.whitespace_split = True
@@ -1510,6 +1512,13 @@ def judge(transcript_path, spec, ctx):
             fail("edit_flow", error)
         if not errors:
             passed("edit_flow")
+        # §26.5 form for position-only search, over-budget targets only.
+        applicable, form_errors = position_grep_errors(tr, exp["edit_flow"]["path"])
+        if applicable:
+            for error in form_errors:
+                fail("position_grep_form", error)
+            if not form_errors:
+                passed("position_grep_form")
 
     # Control cases that must not edit: the fixture on disk stays as generated.
     fu = exp.get("fixture_unchanged")

@@ -31,7 +31,7 @@ Agent.
    and let the child read. Content search there
    stays allowed only to establish *positions* for the §11.6 edit
    contract or confirm a known range, with `output_mode=files_with_matches`
-   or a short `head_limit`. After a denied Read, never recover the
+   or `head_limit` <= 20. After a denied Read, never recover the
    answer through Bash, Grep, or smaller parent Reads; follow-ups go to
    a new bounded worker call, and parent Reads stay reserved for the
    edit contract in step 4.
@@ -62,7 +62,8 @@ Agent.
    explicit paths. No resume, no answer index; the re-input is paid.
 
 4. **Edit contract (§11.6).** Position authority is the parent's Grep
-   (short unique pattern, line numbers, limited output) or an already
+   (short unique pattern, line numbers, limited output; over budget, the
+   §26.5 form — one line back is not enough) or an already
    verified known range — never the child's line numbers verbatim. If
    Grep matches multiple times, narrow it; if it can't be made unique,
    don't edit. Then Read(offset, limit) the original, confirm hook pass

@@ -5,6 +5,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
+import inspect
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -509,6 +511,41 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('before the first Read or content search', head)
         self.assertLess(head.index('metadata'), head.index('delegate'), head)
 
+    def test_position_grep_bound_uses_one_standard_in_body_and_judge(self):
+        # "short head_limit" had no number, so the judge would have had to
+        # invent one. The body states the number and flow_checks reuses it:
+        # one standard, two places that must agree
+        # (reviews/head-limit-consistency-2026-09-15.md).
+        body = self.SKILL.read_text(encoding='utf-8')
+        self.assertIn('`head_limit` <= 20', body)
+        # Step 4's position Grep inherits the 26.5 form when over budget,
+        # and stays on 11.6's limited-output basis within budget.
+        step4 = body.split('4. **Edit contract')[1].split('\n5.')[0]
+        self.assertIn('over budget', step4)
+        self.assertIn('26.5 form', step4)
+        sys.path.insert(0, str(ROOT / 'evals/compare'))
+        try:
+            import flow_checks
+        finally:
+            sys.path.pop(0)
+        self.assertEqual(flow_checks.POSITION_GREP_HEAD_LIMIT, 20)
+        self.assertEqual(flow_checks.SMALL_TASK_BUDGET, 16384)
+        self.assertIn('`head_limit` <= %d' % flow_checks.POSITION_GREP_HEAD_LIMIT,
+                      body)
+
+    def test_position_grep_check_applies_only_over_budget_and_per_call(self):
+        sys.path.insert(0, str(ROOT / 'evals/compare'))
+        try:
+            import flow_checks
+        finally:
+            sys.path.pop(0)
+        src = inspect.getsource(flow_checks.position_grep_errors)
+        # Within budget the edit path keeps 11.6's basis untouched.
+        self.assertIn('if size <= budget:', src)
+        # Every content call is judged on its own: no state carried from an
+        # earlier files_with_matches call licenses a later unbounded one.
+        self.assertNotIn('break', src)
+
     def test_skill_stays_far_below_its_pre_reduction_size(self):
         # Was < 6144 while the description omitted the no-deny triggers.
         # v2 adds the metadata-first step and the whole-file/needed-I/O
@@ -522,6 +559,104 @@ class SkillDocumentTests(unittest.TestCase):
         # above require. The point of the bound is the reduction from 11522.
         self.assertLess(self.SKILL.stat().st_size, 7000,
                         self.SKILL.stat().st_size)
+
+
+class PositionGrepFormTests(unittest.TestCase):
+    """§26.5 form for position-only Grep, judged per content call.
+
+    The rule was machine-unenforced: nothing in the judge or the hooks
+    looked at head_limit, and Grep is not hooked. These cases pin the
+    three outcomes — violation, conforming, out of scope
+    (reviews/head-limit-consistency-2026-09-15.md).
+    """
+
+    @staticmethod
+    def _flow_checks():
+        sys.path.insert(0, str(ROOT / 'evals/compare'))
+        try:
+            import flow_checks
+            return flow_checks
+        finally:
+            sys.path.pop(0)
+
+    @staticmethod
+    def _transcript(path, greps):
+        sys.path.insert(0, str(ROOT / 'evals/compare'))
+        try:
+            import judge
+        finally:
+            sys.path.pop(0)
+        events = []
+        for i, inp in enumerate(greps):
+            inp = dict(inp, path=path)
+            events.append({'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'g%d' % i, 'name': 'Grep',
+                 'input': inp}]}})
+            events.append({'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'g%d' % i,
+                 'content': '12:MARK', 'is_error': False}]}})
+        return judge.Transcript(events)
+
+    def _run(self, size, greps):
+        fc = self._flow_checks()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'target.txt')
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write('x' * size)
+            return fc.position_grep_errors(self._transcript(path, greps), path)
+
+    def test_over_budget_content_grep_without_head_limit_is_a_violation(self):
+        applicable, errors = self._run(
+            20000, [{'pattern': '^MARK', 'output_mode': 'content', '-n': True}])
+        self.assertTrue(applicable)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('no head_limit', errors[0])
+
+    def test_over_budget_bounded_and_files_with_matches_conform(self):
+        applicable, errors = self._run(20000, [
+            {'pattern': '^MARK', 'output_mode': 'files_with_matches'},
+            {'pattern': '^MARK', 'output_mode': 'content', '-n': True,
+             'head_limit': 5}])
+        self.assertTrue(applicable)
+        self.assertEqual(errors, [])
+
+    def test_a_files_with_matches_call_does_not_license_a_later_unbounded_one(self):
+        # The bound has to hold on each call, not once per run.
+        applicable, errors = self._run(20000, [
+            {'pattern': '^MARK', 'output_mode': 'files_with_matches'},
+            {'pattern': '^MARK', 'output_mode': 'content', '-n': True}])
+        self.assertTrue(applicable)
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_head_limit_over_the_shared_standard_is_a_violation(self):
+        fc = self._flow_checks()
+        applicable, errors = self._run(
+            20000, [{'pattern': '^MARK', 'output_mode': 'content',
+                     'head_limit': fc.POSITION_GREP_HEAD_LIMIT + 1}])
+        self.assertTrue(applicable)
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_a_context_window_defeats_the_bound(self):
+        # §26.5 names -A/-B beside head_limit: context multiplies output.
+        applicable, errors = self._run(
+            20000, [{'pattern': '^MARK', 'output_mode': 'content',
+                     'head_limit': 5, '-A': 5}])
+        self.assertTrue(applicable)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn('context window', errors[0])
+
+    def test_within_budget_edit_paths_are_out_of_scope(self):
+        # The within-budget edit contract keeps §11.6's limited-output
+        # basis; this check must stay silent there.
+        applicable, errors = self._run(
+            5613, [{'pattern': '^MARK', 'output_mode': 'content', '-n': True}])
+        self.assertFalse(applicable)
+        self.assertEqual(errors, [])
+
+    def test_a_run_with_no_content_search_reports_nothing(self):
+        applicable, errors = self._run(20000, [])
+        self.assertTrue(applicable)
+        self.assertEqual(errors, [])
 
 
 # New test classes from later tasks go ABOVE this block. unittest.main() must
