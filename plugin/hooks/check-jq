@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # token-shunt SessionStart hook (design §7).
 # Warns once about every missing dependency. Cannot block SessionStart;
-# PreToolUse hooks fail-closed (exit 2) on every Read/Bash instead.
+# PreToolUse hooks fail-closed (exit 2) on every Read/Bash/Agent/Task without jq.
 # This script must not invoke jq: detecting its absence is the point.
 export LC_ALL=C
 
@@ -13,7 +13,7 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
-  add 'jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read and Bash until jq is installed.'
+  add 'jq is not on PATH. PreToolUse hooks fail-closed (exit 2) on every Read, Bash, Agent, and Task until jq is installed.'
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
