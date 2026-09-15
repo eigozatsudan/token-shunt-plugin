@@ -265,13 +265,68 @@ printf '%s\\n' "$FIX"
                     self.assertIn('invalid or missing declared gold_file', verdict['reasons'])
                     self.assertNotIn('missing or mismatched spec/verdict identity', verdict['reasons'])
 
+    def test_native_read_limit_is_pinned_and_recorded_across_modes(self):
+        catalog = json.loads((self.compare / 'cases.json').read_text())
+        for case in catalog['cases']:
+            if case['id'] in ('compare-one-line', 'auto-one-line'):
+                self.assertEqual(case['read_max_output_tokens'], 40000)
+        for expected in (25000, 40000):
+            with self.subTest(limit=expected):
+                result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+printf '%s' "$CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH" CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=1
+READ_MAX_OUTPUT_TOKENS=$2
+run_claude prompt "$TRD/read-cap"
+cat "$TRD/read-cap"
+''', str(expected))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, str(expected))
+        result = self.run_with_cli_double(CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS='1')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for spec in (self.compare / 'tmp/runs').glob('*/specs/auto-small-files.*.json'):
+            self.assertEqual(json.loads(spec.read_text())['read_max_output_tokens'], 25000)
+
     def test_selected_run_end_to_end_with_local_cli_double(self):
         result = self.run_with_cli_double()
+        self.assertIn('probes: pass=3 fail=0', result.stdout)
+        self.assertIn('done: pass=4 fail=0 runs=4', result.stdout)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         verdict = json.loads((self.compare / "last-run.json").read_text())
         self.assertTrue(verdict["selected_run_valid"])
         self.assertFalse(verdict["release_eligible"])
         self.assertEqual(set(verdict["cases"]), {"auto-small-files"})
+
+    def test_summary_uses_final_verdicts_and_keeps_errors_out_of_run_counts(self):
+        summary = self.compare / 'summary.json'
+        summary.write_text(json.dumps({
+            'cases': {'example': {'modes': {
+                'direct': {'verdict': 'pass', 'reasons': []},
+                'auto': {'verdict': 'fail', 'reasons': ['isolation: baseline missing']},
+                'sonnet': {'verdict': 'fail', 'reasons': ['disk: invalid artifact']},
+            }}},
+            'fail_count': 3, 'errors': ['missing isolation fixture'],
+        }))
+        result = self.shell('PASS=6; FAIL=0; CASE_N=3; report_summary "$2"', str(summary))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            'done: pass=1 fail=2 runs=3',
+            'FAIL example/auto: isolation: baseline missing',
+            'FAIL example/sonnet: disk: invalid artifact',
+            'ERROR missing isolation fixture',
+        ])
+
+    def test_summary_rejects_incomplete_aggregate(self):
+        summary = self.compare / 'summary.json'
+        summary.write_text('{"errors":["run incomplete"]}')
+        result = self.shell('report_summary "$2"', str(summary))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('done:', result.stdout)
 
     def test_case_nonzero_exit_is_recorded_but_complete_evidence_still_passes(self):
         result = self.run_with_cli_double(CASE_FAILURE='nonzero')
