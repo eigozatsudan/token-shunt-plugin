@@ -106,6 +106,104 @@ class RoutingTests(unittest.TestCase):
 
 
 
+class AmbiguityResolutionTests(unittest.TestCase):
+    """Design section 925 and the case prompt both allow two endings.
+
+    "境界確認で曖昧さを解消するか unconfirmed / partial" -- the judge only
+    implemented the second, so an answer that resolved the collision on
+    evidence failed. 14 of 16 archived runs of reader-batch-ambiguous fail
+    this check, and the ones I read are substantively correct
+    (reviews/batch-evidence-defect-2026-09-15.md).
+    """
+
+    ALPHA = '/fix/gen/collide/alpha.py'
+    BETA = '/fix/gen/collide/beta.py'
+
+    def exp(self, **over):
+        exp = {'ambiguous_batch': {'paths': [self.ALPHA, self.BETA]},
+               'retry_policy': True,
+               'batch_invocation': [[self.ALPHA, '/fix/user.rb'], [self.BETA]]}
+        exp.update(over)
+        return exp
+
+    def check(self, final, agents=(), exp=None):
+        events = [{'type': 'result', 'result': final}]
+        tr = Transcript(events)
+        return [n for n, _ in check_routing(tr, {}, exp or self.exp(), 'auto',
+                                            list(agents), agent_resolved_models)]
+
+    def resolved_answer(self):
+        return ('**Answer: No.** They are independent constants.\n'
+                'confirmed: %s — TOKEN: string literal, no import or '
+                'reference to any module named beta/beta.py\n'
+                'confirmed: %s — TOKEN: string literal, no import or '
+                'reference to any module named alpha/alpha.py\n'
+                'status: complete' % (self.ALPHA, self.BETA))
+
+    def test_an_answer_resolved_on_evidence_no_longer_needs_partial(self):
+        self.assertEqual([], self.check(self.resolved_answer()))
+
+    def test_the_unconfirmed_partial_ending_still_passes(self):
+        final = ('unconfirmed: TOKEN relationship between alpha and beta\n'
+                 'status: partial')
+        self.assertEqual([], self.check(final))
+
+    def test_an_answer_that_is_neither_still_fails(self):
+        # Silent on both files: no absence evidence and no demotion.
+        final = '**Answer: No.** They look unrelated to me.\nstatus: complete'
+        self.assertIn('batch_evidence', self.check(final))
+
+    def test_covering_only_one_of_the_two_files_is_not_resolution(self):
+        final = ('confirmed: %s — TOKEN: no import or reference to beta\n'
+                 'status: complete' % self.ALPHA)
+        self.assertIn('batch_evidence', self.check(final))
+
+    def test_a_claimed_relationship_fails_however_it_is_worded(self):
+        for claim in ('confirmed: %s — TOKEN refers to the TOKEN in beta.py',
+                      'confirmed: %s — TOKEN references beta.py',
+                      'confirmed: %s — TOKEN depends on beta.py'):
+            with self.subTest(claim=claim):
+                final = self.resolved_answer() + '\n' + (claim % self.ALPHA)
+                self.assertIn('batch_evidence', self.check(final))
+
+    def test_a_mixed_line_is_not_excused_by_its_negated_half(self):
+        # The old comment's warning, kept: "no import, but X refers to Y"
+        # carries a positive claim in its second clause.
+        final = (self.resolved_answer() + '\nconfirmed: %s — no import, but '
+                 'TOKEN refers to beta.TOKEN' % self.ALPHA)
+        self.assertIn('batch_evidence', self.check(final))
+
+    def test_negated_wordings_outside_the_old_template_are_absences(self):
+        for line in (
+                'confirmed: %s — TOKEN: string literal, no import or reference '
+                'to any module named beta/beta.py',
+                'confirmed: %s — this file does not refer to beta.py at all',
+                'confirmed: %s — TOKEN is defined locally, with no reference '
+                'to beta'):
+            with self.subTest(line=line):
+                final = ('%s\nconfirmed: %s — no reference to alpha\n'
+                         'status: complete'
+                         % (line % self.ALPHA, self.BETA))
+                self.assertEqual([], self.check(final))
+
+    def test_a_boundary_confirmation_carrying_both_files_also_resolves(self):
+        # The other branch the prompt offers: one fresh Agent with both.
+        agent = {'id': 'b1', 'name': 'Agent', 'position': (9, 0),
+                 'input': {'subagent_type': 'token-shunt:bulk-reader',
+                           'model': 'haiku',
+                           'prompt': '%s %s --question "same TOKEN?"'
+                                     % (self.ALPHA, self.BETA)}}
+        final = '**Answer: No.** Confirmed by the boundary check.\nstatus: complete'
+        self.assertNotIn('batch_evidence', self.check(final, agents=[agent]))
+
+    def test_a_bare_true_keeps_the_strict_rule(self):
+        # Cases that do not name the colliding paths cannot be resolved by
+        # evidence here, so they keep demanding unconfirmed/partial.
+        exp = self.exp(ambiguous_batch=True)
+        self.assertIn('batch_evidence',
+                      self.check(self.resolved_answer(), exp=exp))
+
+
 def split_read_transcript(reads):
     """One bulk-reader invocation whose child issues `reads`:
     (offset, limit, is_error) tuples against /a.py."""

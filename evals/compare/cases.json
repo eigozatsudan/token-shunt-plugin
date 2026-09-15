@@ -514,7 +514,8 @@
           ],
           "child_msg_max": 4000,
           "child_no_body": true,
-          "ambiguous_batch": true,
+          "ambiguous_batch": {"paths": ["{FIX}/gen/collide/alpha.py",
+                                    "{FIX}/gen/collide/beta.py"]},
           "retry_policy": true
         }
       }

@@ -310,6 +310,59 @@ def rejected_model_launch(tr, agent):
                    for e in tr.events)
 
 
+# A claim about one symbol standing in for another, in either language.
+_RELATION = re.compile(r'refers? to|references?|depends? on|relationship'
+                       r'|関係|参照|依存', re.I)
+_CONFIRMED = re.compile(r'(?<!un)\bconfirmed\s*[:：]', re.I)
+# Clause boundaries: a negation binds to its own clause, not the whole
+# line. A comma is not one -- "No TOKEN definitions, references, or
+# imports found" is a single negated enumeration, not three claims.
+_CLAUSE = re.compile(r'[;；]|\bbut\b|\bhowever\b|\bthough\b|（|\(')
+_NEGATED = re.compile(r'\bno\b|\bnot\b|\bnone\b|\bnever\b|\bwithout\b'
+                      r'|n[\u2019\']t\b|無|不|ない|ません', re.I)
+
+
+def positive_relationship(line):
+    """Does this confirmed line assert a link, rather than deny one?
+
+    An absence is evidence, not a claim: "no import or reference to beta"
+    supports the answer instead of inventing it. A mixed line is judged
+    clause by clause, so "no import, but TOKEN refers to beta" still
+    fails on its second half.
+    """
+    if not (_CONFIRMED.search(line) and 'TOKEN' in line):
+        return False
+    for clause in _CLAUSE.split(line):
+        if _RELATION.search(clause) and not _NEGATED.search(clause):
+            return True
+    return False
+
+
+def absence_covers_collision(final, colliding):
+    """Every colliding file reported, by path, as referring to no other.
+
+    This is the evidence branch of the design's "resolve or demote": the
+    files were read and each says the link is not there.
+    """
+    if len(colliding) < 2:
+        return False
+    for path in colliding:
+        lines = [l for l in final.splitlines()
+                 if path in l and _CONFIRMED.search(l)]
+        if not any(_RELATION.search(l) and not positive_relationship(l)
+                   for l in lines):
+            return False
+    return True
+
+
+def boundary_confirmation(agents, colliding):
+    """One fresh invocation carrying every colliding path together."""
+    if len(colliding) < 2:
+        return False
+    wanted = set(colliding)
+    return any(wanted <= set(_paths(_prompt(agent))) for agent in agents)
+
+
 def check_routing(tr, spec, exp, mode, agents, resolved_models):
     mode = 'auto' if mode == 'delegate' else mode
     errors = []
@@ -379,22 +432,21 @@ def check_routing(tr, spec, exp, mode, agents, resolved_models):
         if not models or not all(_alias(model, expected) for model in models):
             errors.append(('resolved_model', '%s resolved %r; expected %s' % (agent['id'], models, expected)))
         seen[key] = agent
-    if exp.get('ambiguous_batch'):
+    ambiguous = exp.get('ambiguous_batch')
+    if ambiguous:
         final = tr.final_text()
-        # This fixture deliberately has no reference connecting the colliding TOKENs.
-        # Even a boundary reread cannot invent a relationship.
-        if not re.search(r'\bunconfirmed\b', final, re.I) or not re.search(r'\bpartial\b', final, re.I):
+        colliding = ambiguous.get('paths') or [] if isinstance(ambiguous, dict) else []
+        # Design section 925 and the case prompt both allow two endings:
+        # resolve the collision, or report it unconfirmed and partial.
+        # Demanding the second unconditionally failed answers that read
+        # every file and found no reference either way -- negative evidence
+        # is still matching evidence, and the answer is then complete.
+        resolved = (boundary_confirmation(agents, colliding)
+                    or absence_covers_collision(final, colliding))
+        if not resolved and (not re.search(r'\bunconfirmed\b', final, re.I)
+                             or not re.search(r'\bpartial\b', final, re.I)):
             errors.append(('batch_evidence', 'ambiguous TOKEN relationship must remain unconfirmed and partial'))
-        def absence_only(line):
-            # A whole, explicit absence statement is not a positive link.
-            # Do not exempt mixed claims merely because they contain "No".
-            return bool(re.fullmatch(
-                r'\s*(?:[-*+]\s+)?confirmed\s*[:：]\s*(?:/[^\s—–]+|[\w.-]+\.\w+)'
-                r'\s[—–]\s+No TOKEN (?:definitions?|references?|imports?)'
-                r'(?:(?:,\s*(?:or\s+)?|\s+or\s+)(?:definitions?|references?|imports?))*'
-                r' (?:found|present)(?: in (?:this|the) file)?[.!]?'
-                r'(?:\s+\(entire \d+-line file read\))?[.!]?\s*', line, re.I))
-        if any(re.search(r'(?<!un)\bconfirmed\s*[:：]', line, re.I) and re.search(r'refers? to|references?|depends? on|relationship|関係|参照|依存', line, re.I) and 'TOKEN' in line and not absence_only(line) for line in final.splitlines()):
+        if any(positive_relationship(line) for line in final.splitlines()):
             errors.append(('batch_evidence', 'unsupported confirmed relationship for colliding symbols'))
     return errors
 
