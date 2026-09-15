@@ -403,8 +403,11 @@ is_isolating_target() {
   [[ -n $target ]] || return 1
   case $target in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*) return 1;; esac
   case $target in *'$'*|*'`'*|*'~'*|*'<'*|*'>'*|*'*'*|*'?'*|*'['*|*'('*|*')'*|*'{'*) return 1;; esac
-  [[ $target -ef /dev/stdout || $target -ef /dev/stderr ]] && return 1
+  # /dev/null first: the hook's own stderr is often /dev/null, and comparing
+  # the target against it by inode would read a discarding redirect as one
+  # that writes back to the caller.
   [[ $target -ef /dev/null ]] && return 0
+  [[ $target -ef /dev/stdout || $target -ef /dev/stderr ]] && return 1
   resolved=$(readlink -f -- "$target" 2>/dev/null) || resolved=$target
   case $resolved in /dev/stdout|/dev/stderr|/dev/fd/*|/proc/*/fd/*|*'pipe:['*|*'socket:['*) return 1;; esac
   [[ $target -ef /dev/null ]] && return 0
@@ -562,6 +565,65 @@ strip_vars() {
   COMMAND_EXPANSION=${TOK_EXP[i]:-0}
   VTOKS=("${TOKS[i]}" "${prefix[@]}" "${TOKS[@]:i+1}")
   VTOK_KINDS=("${TOK_KINDS[i]}" "${kinds[@]}" "${TOK_KINDS[@]:i+1}")
+  strip_prefix_words
+}
+
+# Words that run another command without being one. `time cat big` reads the
+# file exactly as `cat big` does; judging the prefix as the command let every
+# reader through behind one of them. Each entry says how to skip the prefix's
+# own arguments; anything unrecognised stops the stripping, which leaves the
+# call judged as it was before rather than guessed at.
+strip_prefix_words() {
+  local base rounds=0
+  while (( ${#VTOKS[@]} )) && (( rounds++ < 8 )); do
+    [[ ${VTOK_KINDS[0]} == word ]] || return 0
+    base=${VTOKS[0]##*/}
+    case $base in
+      time)            _drop_prefix '-p' '' ;;
+      command)         _drop_prefix '-p|-v|-V' '' ;;
+      exec)            _drop_prefix '-c|-l' '-a' ;;
+      nice|ionice)     _drop_prefix '-n?*|-c?*|--adjustment=*' '-n|-c|--adjustment' ;;
+      stdbuf)          _drop_prefix '-i?*|-o?*|-e?*|--input=*|--output=*|--error=*' '-i|-o|-e' ;;
+      env)             _drop_prefix '-i|-|--ignore-environment|-0|--null|*=*' '-u|--unset' ;;
+      timeout)         _drop_prefix '--preserve-status|--foreground|-k?*|-s?*|--signal=*|--kill-after=*' '-k|-s|--signal|--kill-after' && _drop_duration ;;
+      busybox|toybox)  _drop_prefix '' '' ;;
+      sudo)            _drop_prefix '-b|-E|-H|-n|-P|-S|--background|--preserve-env|--non-interactive' '-u|-g|-p|-C|--user|--group' ;;
+      *)               return 0 ;;
+    esac || return 0
+  done
+}
+
+# Drop the prefix word and the prefix's own options, leaving the command it
+# runs at VTOKS[0]. `skip` lists options that stand alone, `takes` those that
+# consume the next word. Returns 1 — stop stripping — on anything else that
+# looks like an option, so an unfamiliar invocation is judged as before
+# rather than guessed at.
+_drop_prefix() { # <skip-glob> <takes-value-glob>
+  local skip=$1 takes=$2 i=1 word matched
+  while (( i < ${#VTOKS[@]} )); do
+    [[ ${VTOK_KINDS[i]} == word ]] || break
+    word=${VTOKS[i]}
+    matched=0
+    [[ -n $takes ]] && eval "case \$word in $takes) matched=2 ;; esac"
+    (( matched )) || { [[ -n $skip ]] && eval "case \$word in $skip) matched=1 ;; esac"; }
+    (( matched )) && { ((i+=matched)); continue; }
+    [[ $word == -?* ]] && return 1
+    break
+  done
+  _shift_vtoks "$i"
+}
+
+# timeout's duration operand, e.g. `timeout 5 cat big` or `timeout 1.5s ...`.
+_drop_duration() {
+  (( ${#VTOKS[@]} )) || return 1
+  [[ ${VTOK_KINDS[0]} == word && ${VTOKS[0]} =~ ^[0-9]+([.][0-9]+)?[smhd]?$ ]] || return 1
+  _shift_vtoks 1
+}
+
+_shift_vtoks() {
+  local i=$1
+  (( i < ${#VTOKS[@]} )) || { VTOKS=(); VTOK_KINDS=(); return 0; }
+  VTOKS=("${VTOKS[@]:i}"); VTOK_KINDS=("${VTOK_KINDS[@]:i}")
 }
 
 split_at() { # str cuts... -> SPLIT
@@ -571,6 +633,17 @@ split_at() { # str cuts... -> SPLIT
   SPLIT+=("${s:last}")
 }
 
+# `cat <big` hands the command the same bytes as `cat big`; the file is a
+# read source whichever side of the redirect it sits on. Only a plain `<`
+# (optionally with a descriptor number) opens a file for reading: `<<`,
+# `<<<` and `<&` name a heredoc, a string and a descriptor.
+_redirect_source() { # index of the redirect token
+  local i=$1 op=${TOKS[i]}
+  [[ ${TOK_KINDS[i]} == input_redirect ]] || return 1
+  [[ $op =~ ^[0-9]*\<$ ]] || return 1
+  [[ -f ${TOKS[i+1]-} ]]
+}
+
 # FILES = regular-file args of TOKS[1:] (dash-flags and redirect targets removed).
 # `--` ends option parsing: later dash-tokens are operands.
 collect_file_args() {
@@ -578,12 +651,42 @@ collect_file_args() {
   while (( i < n )); do
     (( i % 128 )) || check_parse_budget
     t=${TOKS[i]}
-    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then
+      _redirect_source "$i" && FILES+=("${TOKS[i+1]}")
+      ((i+=2)); continue
+    fi
     if (( !eoo )) && [[ $t == -- ]];  then eoo=1; ((i++)); continue; fi
     if (( !eoo )) && [[ $t == -* ]];  then ((i++)); continue; fi
     [[ -f $t ]] && FILES+=("$t")
     ((i++))
   done
+}
+
+# `dd if=big` prints the file to stdout as surely as `cat big` does. It is
+# bounded when the bytes go to a file (`of=`) or when bs*count keeps the
+# output under the full-file threshold; an operand we cannot evaluate leaves
+# the call judged at the full threshold.
+run_dd() { # TOKS[0] is dd
+  local i t key value bs='' count='' src='' to_file=0 bound
+  for ((i=1; i<${#TOKS[@]}; i++)); do
+    check_parse_budget
+    [[ ${TOK_KINDS[i]} == word ]] || continue
+    t=${TOKS[i]}; key=${t%%=*}; value=${t#*=}
+    [[ $t == *=* ]] || continue
+    case $key in
+      if)          src=$value ;;
+      of)          to_file=1 ;;
+      bs|ibs|obs)  bs=$value ;;
+      count)       count=$value ;;
+    esac
+  done
+  (( to_file )) && pass
+  [[ -n $src && -f $src ]] || pass
+  if [[ $bs =~ ^[0-9]+$ && $count =~ ^[0-9]+$ && ${#bs} -le 15 && ${#count} -le 15 ]]; then
+    bound=$(( 10#$bs * 10#$count ))
+    (( bound <= MIN_BYTES )) && pass
+  fi
+  FILES=("$src"); check_files_full dd; pass
 }
 
 check_files_full() { # toolname; deny on first exceeding/undetermined target
@@ -618,7 +721,10 @@ ht_parse() {
   while (( i < n )); do
     (( i % 128 )) || check_parse_budget
     t=${TOKS[i]}
-    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then ((i+=2)); continue; fi
+    if [[ ${TOK_KINDS[i]} == redirect || ${TOK_KINDS[i]} == input_redirect ]]; then
+      _redirect_source "$i" && FILES+=("${TOKS[i+1]}")
+      ((i+=2)); continue
+    fi
     if (( !eoo )) && [[ $t == -- ]]; then eoo=1; ((i++)); continue; fi
     if (( eoo )); then [[ -f $t ]] && FILES+=("$t"); ((i++)); continue; fi
     case $t in
@@ -894,6 +1000,10 @@ check_stage_full() {
   ((${#VTOKS[@]})) || return 0
   base=${VTOKS[0]##*/}
   case $base in
+    dd)
+      (( unresolved )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
+      TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+      ( pass() { exit 0; }; run_dd ) || exit $? ;;
     cat|head|tail|less|more)
       (( ${FS_UNCERTAIN:-0} )) && deny "A command in this Bash call may change reader files before execution. Separate file preparation and reading into different Bash calls, then use /token-shunt:bulk-reader if needed."
       (( unresolved )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
@@ -1077,5 +1187,6 @@ TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
 case $base in
   cat|less|more) (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; collect_file_args; check_files_full "$base"; pass ;;
   head|tail)     (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; run_head_tail ;;
+  dd)            (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; run_dd ;;
   *)             pass ;;
 esac

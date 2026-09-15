@@ -367,5 +367,110 @@
   "id": "bash-cd-quoted-operand",
   "cmd": "cd \"@FIX@\" && cat \"space name large.txt\"",
   "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-in-cat",
+  "cmd": "cat <@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-in-cat-spaced",
+  "cmd": "cat < @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-in-head-bytes-deny",
+  "cmd": "head -c 70000 <@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-redirect-in-head-bytes-pass",
+  "cmd": "head -c 100 <@FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-in-wc",
+  "cmd": "wc -c <@FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-in-devnull",
+  "cmd": "cat <@FIX@/large-80k.txt >/dev/null",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-redirect-in-small",
+  "cmd": "cat <@FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-prefix-time",
+  "cmd": "time cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-timeout",
+  "cmd": "timeout 5 cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-env",
+  "cmd": "env LC_ALL=C cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-command",
+  "cmd": "command cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-nice",
+  "cmd": "nice -n 5 cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-stdbuf",
+  "cmd": "stdbuf -o0 cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-busybox",
+  "cmd": "busybox cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-exec",
+  "cmd": "exec cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-chain",
+  "cmd": "time env -i nice -n 1 cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-prefix-keeps-bound",
+  "cmd": "timeout 5 head -c 100 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-prefix-unrelated",
+  "cmd": "timeout 5 git status",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-dd-if-large",
+  "cmd": "dd if=@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-dd-if-bounded",
+  "cmd": "dd if=@FIX@/large-80k.txt bs=1 count=100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-dd-if-to-file",
+  "cmd": "dd if=@FIX@/large-80k.txt of=@FIX@/copy.out",
+  "expect": "pass"
  }
 ]
