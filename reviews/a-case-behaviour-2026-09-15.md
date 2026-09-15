@@ -16,6 +16,10 @@ description へ移した保持義務を、**手順（逐語転記）として書
 | 実行数 | 24（うち委譲18） |
 | 実測費用 | $3.91（1.129 / 1.398 / 1.386） |
 
+**課金測定前の必須確認**: 専用チェックアウトで判定器の selftest
+（`python3 evals/compare/judge.py --selftest`）を通すこと。§1.1 の欠陥は
+これを先に実行していれば起動前に判明した。
+
 前回（`reviews/behaviour-measurement-2026-09-15.md`）は
 **コミット＋保存差分**の構成だった。今回は実行経路に未コミット変更を
 一切含まない。したがって前回との差は、文言変更だけでなく
@@ -64,7 +68,16 @@ run.sh は作業ツリーの判定器を実行するため、汚れたツリー�
 | compare-explicit-multifile/sonnet | 0 | 3 |
 | compare-explicit-multifile/auto | 1 | 2 |
 
-失敗理由は全件 `gold_confirmed` のみ。
+`gold_confirmed` は委譲3モードのみが対象で、direct 6実行は対象外
+（6件とも pass）。委譲18実行のうち失敗は13件。
+
+| 失敗の内訳 | 件数 |
+|---|---|
+| `gold_confirmed` のみ | 12 |
+| `gold_confirmed` + `single_invocation` + `child_reads_once` | 1（周3 `auto-explicit-multifile/haiku`） |
+
+したがって「全実行の失敗理由が `gold_confirmed` のみ」ではない。
+他の契約検査にも1実行で3件同時の失敗がある。
 
 ### 2.2 `gold_confirmed` の成立回数（委譲モードのみ）
 
@@ -72,6 +85,7 @@ run.sh は作業ツリーの判定器を実行するため、汚れたツリー�
 |---|---|---|---|---|---|
 | auto-explicit-multifile | 0/3 | 0/3 | 2/3 | **2/9** | 0/9 |
 | compare-explicit-multifile | 2/3 | 0/3 | 1/3 | **3/9** | 6/9 |
+| 合計 | 2/6 | 0/6 | 3/6 | **5/18** | 6/18 |
 
 ### 2.3 失敗の形（`confirmed_shape`）
 
@@ -87,11 +101,11 @@ run.sh は作業ツリーの判定器を実行するため、汚れたツリー�
 
 ### 2.4 他の検査
 
-委譲側の契約（`agent_type`・`child_no_body`・`child_msg_cap`・
-`single_invocation`・`parent_no_full_read`・`deny_bypass`・`accuracy`）は
-`auto-explicit-multifile/haiku` の `child_reads_once` と
-`single_invocation` が各 2/3 だった以外、すべて 3/3 で成立。
-モデル解決は要求どおり（auto 経路は haiku 要求）。
+委譲側の契約は、`auto-explicit-multifile/haiku` の
+`child_reads_once` と `single_invocation`（各 2/3、落ちたのは同じ周3の
+1実行）を除いてすべて 3/3 で成立。`agent_type`・`child_no_body`・
+`child_msg_cap`・`parent_no_full_read`・`deny_bypass`・`accuracy` は
+全18実行で成立した。モデル解決は要求どおり（auto 経路は haiku 要求）。
 
 ## 3. 判断
 
@@ -101,7 +115,8 @@ run.sh は作業ツリーの判定器を実行するため、汚れたツリー�
   2件とも auto モードに偏っており、n=9 では偶然と区別できない。
 - `compare-explicit-multifile` は 6/9 → 3/9 と下がっている。
   ただし前回とは実行経路が違うため、**悪化を文言のせいにもできない**。
-- 合計では 6/18（前回同条件の集計は 6/18）で、**差がない**。
+- 合計は **5/18**（前回は 0/9 + 6/9 = 6/18）。わずかに下だが、
+  n=18 でこの差は向上・悪化のどちらの根拠にもならない。
 
 すなわち今回言えるのは、**逐語転記への書き換えでも
 `gold_confirmed` の未遵守は解消しなかった**ということまでである。
@@ -111,8 +126,10 @@ run.sh は作業ツリーの判定器を実行するため、汚れたツリー�
 親が SKILL.md 本文を開いた実行は 18件中15件（前回の
 `auto-explicit-multifile` は 9件中3件）。本文を開いた実行でも
 `gold_confirmed` は落ちている。A案の義務は description にあり本文とは
-独立だが、**規則がどこにあっても、文面だけでは守らせられない**という
-既存の観測をさらに補強する。
+独立なので、これは本文の到達性が上がっても当該検査が改善しないことを
+示すに留まる。今回言えるのは、**この配置（description）と
+この転記指示の組み合わせでは遵守を安定させられなかった**ことまでで、
+文面一般について結論づけるものではない。
 
 ## 4. 残件
 
