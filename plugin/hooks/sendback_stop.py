@@ -34,6 +34,13 @@ SIZE_ENV = 'TOKEN_SHUNT_SESSION_MAX_BYTES'
 # still well under a second. Over it, the parent is left alone.
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024
 
+# The oldest CLI whose Stop payload was verified to carry
+# `last_assistant_message` (see the registration decision, section 3.3).
+# Not a claim about when the field appeared: it is the oldest build that
+# could be checked here, and every build from it to 2.1.272 declares the
+# field identically.
+VERSION_FLOOR = (2, 1, 269)
+
 TOO_LARGE = 'too_large'
 BLOCKED = 'blocked'
 NO_BLOCK = 'no_block'
@@ -141,6 +148,30 @@ def final_from_event(event, rows):
     return None, 'final answer not identified'
 
 
+def parse_version(text):
+    """'2.1.272' -> (2, 1, 272); anything else -> None."""
+    if not isinstance(text, str):
+        return None
+    parts = text.split('.')[:3]
+    if len(parts) < 3 or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def cli_version(rows):
+    """The CLI that wrote the session, from its own rows.
+
+    The Stop payload carries no version, but every assistant and user row
+    records the build that wrote it, and the newest of those is the CLI
+    running now. It costs nothing: the rows are already parsed.
+    """
+    for entry in reversed(rows):
+        got = entry.get('version')
+        if isinstance(got, str) and got:
+            return got
+    return None
+
+
 def max_bytes():
     raw = os.environ.get(SIZE_ENV)
     try:
@@ -201,6 +232,12 @@ def decide(event):
     rec['checks'] = {k: v['status'] for k, v in checks.items()}
     rec['final_identified'] = final is not None
     rec['final_source'] = source
+    version = cli_version(rows)
+    parsed = parse_version(version)
+    rec['cli_version'] = version
+    # Recorded on every invocation, so a build that stops supplying the
+    # field is visible in the log instead of quietly blocking nothing.
+    rec['below_version_floor'] = bool(parsed and parsed < VERSION_FLOOR)
     if got['child_texts'] is None:
         rec.update(outcome=NO_BLOCK, reason='worker output unobtainable')
         return rec, {}
@@ -214,6 +251,18 @@ def decide(event):
     lr = checks['line_retention']
     if lr['status'] != rc.VIOLATION:
         rec.update(outcome=NO_BLOCK, reason='retention %s' % lr['status'])
+        return rec, {}
+    if source != 'last_assistant_message':
+        # The only answer in hand came from the session file, and at hook
+        # time the message ending this turn is not in it yet -- what was
+        # read is an earlier turn's text. Blocking on it would invent a
+        # violation, so a transcript-sourced answer is recorded and left
+        # alone. This is also what an older CLI, one that does not supply
+        # the field, falls back to (section 3.3).
+        rec.update(outcome=NO_BLOCK,
+                   reason='retention violation seen, but the answer came '
+                          'from the transcript, not from the Stop input '
+                          '(cli %s)' % (version or 'unknown'))
         return rec, {}
     lost = lr['demoted'] + lr['altered'] + lr['dropped']
     rec.update(outcome=BLOCKED, reason=lr['reason'], lost_lines=len(lost),

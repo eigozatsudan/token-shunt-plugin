@@ -34,9 +34,15 @@ class HookFixture(ts.SessionFixture):
                      % self.src)
 
     def event(self, **kw):
+        # A real Stop carries the text the turn is ending on, so the
+        # fixture does too. `last_assistant_message=None` drops it, which
+        # is what an older CLI or a turn ending on a tool result looks like.
         ev = {'hook_event_name': 'Stop', 'session_id': 's1',
-              'transcript_path': self.session, 'stop_hook_active': False}
+              'transcript_path': self.session, 'stop_hook_active': False,
+              'last_assistant_message': getattr(self, 'answer', None)}
         ev.update(kw)
+        if ev.get('last_assistant_message') is None:
+            ev.pop('last_assistant_message', None)
         return ev
 
     def run_hook(self, event=None):
@@ -46,6 +52,7 @@ class HookFixture(ts.SessionFixture):
 
     def session_with(self, final, worker=None):
         worker = self.line if worker is None else worker
+        self.answer = final
         rows = [ts.prompt(), ts.assistant(ts.tool_use()), ts.tool_result(),
                 ts.note(result=worker), ts.assistant(ts.text(final))]
         return self.write(rows, worker=worker)
@@ -209,11 +216,59 @@ class StopInputTests(HookFixture):
         self.assertIn('repeats earlier narration', rec['reason'])
         self.assertEqual(out, {})
 
-    def test_the_transcript_is_still_used_when_the_event_says_nothing(self):
+    def test_a_transcript_sourced_answer_is_recorded_but_not_blocked(self):
+        # Without the field there is no text for THIS turn: the session
+        # file still ends on the previous one. The violation is recorded
+        # -- it is what offline analysis reads -- but nothing is sent back.
         self.session_with('Summary with no citations.')
-        rec, _ = sh.decide(self.event())
+        rec, out = sh.decide(self.event(last_assistant_message=None))
         self.assertEqual(rec['final_source'], 'transcript')
+        self.assertEqual(rec['checks']['line_retention'], 'violation')
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertIn('from the transcript', rec['reason'])
+        self.assertEqual(out, {})
+
+
+class VersionTests(HookFixture):
+    """The CLI build is recorded, never inferred (decision §3 item 3)."""
+
+    def write_versioned(self, version):
+        rows = [ts.prompt(), ts.assistant(ts.tool_use()), ts.tool_result(),
+                ts.note(result=self.line),
+                ts.assistant(ts.text('Summary with no citations.'))]
+        for row in rows:
+            if row.get('type') in ('assistant', 'user') and version:
+                row['version'] = version
+        self.answer = 'Summary with no citations.'
+        return self.write(rows, worker=self.line)
+
+    def test_the_build_that_wrote_the_session_is_recorded(self):
+        self.write_versioned('2.1.272')
+        rec, _ = sh.decide(self.event())
+        self.assertEqual(rec['cli_version'], '2.1.272')
+        self.assertFalse(rec['below_version_floor'])
         self.assertEqual(rec['outcome'], sh.BLOCKED)
+
+    def test_a_build_below_the_floor_is_flagged(self):
+        self.write_versioned('2.1.268')
+        rec, _ = sh.decide(self.event())
+        self.assertTrue(rec['below_version_floor'])
+
+    def test_an_unknown_build_is_not_called_old(self):
+        # No version in the rows is not evidence of an old CLI, and the
+        # field the hook actually depends on is present either way.
+        self.write_versioned(None)
+        rec, _ = sh.decide(self.event())
+        self.assertIsNone(rec['cli_version'])
+        self.assertFalse(rec['below_version_floor'])
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+
+    def test_unparsable_version_strings(self):
+        for raw in (None, '', '2.1', 'dev', '2.1.x', 2):
+            with self.subTest(raw=raw):
+                self.assertIsNone(sh.parse_version(raw))
+        self.assertEqual(sh.parse_version('2.1.272'), (2, 1, 272))
+        self.assertGreaterEqual(sh.parse_version('2.1.269'), sh.VERSION_FLOOR)
 
 
 class EarlyStopTests(HookFixture):
