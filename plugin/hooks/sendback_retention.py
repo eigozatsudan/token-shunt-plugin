@@ -35,6 +35,11 @@ UNDETERMINED = 'undetermined'
 _ABS = re.compile(r"(?<![\w./-])(/[^\s`\"'<>]+)")
 # `/tmp/.../app/models/user.rb` and `/tmp/…/user.rb` name no single file.
 _ELIDED = re.compile(r'/\.\.\.(?:/|$)|…')
+# `user.rb:12`, `user.rb:12:5`, `user.rb:12-40`, `user.rb#L12`: where a
+# reader points inside the file. The file is still the citation, and
+# leaving the suffix on makes the path resolve to nothing -- which reads
+# as "the file is gone" and stops the check from judging the parent.
+_LOCATOR = re.compile(r'(?::\d+(?:[:-]\d+)?|\#L\d+(?:-L?\d+)?)$')
 
 CONFIRMED = 'confirmed:'
 UNCONFIRMED = 'unconfirmed:'
@@ -83,7 +88,7 @@ def citation(line):
     m = _ABS.search(head)
     if not m:
         return None
-    return m.group(1).rstrip('.,;:)')
+    return _LOCATOR.sub('', m.group(1).rstrip('.,;:)'))
 
 
 # A head that states no file: `confirmed:` alone, or a placeholder where a

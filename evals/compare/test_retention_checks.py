@@ -64,6 +64,24 @@ class ConfirmedLineTests(unittest.TestCase):
     def test_citation_is_the_path_before_the_dash(self):
         self.assertEqual(rc.citation(item(A, 'mentions /etc/passwd')), A)
 
+    def test_a_line_number_suffix_still_cites_the_file(self):
+        """`path:12` is how a reader writes a citation, not a filename.
+
+        Read left as-is it resolves to nothing, the item classifies as
+        UNDETERMINED, and a parent that dropped the line is passed.
+        """
+        for suffix in (':12', ':12:5', ':12-40', '#L12'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(rc.citation(item(A + suffix, 'TOKEN is 42')),
+                                 A)
+                self.assertEqual(rc.classify_path(
+                    rc.citation(item(A + suffix, 'x')), here), rc.OK)
+
+    def test_a_dropped_line_with_a_line_number_is_a_violation(self):
+        child = item(A + ':12', 'TOKEN is 42')
+        got = rc.check_line_retention([child], 'nothing of the sort', here)
+        self.assertEqual(got['status'], rc.VIOLATION)
+
     def test_citation_of_a_pathless_line_is_none(self):
         self.assertIsNone(rc.citation('confirmed: user.rb — relative'))
 
