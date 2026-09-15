@@ -19,6 +19,7 @@ parent did or did not resume.
 """
 import json
 import os
+import re
 import sys
 
 import sendback_retention as rc
@@ -219,6 +220,23 @@ def worker_block_reason(check):
     return '\n'.join([head] + list(check['unusable']))
 
 
+# A body the CLI wrote in place of a worker turn: the request failed, or
+# the account ran out of session. Nothing answered, so nothing can restate
+# -- a send-back here spends a turn demanding work of a worker that never
+# got to work. Anchored at the start and length-bounded on purpose: a real
+# report that merely mentions an API error is still judged.
+_INFRA = re.compile(r"^(api error\b"
+                    r"|you(?:'| ha)ve hit your (?:session|usage) limit"
+                    r"|claude(?: code)? is (?:unavailable|overloaded))", re.I)
+_INFRA_MAX = 400
+
+
+def infrastructure_error(said):
+    """Is this the harness reporting a failure rather than a worker report?"""
+    body = (said or '').strip()
+    return len(body) <= _INFRA_MAX and bool(_INFRA.match(body))
+
+
 def decide_worker(event):
     """The reader worker's own report, judged before it reaches the parent.
 
@@ -246,6 +264,10 @@ def decide_worker(event):
         # hold the message this stop is about, so there is nothing to judge.
         rec.update(outcome=NO_BLOCK,
                    reason='worker report not in the SubagentStop input')
+        return rec, {}
+    if infrastructure_error(said):
+        rec.update(outcome=NO_BLOCK,
+                   reason='worker turn failed before it reported')
         return rec, {}
     check = rc.check_child_items([said])
     demoted = rc.unconfirmed_lines(said)

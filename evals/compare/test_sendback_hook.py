@@ -519,6 +519,25 @@ class WorkerTests(HookFixture):
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
         self.assertEqual(rec['checks']['child_items'], 'ok')
 
+    def test_a_failed_worker_turn_is_not_sent_back(self):
+        # The CLI wrote these in place of a report; there is no worker
+        # turn to restate. Both shapes are in the saved corpus.
+        for body in ("API Error: Claude's response exceeded the 32000 "
+                     "output token maximum. To configure this behavior, set "
+                     "the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.",
+                     "You've hit your session limit \u00b7 resets 3am (Asia/Tokyo)"):
+            with self.subTest(body=body[:20]):
+                rec, out = sh.decide(self.worker_event(body))
+                self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+                self.assertIn('failed before it reported', rec['reason'])
+                self.assertEqual(out, {})
+
+    def test_a_report_that_mentions_an_api_error_is_still_judged(self):
+        rec, _ = sh.decide(self.worker_event(
+            'I hit an API Error: overloaded, retried, and read the file. '
+            'Then I summarised it in prose without any citation.'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+
     def test_another_agent_is_not_under_the_reader_contract(self):
         rec, _ = sh.decide(self.worker_event('No citations here.',
                                              agent_type='token-shunt:code-writer'))
