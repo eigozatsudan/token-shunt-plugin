@@ -1,0 +1,348 @@
+{
+  "basis": "Archived per-run verdicts versus current judge on the same 75 archived transcripts. Only gold_paths is copied from the current catalog into archived specs; prompts, native Read cap, and all other expectations stay archived. No new model execution.",
+  "source_run": "evals/compare/tmp/runs/run.4PslHQBQ",
+  "scope": "Per-run transcript judge only. Aggregate isolation, disk checks and release eligibility are not recomputed; original aggregate pass39/fail36 includes additional isolation failures.",
+  "source_sha256": {
+    "evals/compare/judge.py": "acbc99ffddbc769fb2e836ca220cb24d8c7d1f187c4355636abe875c139ab7a6",
+    "evals/compare/routing_checks.py": "677850fc5278200cc07cf19cf228071a23c9275e9d947354f25f9ffb7bc19c17",
+    "evals/compare/flow_checks.py": "9ccd609c96005f949915c5fb46703d40b4a4fc5dffe33fb2e896fca4027c5c99",
+    "evals/compare/cases.json": "3649ddd22e583d61927ea19f59ebd3c2f7ba7031c97d682f254c439745a03f37"
+  },
+  "before": {
+    "runs": 75,
+    "pass": 42,
+    "fail": 33,
+    "reason_occurrences": {
+      "accuracy": 4,
+      "agent_calls": 3,
+      "agent_type": 3,
+      "batch_evidence": 2,
+      "child_format": 2,
+      "child_msg_cap": 2,
+      "child_reads_once": 6,
+      "child_ref_before_write": 1,
+      "child_status": 6,
+      "deny_bypass": 3,
+      "deny_route": 1,
+      "edit_flow": 2,
+      "gold_confirmed": 7,
+      "no_parent_write": 1,
+      "parent_bash": 1,
+      "parent_no_full_read": 1,
+      "parent_reads": 2,
+      "single_invocation": 2,
+      "verification_execution": 13
+    }
+  },
+  "after": {
+    "runs": 75,
+    "pass": 49,
+    "fail": 26,
+    "reason_occurrences": {
+      "accuracy": 4,
+      "agent_calls": 3,
+      "agent_type": 3,
+      "batch_evidence": 2,
+      "child_format": 2,
+      "child_msg_cap": 2,
+      "child_reads_once": 6,
+      "child_ref_before_write": 1,
+      "child_status": 6,
+      "deny_bypass": 1,
+      "deny_route": 1,
+      "edit_flow": 2,
+      "gold_confirmed": 5,
+      "no_parent_write": 1,
+      "parent_bash": 1,
+      "parent_no_full_read": 1,
+      "parent_reads": 2,
+      "single_invocation": 2
+    }
+  },
+  "remaining_gold_failures": [
+    {
+      "case": "compare-explicit-multifile",
+      "mode": "haiku",
+      "reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "evidence_failure": "Parent uses ellipsized paths (.../app/...), not absolute source paths.",
+      "parent_final_excerpt": "- confirmed: `.../app/models/user.rb` — includes concern: **Notifiable**"
+    },
+    {
+      "case": "compare-explicit-multifile",
+      "mode": "sonnet",
+      "reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "evidence_failure": "Parent uses ellipsized paths (.../app/...), not absolute source paths.",
+      "parent_final_excerpt": "- confirmed: `.../app/models/user.rb` — includes `Notifiable`, registers `after_create` callback calling `send_welcome_email` → `deliver_notifications`"
+    },
+    {
+      "case": "auto-explicit-multifile",
+      "mode": "haiku",
+      "reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "evidence_failure": "Parent final answer omits confirmed: evidence items and absolute source citations.",
+      "parent_final_excerpt": "Chain confirmed end-to-end:\n\n- `User` includes the `Notifiable` concern and has an `after_create` callback that calls `send_welcome_email`.\n- `send_welcome_email` (private method near the end of `user.rb`) calls `deliver_notifications`.\n- `deliver_notification"
+    },
+    {
+      "case": "auto-explicit-multifile",
+      "mode": "sonnet",
+      "reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "evidence_failure": "Parent final answer omits confirmed: evidence items and absolute source citations.",
+      "parent_final_excerpt": "After a `User` is created:\n\n1. `User` includes the **`Notifiable`** concern, which wires up `after_create :send_welcome_email`, calling the private method `deliver_notifications`.\n2. `Notifiable#deliver_notifications` enqueues **`WelcomeEmailJob`** via `Welcom"
+    },
+    {
+      "case": "auto-explicit-multifile",
+      "mode": "auto",
+      "reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "evidence_failure": "Parent final answer omits confirmed: evidence items and absolute source citations.",
+      "parent_final_excerpt": "After a `User` is created:\n\n1. `User` (user.rb:4) fires an `after_create :send_welcome_email` callback.\n2. `send_welcome_email` (private, user.rb:529) calls `deliver_notifications`, provided by the included **`Notifiable`** concern (`app/models/concerns/notifi"
+    }
+  ],
+  "changed_runs": [
+    {
+      "case": "compare-explicit-multifile",
+      "mode": "auto",
+      "gold_paths_changed": true,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "writer-verification-levels",
+      "mode": "auto",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "child_status: worker toolu_01NGM6xjEgoYv8TRh78r3rGu lacks explicit status and stop_reason",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_config.json lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_notes.md lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_notes.yaml lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_missing_key.json lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_trunc.json lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_fence.md lacks parent verification command/result before report",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_req.json lacks parent verification command/result before report"
+        ]
+      },
+      "after": {
+        "verdict": "fail",
+        "reasons": [
+          "child_status: worker toolu_01NGM6xjEgoYv8TRh78r3rGu lacks explicit status and stop_reason"
+        ]
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_config.json lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_notes.md lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_notes.yaml lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_missing_key.json lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_trunc.json lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/verify/control_fence.md lacks parent verification command/result before report",
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/vl_req.json lacks parent verification command/result before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "reader-batch-evidence",
+      "mode": "auto",
+      "gold_paths_changed": true,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "gold_confirmed: gold not in confirmed: + matching path: Notifiable, WelcomeEmailJob, UserMailer"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "gold_confirmed: gold not in confirmed: + matching path: Notifiable, WelcomeEmailJob, UserMailer"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-explicit-multifile",
+      "mode": "sonnet",
+      "gold_paths_changed": true,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob",
+          "deny_bypass: parent Bash recovered body of /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/rails/app/models/user.rb"
+        ]
+      },
+      "after": {
+        "verdict": "fail",
+        "reasons": [
+          "gold_confirmed: gold not in confirmed: + matching path: Notifiable, after_create, WelcomeEmailJob"
+        ]
+      },
+      "removed_reasons": [
+        "deny_bypass: parent Bash recovered body of /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/rails/app/models/user.rb"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer",
+      "mode": "direct",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer",
+      "mode": "haiku",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer",
+      "mode": "sonnet",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-49-lines-writer",
+      "mode": "auto",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w49.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines-writer",
+      "mode": "direct",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w50.py lacks successful parent py_compile before report"
+        ]
+      },
+      "after": {
+        "verdict": "pass",
+        "reasons": []
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w50.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-50-lines-writer",
+      "mode": "auto",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "agent_type: no Agent with subagent_type=token-shunt:code-writer (saw [])",
+          "agent_calls: 0 Agent calls, want 1..4",
+          "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w50.py lacks successful parent py_compile before report",
+          "no_parent_write: parent invoked Write"
+        ]
+      },
+      "after": {
+        "verdict": "fail",
+        "reasons": [
+          "agent_type: no Agent with subagent_type=token-shunt:code-writer (saw [])",
+          "agent_calls: 0 Agent calls, want 1..4",
+          "no_parent_write: parent invoked Write"
+        ]
+      },
+      "removed_reasons": [
+        "verification_execution: /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/w50.py lacks successful parent py_compile before report"
+      ],
+      "added_reasons": []
+    },
+    {
+      "case": "auto-routing-boundary-known-range-deny",
+      "mode": "auto",
+      "gold_paths_changed": false,
+      "before": {
+        "verdict": "fail",
+        "reasons": [
+          "deny_route: target Read lacks matching token-shunt deny and failed result before reader Agent on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/bulk_facts.py",
+          "deny_bypass: parent Bash recovered body of /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/bulk_facts.py"
+        ]
+      },
+      "after": {
+        "verdict": "fail",
+        "reasons": [
+          "deny_route: target Read lacks matching token-shunt deny and failed result before reader Agent on /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/bulk_facts.py"
+        ]
+      },
+      "removed_reasons": [
+        "deny_bypass: parent Bash recovered body of /home/dev/projects/skills/token-shunt/evals/compare/tmp/runs/run.4PslHQBQ/work/fixtures/gen/bulk_facts.py"
+      ],
+      "added_reasons": []
+    }
+  ]
+}
