@@ -80,6 +80,8 @@ SubagentStop は `agent_type` と `agent_transcript_path` を受け取るので�
 
 旧 spec 実行は全コーパスから除外（期待パスが解決し得ないため）。
 
+単位はいずれも**実行（トランスクリプト）単位**である。
+
 | コーパス | 実行 | `child_items` (ok/違反/不能) | `file_coverage` | `line_retention` |
 |---|---|---|---|---|
 | 今回の測定 | 18 | 12 / 6 / 0 | 5 / 7 / 6 | 5 / 7 / 6 |

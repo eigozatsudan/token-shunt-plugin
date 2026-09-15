@@ -173,8 +173,10 @@ class FinalAnswerTests(SessionFixture):
                     assistant(text('Answer.'))])
         self.assertEqual(se.final_answer(self.session)['text'], 'Answer.')
 
-    def test_a_turn_ending_on_a_tool_result_has_no_final_text(self):
-        # The same turn shape whose Stop-hook block the CLI discards.
+    def test_a_turn_with_no_text_after_the_last_tool_result(self):
+        # The answer is unidentifiable. Why the turn ended -- interruption,
+        # or an ending whose Stop-hook block the CLI discards -- is not
+        # something the transcript's tool sequence settles.
         self.write([prompt(), assistant(tool_use()), tool_result()])
         got = se.final_answer(self.session)
         self.assertIsNone(got['text'])

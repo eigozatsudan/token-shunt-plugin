@@ -229,9 +229,14 @@ def final_answer(session_path):
     Not simply the last assistant text: a parent narrates between tool calls
     ("the worker is reading the three files now") and those lines are not the
     answer. Only the run of assistant text after the last interruption
-    counts. When the turn ended on a tool result there is no such run, and
-    that is reported rather than approximated -- the same shape of turn whose
-    Stop-hook block the CLI discards.
+    counts. When no such run exists the answer cannot be identified, and
+    that is reported rather than approximated.
+
+    `no_final_text` says only that: the final answer was not identifiable.
+    It is not a claim about why the turn ended. A transcript's tool sequence
+    does not distinguish an interrupted turn from one the CLI ended on a
+    tool result, an MCP end-turn or a loop tick -- the endings whose
+    Stop-hook block is discarded -- so the two must not be equated here.
     """
     rows = read_jsonl(session_path)
     cut = -1
