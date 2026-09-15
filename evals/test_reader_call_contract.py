@@ -632,7 +632,12 @@ class SkillDocumentTests(unittest.TestCase):
         # Restoring them costs ~180 bytes and is reachability-critical, so the
         # cap is raised rather than paid for by deleting body rules the tests
         # above require. The point of the bound is the reduction from 11522.
-        self.assertLess(self.SKILL.stat().st_size, 7000,
+        # Raised from 7000 on 2026-09-15: check-grep-bounds made the "not
+        # hooked" claim false, and the replacement has to say which searches
+        # are hooked and which are not — a reader that believes the old
+        # sentence either fears a deny that will not come or walks into one.
+        # ~240 bytes, and the prohibitions above it are untouched.
+        self.assertLess(self.SKILL.stat().st_size, 7300,
                         self.SKILL.stat().st_size)
 
 

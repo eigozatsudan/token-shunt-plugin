@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Judge size from metadata (stat/wc -c) before the first Read or content search, never from the body. Then route: delegate when the needed I/O — the whole file when all of it is needed, otherwise the sum of the known ranges — exceeds 16384 bytes; keep known ranges totaling at most 16384 bytes in the parent when each targeted Read passes the hook. Not needed when the deny already carries the call spec — follow it and delegate. Also use for explicit delegation with no hook deny, how to batch (4+ paths) and cross-file relationships, ambiguity between confirmed/unconfirmed evidence, and retry or escalation after partial. After the metadata check: needed range unknown and over budget -> delegate before any content search. Grep output_mode=content is not hooked; never use it to fetch the answer or to discover a range and claim the known-range exception. Ranges known in advance and within budget stay in the parent; position-only search for the edit contract is unchanged. Copy each worker `confirmed:` line into the final answer verbatim, one per line; collapse only identical lines; a line whose path is not absolute keeps its text but becomes `unconfirmed:`. Resolve auto to haiku before calling Agent; never pass "auto". Not for debugging, architecture, or edits needing exact parent context. Do not @-mention large files.
+description: Judge size from metadata (stat/wc -c) before the first Read or content search, never from the body. Then route: delegate when the needed I/O — the whole file when all of it is needed, otherwise the sum of the known ranges — exceeds 16384 bytes; keep known ranges totaling at most 16384 bytes in the parent when each targeted Read passes the hook. Not needed when the deny already carries the call spec — follow it and delegate. Also use for explicit delegation with no hook deny, how to batch (4+ paths) and cross-file relationships, ambiguity between confirmed/unconfirmed evidence, and retry or escalation after partial. After the metadata check: needed range unknown and over budget -> delegate before any content search. Grep output_mode=content on one over-budget file is hooked (size known first, then head_limit 1-20); a directory or glob search is not hooked; never use it to fetch the answer or to discover a range and claim the known-range exception. Ranges known in advance and within budget stay in the parent; position-only search for the edit contract is unchanged. Copy each worker `confirmed:` line into the final answer verbatim, one per line; collapse only identical lines; a line whose path is not absolute keeps its text but becomes `unconfirmed:`. Resolve auto to haiku before calling Agent; never pass "auto". Not for debugging, architecture, or edits needing exact parent context. Do not @-mention large files.
 ---
 
 # bulk-reader
@@ -24,11 +24,13 @@ Agent.
    16385-byte file the hook would allow to Read.
 
    **Route before searching (§26.5).** Decide the route from metadata
-   *before* running a content search. Grep `output_mode=content` (and
-   `-o`, `head -c`, ...) is not hooked, so it can pull body text out of
-   an oversized file and make routing moot. On a file already over
-   budget, don't content-search for the answer — delegate, and let the
-   child read. Content search there stays allowed only to establish
+   *before* running a content search. On a single file already over
+   budget, Grep `output_mode=content` is hooked: the size has to be known
+   first, then the bound below. A directory, a `glob` set or a bare
+   search is not hooked, and neither are `-o`, `head -c`, ... — those can
+   still pull body text out of an oversized file and make routing moot.
+   Don't content-search for the answer — delegate, and let the child
+   read. Content search there stays allowed only to establish
    *positions* for the §11.6 edit contract or confirm a known range,
    with `files_with_matches`, or `content` with `head_limit`
    1-20 and no `-A`/`-B`/`-C`. After a denied Read, never

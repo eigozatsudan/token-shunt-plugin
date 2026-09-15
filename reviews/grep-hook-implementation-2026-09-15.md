@@ -81,6 +81,25 @@ fallback 経路では記録しない）。
 - `evals/compare` 372件 OK。
 - `scripts/build-zip.sh` の実行ビット検証3箇所に `check-grep-bounds` を追加。
 
+## 4.1 実装後に見つかって直した2件（2026-09-15）
+
+- **相対パスがフックの cwd で解決されていた。** `check-file-size:238` /
+  `check-bash-read:248` と同じく、stdin JSON のトップレベル `cwd` が絶対パスなら
+  そこへ移ってから判定する。直す前は、セッション cwd にある `big.txt` を
+  フックの cwd から見て存在しないと判断して**素通し**し、フックの cwd に同名の
+  小さいファイルがあれば**そちらを判定して予算内として通していた**。
+  不正な `cwd` は Read 側と同様に deny。ただし記録経路（PostToolUse / `--sized`）は
+  拒否しても意味が無いので、絶対パスだけを記録する。
+- **`token-shunt:code-writer` を `bulk-reader` へ誘導していた。**
+  writer の tools は Read / Write / Grep / Glob で Bash が無く、
+  `check-file-size` は writer の Read をサイズ免除する。
+  つまり writer には**計測手段が無い**（成功した Read は計測に数えない）。
+  拒否上限に達したとき、writer には持っていない経路を指示しないようにし、
+  拒否本文も `wc -c` ではなく `files_with_matches` / 範囲 Read を案内する。
+  **残る制限**：writer の予算超過ファイルへの content Grep は依然として通らない。
+  `files_with_matches` / `count` / Read→Write は従来どおり通る。
+  計測規則そのものを writer で免除する案（設計調査の案2）は採っていない。
+
 ## 5. 限界
 
 - **実機で拒否が起き、親が直して通ったという観測は0件である。**
