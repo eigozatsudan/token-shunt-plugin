@@ -852,5 +852,85 @@
   "id": "bash-xargs-stdin-small",
   "cmd": "xargs echo <@FIX@/small-10.txt",
   "expect": "pass"
+ },
+ {
+  "id": "bash-shell-c-metadata",
+  "cmd": "bash -c \"wc -l @FIX@/large-80k.txt\"",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-shell-c-bounded",
+  "cmd": "bash -c \"head -c 100 @FIX@/large-80k.txt\"",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-shell-c-pipeline",
+  "cmd": "sh -c \"cat @FIX@/large-80k.txt | head -c 100\"",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-shell-c-nested-read",
+  "cmd": "bash -c \"bash -c 'cat @FIX@/large-80k.txt'\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-shell-c-compound",
+  "cmd": "bash -c \"echo ok; cat @FIX@/large-80k.txt\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-shell-c-grep-bounded",
+  "cmd": "bash -c \"grep -c foo @FIX@/large-80k.txt\"",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-shell-lc-read",
+  "cmd": "bash -lc 'cat @FIX@/large-80k.txt'",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-max-count",
+  "cmd": "grep -m 20 foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-max-count-attached",
+  "cmd": "grep -m20 foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-max-count-long",
+  "cmd": "grep --max-count=20 foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-max-count-over-cap",
+  "cmd": "grep -m 21 foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-max-count-context",
+  "cmd": "grep -m 20 -C 3 foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-max-count-two-files",
+  "cmd": "grep -m 20 foo @FIX@/large-80k.txt @FIX@/f400-20k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-pipe-head-lines",
+  "cmd": "grep foo @FIX@/large-80k.txt | head -n 20",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-pipe-head-lines-over",
+  "cmd": "grep foo @FIX@/large-80k.txt | head -n 21",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-cat-pipe-head-lines-still-deny",
+  "cmd": "cat @FIX@/large-80k.txt | head -n 20",
+  "expect": "deny"
  }
 ]
