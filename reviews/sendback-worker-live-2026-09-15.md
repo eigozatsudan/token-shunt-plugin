@@ -84,5 +84,6 @@
 TS_HOOK_NAMES = {..., "Stop", "SubagentStop"}
 ```
 
-`judge.py` の側は先に入れてある（登録しても評価が壊れない状態にしておくため）。
-`hooks.json` への追加は**未実施**である。
+`judge.py` の側は先に入れた（登録しても評価が壊れない状態にしておくため）。
+`hooks.json` への追加も、この記録の直後に実施した
+（`sendback-worker-side-2026-09-15.md` §5、コミット `9d1b1d5`）。
