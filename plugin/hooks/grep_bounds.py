@@ -39,8 +39,13 @@ CONTEXT_FLAGS = ('-A', '-B', '-C')
 _STAT_FLAG = re.compile(r'^-[A-Za-z]+$|^--[A-Za-z-]+(=.*)?$')
 # Flags whose value is the next word, not a file: stat's format strings.
 # `wc -c` is the byte count itself, so this is keyed by command.
-_TAKES_VALUE = {'stat': ('-c', '-f', '--format', '--printf'), 'wc': ()}
-_UNSAFE = set('$`|;&<>()\n\\*?[]{}!~')
+_TAKES_VALUE = {'stat': ('-c', '--format', '--printf'), 'wc': ()}
+# A size the caller was never shown is not a measurement. `stat` prints one
+# by default, but a format string prints exactly what it names, so the
+# format has to name the size; `%%` is a literal percent, not a directive.
+_SIZE_DIRECTIVE = re.compile(r'%[-#0 +\']*[0-9]*s')
+_STAT_FORMAT = ('-c', '--format', '--printf')
+_UNSAFE = set('$`|;&<>()#\n\\*?[]{}!~')
 # The writer has Read, Write, Grep, Glob and no Bash, and check-file-size
 # exempts its Reads, so neither way of learning a size is open to it. It is
 # still held to the bound, but never sent down a route it does not have.
@@ -97,6 +102,29 @@ def is_measured(state, path, stat=os.stat):
                 and got.get('mtime_ns') == st.st_mtime_ns)
 
 
+def _stat_shows_size(rest):
+    """Does this `stat` print the byte count of its operands?
+
+    Bare `stat` does. A format string prints only what it names, so it
+    must contain a `%s` directive -- `stat -c %n` names the path alone.
+    `-f` describes the filesystem rather than the file and never does.
+    """
+    formats = []
+    take = False
+    for word in rest:
+        if take:
+            formats.append(word)
+            take = False
+            continue
+        if word in ('-f', '--file-system'):
+            return False
+        if word in _STAT_FORMAT:
+            take = True
+        elif any(word.startswith(f + '=') for f in _STAT_FORMAT):
+            formats.append(word.split('=', 1)[1])
+    return all(_SIZE_DIRECTIVE.search(f.replace('%%', '')) for f in formats)
+
+
 def metadata_paths(command):
     """File operands of a bare `stat`/`wc -c`, or [] for anything else.
 
@@ -119,6 +147,8 @@ def metadata_paths(command):
         return []
     rest = words[1:]
     if base == 'wc' and not any(w in ('-c', '--bytes') for w in rest):
+        return []
+    if base == 'stat' and not _stat_shows_size(rest):
         return []
     paths = []
     skip = False

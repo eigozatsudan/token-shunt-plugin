@@ -159,6 +159,30 @@ class MetadataCommandTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(gb.metadata_paths(command), want)
 
+    def test_a_command_that_never_prints_a_size_records_nothing(self):
+        """The hook cannot see stdout, so the command must have shown one.
+
+        `stat -c %n` prints the name and nothing else; `stat -f` describes
+        the filesystem. Recording either would mark the file measured
+        without the caller ever having been told how big it is, which is
+        the whole of the first rule.
+        """
+        for command in ('stat -c %n /srv/a.py', 'stat --format=%n /srv/a.py',
+                        'stat --printf=%N /srv/a.py', 'stat -c %%s /srv/a.py',
+                        'stat -f /srv/a.py', 'stat -f -c %s /srv/a.py'):
+            with self.subTest(command=command):
+                self.assertEqual(gb.metadata_paths(command), [])
+
+    def test_a_format_that_does_print_the_size_still_records(self):
+        for command in ('stat -c %s /srv/a.py', 'stat -c "%n %s" /srv/a.py',
+                        'stat --printf=%10s /srv/a.py'):
+            with self.subTest(command=command):
+                self.assertEqual(gb.metadata_paths(command), ['/srv/a.py'])
+
+    def test_a_comment_hides_the_file_the_size_was_not_taken_of(self):
+        """`wc -c small # large` counts small; bash never sees large."""
+        self.assertEqual(gb.metadata_paths('wc -c /srv/a.py # /srv/big.py'), [])
+
     def test_anything_a_shell_could_expand_records_nothing(self):
         for command in ('wc -c $F', 'wc -c a.py; rm -rf /', 'wc -c `echo a`',
                         'wc -c a.py && cat b', 'wc -c *.py', 'cat /srv/a.py',

@@ -1084,8 +1084,9 @@ def ts_hook_denies(tr):
 # certify the product with the product's own parser. Same narrow reading
 # -- a bare `wc -c` or `stat` naming the file, nothing a shell expands.
 _METADATA_CMDS = ("wc", "stat")
-_META_UNSAFE = set("$`|;&<>()\n\\*?[]{}!~")
-_META_VALUE_FLAGS = {"stat": ("-c", "-f", "--format", "--printf"), "wc": ()}
+_META_UNSAFE = set("$`|;&<>()#\n\\*?[]{}!~")
+_META_VALUE_FLAGS = {"stat": ("-c", "--format", "--printf"), "wc": ()}
+_META_SIZE = re.compile(r"%[-#0 +']*[0-9]*s")
 
 
 def measures_path(use, path, spec):
@@ -1105,6 +1106,23 @@ def measures_path(use, path, spec):
     rest = words[1:]
     if base_cmd == "wc" and not any(w in ("-c", "--bytes") for w in rest):
         return False
+    if base_cmd == "stat":
+        # The format prints what it names, so it has to name the size; a
+        # `stat -c %n` showed the parent a path and nothing else.
+        formats, take = [], False
+        for word in rest:
+            if take:
+                formats.append(word)
+                take = False
+            elif word in ("-f", "--file-system"):
+                return False
+            elif word in _META_VALUE_FLAGS["stat"]:
+                take = True
+            elif any(word.startswith(f + "=")
+                     for f in _META_VALUE_FLAGS["stat"]):
+                formats.append(word.split("=", 1)[1])
+        if not all(_META_SIZE.search(f.replace("%%", "")) for f in formats):
+            return False
     cwd = (spec or {}).get("tool_cwd") or ""
     skip = False
     for word in rest:
