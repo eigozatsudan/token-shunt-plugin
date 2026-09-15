@@ -134,15 +134,15 @@
       ],
       "gold_paths": {
         "Notifiable": [
-          "user.rb",
-          "notifiable.rb"
+          "rails/app/models/user.rb",
+          "rails/app/models/concerns/notifiable.rb"
         ],
         "after_create": [
-          "user.rb"
+          "rails/app/models/user.rb"
         ],
         "WelcomeEmailJob": [
-          "notifiable.rb",
-          "welcome_email_job.rb"
+          "rails/app/models/concerns/notifiable.rb",
+          "rails/app/jobs/welcome_email_job.rb"
         ]
       },
       "prompt_direct": "After a User is created, what happens? Look at {FIX}/rails/app/models/user.rb, {FIX}/rails/app/models/concerns/notifiable.rb and {FIX}/rails/app/jobs/welcome_email_job.rb and answer. Name the concern and the job.",
@@ -436,16 +436,16 @@
       ],
       "gold_paths": {
         "Notifiable": [
-          "user.rb",
-          "notifiable.rb"
+          "rails/app/models/user.rb",
+          "rails/app/models/concerns/notifiable.rb"
         ],
         "WelcomeEmailJob": [
-          "notifiable.rb",
-          "welcome_email_job.rb"
+          "rails/app/models/concerns/notifiable.rb",
+          "rails/app/jobs/welcome_email_job.rb"
         ],
         "UserMailer": [
-          "user_mailer.rb",
-          "welcome_email_job.rb"
+          "rails/app/mailers/user_mailer.rb",
+          "rails/app/jobs/welcome_email_job.rb"
         ]
       },
       "prompt_delegate": "Using the token-shunt:bulk-reader skill (--worker-model auto), trace what happens after User creation across these 4 explicit paths: {FIX}/rails/app/models/user.rb {FIX}/rails/app/models/concerns/notifiable.rb {FIX}/rails/app/jobs/welcome_email_job.rb {FIX}/rails/app/mailers/user_mailer.rb --question \"concern・job・mailer の名前と参照関係\". First Agent must carry the first 3 paths; a later Agent the remaining path. Report the integrated answer with confirmed: items that name matching paths.",
@@ -710,15 +710,15 @@
       ],
       "gold_paths": {
         "Notifiable": [
-          "user.rb",
-          "notifiable.rb"
+          "rails/app/models/user.rb",
+          "rails/app/models/concerns/notifiable.rb"
         ],
         "after_create": [
-          "user.rb"
+          "rails/app/models/user.rb"
         ],
         "WelcomeEmailJob": [
-          "notifiable.rb",
-          "welcome_email_job.rb"
+          "rails/app/models/concerns/notifiable.rb",
+          "rails/app/jobs/welcome_email_job.rb"
         ]
       },
       "require_parent_tokens": [
