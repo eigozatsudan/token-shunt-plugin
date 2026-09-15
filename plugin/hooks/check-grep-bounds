@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""PreToolUse(Grep) enforcement, plus the two ways a size becomes known.
+
+    check-grep-bounds                 judge a Grep, or record a stat/wc -c,
+                                      whichever the event describes
+    check-grep-bounds --sized PATH... a Read deny told the caller these sizes
+
+The mode is read from the event rather than from a registration argument:
+one hook entry that misses its `args` would otherwise turn into a rule
+that refuses every search, since nothing would ever record a size.
+
+Every mode reads the hook event on stdin; the session and agent identify
+the state file. Failures exit 2: a rule that cannot be evaluated must not
+silently allow the call it was added to bound.
+"""
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import grep_bounds as gb                                  # noqa: E402
+
+
+def state_path(event):
+    session, agent = event.get('session_id'), event.get('agent_id')
+    if not isinstance(session, str) or not session:
+        raise ValueError('grep bounds require session_id')
+    # A top-level parent has no agent id; it still gets its own state.
+    agent = agent if isinstance(agent, str) and agent else 'parent'
+    key = hashlib.sha256((session + '\0' + agent).encode()).hexdigest()
+    root = Path(tempfile.gettempdir()) / ('token-shunt-reader-%s' % os.getuid())
+    root.mkdir(mode=0o700, exist_ok=True)
+    stat = root.stat()
+    if root.is_symlink() or stat.st_uid != os.getuid() or stat.st_mode & 0o077:
+        raise ValueError('reader state directory must be private and owned by this user')
+    return root / ('grep-%s.json' % key)
+
+
+def with_state(event, fn):
+    """Run fn(state) under the same exclusive lock the reader state uses."""
+    fd = os.open(state_path(event), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'r+') as source:
+        fcntl.flock(source, fcntl.LOCK_EX)
+        raw = source.read()
+        state = json.loads(raw) if raw else gb.new_state()
+        out = fn(state)
+        source.seek(0)
+        json.dump(state, source)
+        source.truncate()
+        source.flush()
+    return out
+
+
+def judge(event):
+    def run(state):
+        reason = gb.decide(event, state)
+        if reason:
+            state['denials'] = state.get('denials', 0) + 1
+        return reason
+    reason = with_state(event, run)
+    if reason:
+        print(json.dumps({'hookSpecificOutput': {
+            'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+            'permissionDecisionReason': 'token-shunt: ' + reason}}))
+
+
+def record_paths(event, paths, source):
+    if not paths:
+        return
+    with_state(event, lambda state: [gb.record(state, p, source) for p in paths])
+
+
+def main(argv):
+    event = json.load(sys.stdin)
+    if not isinstance(event, dict):
+        raise ValueError('hook stdin must be an object')
+    if argv[1:2] == ['--sized']:
+        record_paths(event, argv[2:], 'read-deny')
+        return 0
+    if len(argv) > 1:
+        raise ValueError('unknown argument: %s' % argv[1])
+    stage = event.get('hook_event_name')
+    if stage == 'PostToolUse' and event.get('tool_name') == 'Bash':
+        command = (event.get('tool_input') or {}).get('command')
+        record_paths(event, gb.metadata_paths(command), 'bash')
+    elif stage in (None, 'PreToolUse'):
+        judge(event)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv))
+    except Exception as exc:              # never allow an unjudged Grep
+        print('token-shunt: grep bounds unavailable: ' + str(exc), file=sys.stderr)
+        sys.exit(2)

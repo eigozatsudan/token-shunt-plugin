@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ('check-file-size', 'check-bash-read', 'check-jq', 'check-agent-model',
-         'check-reader-contract', 'check-final-answer')
+         'check-reader-contract', 'check-final-answer', 'check-grep-bounds')
 
 
 class ZipVerificationTests(unittest.TestCase):

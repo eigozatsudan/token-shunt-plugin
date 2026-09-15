@@ -154,6 +154,7 @@ deny_reason() { # lines bytes read_bytes elapsed undetermined
 CONTRACT_FILE=$HOOK_DIR/reader-call-contract
 CONTRACT_PATHS=()
 CONTRACT_RAW=()
+CONTRACT_SIZED=()
 
 contract_add_path() { # absolute-path size-or-empty
   local abs=$1
@@ -171,6 +172,7 @@ contract_add_path() { # absolute-path size-or-empty
   disp=${disp//$'\n'/\\n}
   if [[ $2 =~ ^[0-9]+$ ]]; then
     CONTRACT_PATHS+=("$disp ($2 B)")
+    CONTRACT_SIZED+=("$abs")
   else
     CONTRACT_PATHS+=("$disp (size unknown)")
   fi
@@ -189,11 +191,21 @@ render_contract() { # reason
   printf '%s' "$body"
 }
 
+# A rendered contract names each path with its byte count, so the caller has
+# been told the size: the Grep hook may treat those files as measured. The
+# fallback wording carries no size and records nothing.
+record_sized() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  (( ${#CONTRACT_SIZED[@]} )) || return 0
+  python3 "$HOOK_DIR/check-grep-bounds" --sized "${CONTRACT_SIZED[@]}" \
+    <<<"$input" >/dev/null 2>&1 || true
+}
+
 # The template reason and the fallback reason are different texts: rendering
 # failure must return the current wording, never the shortened template reason.
 deny_contract() { # template-reason fallback-reason
   local rendered
-  rendered=$(render_contract "$1") && deny "$rendered"
+  rendered=$(render_contract "$1") && { record_sized; deny "$rendered"; }
   deny "$2"
 }
 
