@@ -22,6 +22,7 @@ Every check can return UNDETERMINED. A missing worker transcript and a
 source file that no longer exists are not parent violations, and must not
 be reported as one.
 """
+import html
 import os
 import re
 
@@ -39,6 +40,33 @@ CONFIRMED = 'confirmed:'
 UNCONFIRMED = 'unconfirmed:'
 
 
+def normalize(line):
+    """Compare on the text's meaning, not on how a channel encoded it.
+
+    The parent reads the worker through a task notification, which
+    XML-escapes the body (`<` becomes `&lt;`). A parent that copied that
+    form faithfully must not be reported as having altered the line.
+    """
+    return ' '.join(html.unescape(line).split())
+
+
+def _collect(text, prefix, reject=None):
+    out = []
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        while line[:1] in ('-', '*', '+'):
+            line = line[1:].strip()
+        low = line.lower()
+        if low.startswith(prefix) and not (reject and low.startswith(reject)):
+            out.append(line)
+    return out
+
+
+def unconfirmed_lines(text):
+    """`unconfirmed:` lines, same shape as confirmed_lines."""
+    return _collect(text, UNCONFIRMED)
+
+
 def confirmed_lines(text):
     """`confirmed:` lines, list-marker and whitespace stripped.
 
@@ -46,15 +74,7 @@ def confirmed_lines(text):
     prescribes when a path is missing, so counting them as retention
     targets would make the correct recovery look like a violation.
     """
-    out = []
-    for raw in (text or '').splitlines():
-        line = raw.strip()
-        while line[:1] in ('-', '*', '+'):
-            line = line[1:].strip()
-        low = line.lower()
-        if low.startswith(CONFIRMED) and not low.startswith(UNCONFIRMED):
-            out.append(line)
-    return out
+    return _collect(text, CONFIRMED, reject=UNCONFIRMED)
 
 
 def citation(line):
@@ -133,43 +153,70 @@ def check_file_coverage(child_texts, final, exists=os.path.exists):
 def check_line_retention(child_texts, final, exists=os.path.exists):
     """Is every worker `confirmed:` line still present, verbatim?
 
-    Three outcomes per line: kept verbatim, present but altered (the cited
-    path survives in some final item, the text does not), or dropped.
-    Identical lines collapse, which the contract allows; a line whose path
-    is unusable is not counted against the parent, since the contract tells
-    it to demote that line rather than reproduce it.
+    Four outcomes per line: kept verbatim, demoted (the same item survives
+    under `unconfirmed:`), altered (the cited path survives in some final
+    item, the text does not), or dropped.
+
+    Demotion is the contract's own recovery for a line WITHOUT a usable
+    absolute path, so it is only a violation here: these targets all carry
+    one, and demoting them discards evidence the worker actually produced.
+    Lines whose path is unusable never become targets, which is what keeps
+    the permitted demotion from being reported.
+
+    Identical lines collapse, which the contract allows. Matching is done on
+    the normalized form, so the notification's XML escaping is not mistaken
+    for the parent rewriting the line.
     """
     child = check_child_items(child_texts, exists)
     if child['status'] == UNDETERMINED:
         return {'status': UNDETERMINED, 'reason': child['reason'],
-                'kept': [], 'altered': [], 'dropped': []}
+                'kept': [], 'demoted': [], 'altered': [], 'dropped': []}
     targets = list(dict.fromkeys(child['usable']))
     if not targets:
         return {'status': UNDETERMINED, 'reason': 'no worker line to retain',
-                'kept': [], 'altered': [], 'dropped': []}
+                'kept': [], 'demoted': [], 'altered': [], 'dropped': []}
     # Match verbatim first and consume what matched, so a second fact drawn
     # from an already-cited file is reported as dropped rather than as a
     # rewrite of the line that did survive.
-    pool = list(confirmed_lines(final))
-    kept, altered, dropped, leftover = [], [], [], []
+    pool = [(normalize(l), l) for l in confirmed_lines(final)]
+    demoted_pool = [(normalize(l[len(UNCONFIRMED):].strip()), l)
+                    for l in unconfirmed_lines(final)]
+    kept, demoted, altered, dropped, leftover = [], [], [], [], []
+
+    def take(seq, pred):
+        for i, entry in enumerate(seq):
+            if pred(entry):
+                return seq.pop(i)
+        return None
+
     for line in targets:
-        if line in pool:
-            pool.remove(line)
+        norm = normalize(line)
+        if take(pool, lambda e, n=norm: e[0] == n):
             kept.append(line)
         else:
             leftover.append(line)
     for line in leftover:
-        match = next((f for f in pool if citation(f) == citation(line)), None)
-        if match is None:
-            dropped.append(line)
-        else:
-            pool.remove(match)
+        body = normalize(line[len(CONFIRMED):].strip())
+        # A parent that rewrote `confirmed:` as `unconfirmed:` kept the text
+        # but discarded its standing; that is a retention violation, and a
+        # different one from dropping the line outright.
+        # The body must match, not merely the path: a parent may legitimately
+        # mark a DIFFERENT fact from the same file unconfirmed, and pairing on
+        # the path alone would read that as a demotion of this line.
+        if take(demoted_pool, lambda e, b=body: e[0] == b):
+            demoted.append(line)
+            continue
+        if take(pool, lambda e, c=citation(line): citation(e[1]) == c):
             altered.append(line)
-    return {'status': OK if not (altered or dropped) else VIOLATION,
-            'reason': '' if not (altered or dropped) else
-                      '%d line(s) altered, %d dropped'
-                      % (len(altered), len(dropped)),
-            'kept': kept, 'altered': altered, 'dropped': dropped}
+        else:
+            dropped.append(line)
+    lost = len(demoted) + len(altered) + len(dropped)
+    return {'status': OK if not lost else VIOLATION,
+            'reason': '' if not lost else
+                      '%d demoted, %d altered, %d dropped'
+                      % (len(demoted), len(altered), len(dropped)),
+            'kept': kept, 'demoted': demoted, 'altered': altered,
+            'dropped': dropped}
 
 
 def run_all(child_texts, final, exists=os.path.exists):
