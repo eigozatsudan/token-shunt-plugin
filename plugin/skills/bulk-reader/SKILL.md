@@ -25,16 +25,16 @@ Agent.
 
    **Route before searching (§26.5).** Decide the route from metadata
    *before* running a content search. Grep `output_mode=content` (and
-   `-o`, `-A`/`-B`, `head -c`, ...) is not hooked, so it can pull body
-   text out of an oversized file and make routing moot. On a file
-   already over budget, don't content-search for the answer — delegate,
-   and let the child read. Content search there
-   stays allowed only to establish *positions* for the §11.6 edit
-   contract or confirm a known range, with `output_mode=files_with_matches`
-   or `head_limit` <= 20. After a denied Read, never recover the
-   answer through Bash, Grep, or smaller parent Reads; follow-ups go to
-   a new bounded worker call, and parent Reads stay reserved for the
-   edit contract in step 4.
+   `-o`, `head -c`, ...) is not hooked, so it can pull body text out of
+   an oversized file and make routing moot. On a file already over
+   budget, don't content-search for the answer — delegate, and let the
+   child read. Content search there stays allowed only to establish
+   *positions* for the §11.6 edit contract or confirm a known range,
+   with `files_with_matches`, or `content` with `head_limit`
+   1-20 and no `-A`/`-B`/`-C`. After a denied Read, never
+   recover the answer through Bash, Grep, or smaller parent Reads;
+   follow-ups go to a new bounded worker call, and parent Reads stay
+   reserved for the edit contract in step 4.
 
 2. **Batching.** One invocation = at most 3 explicit paths. Relationship
    questions across files MUST pass those paths in the same invocation
@@ -63,7 +63,7 @@ Agent.
 
 4. **Edit contract (§11.6).** Position authority is the parent's Grep
    (short unique pattern, line numbers, limited output; over budget, the
-   §26.5 form — one line back is not enough) or an already
+   §26.5 form, not one line back) or an already
    verified known range — never the child's line numbers verbatim. If
    Grep matches multiple times, narrow it; if it can't be made unique,
    don't edit. Then Read(offset, limit) the original, confirm hook pass

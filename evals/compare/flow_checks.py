@@ -32,7 +32,8 @@ def timeline(tr):
 
 
 # Shared with SKILL.md §26.5: "short" is not left to the judge's taste.
-# The body states `head_limit` <= 20; this constant is the same standard.
+# The body states `head_limit` 1-20 with no -A/-B/-C; this constant is the
+# upper end of that same standard.
 POSITION_GREP_HEAD_LIMIT = 20
 SMALL_TASK_BUDGET = 16384
 
@@ -40,9 +41,11 @@ SMALL_TASK_BUDGET = 16384
 def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
     """§26.5 form for position-only Grep on an over-budget target.
 
-    Returns (applicable, errors). Applicable only when the target is
-    larger than the small-task budget: within budget the edit path keeps
-    §11.6's limited-output basis and this check stays silent.
+    Returns (judged, errors). Judged only when the target is larger than
+    the small-task budget AND at least one content Grep actually hit it:
+    within budget the edit path keeps §11.6's limited-output basis, and a
+    run that never content-searched has no call to judge — neither is
+    evidence of a conforming search.
 
     Every content Grep is judged on its own. An earlier
     output_mode=files_with_matches call does not license a later
@@ -56,6 +59,7 @@ def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
     if size <= budget:
         return False, []
     errors = []
+    judged = 0
     for n, u in enumerate(tr.parent_tool_uses('Grep'), 1):
         inp = u['input'] or {}
         if os.path.normpath(inp.get('path', '')) != path:
@@ -64,6 +68,7 @@ def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
                 continue
         if str(inp.get('output_mode') or '') != 'content':
             continue
+        judged += 1
         limit = inp.get('head_limit')
         context = max(int(inp.get(f) or 0) for f in ('-A', '-B', '-C'))
         if limit is not None and context:
@@ -78,15 +83,18 @@ def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
             errors.append(
                 'Grep #%d on %s (%d B, over budget) used output_mode=content '
                 'with no head_limit; §26.5 requires files_with_matches or '
-                'head_limit <= %d' % (n, os.path.basename(path), size,
-                                      POSITION_GREP_HEAD_LIMIT))
-        elif not isinstance(limit, int) or limit > POSITION_GREP_HEAD_LIMIT:
+                'head_limit 1-%d' % (n, os.path.basename(path), size,
+                                     POSITION_GREP_HEAD_LIMIT))
+        elif (isinstance(limit, bool) or not isinstance(limit, int)
+              or not 1 <= limit <= POSITION_GREP_HEAD_LIMIT):
+            # 1-20, not "<= 20": 0, a negative, True, or a non-integer is
+            # not a bound a reader can act on, so none of them conform.
             errors.append(
                 'Grep #%d on %s (%d B, over budget) used head_limit=%r; '
-                '§26.5 allows at most %d'
+                '§26.5 allows a positive integer 1-%d'
                 % (n, os.path.basename(path), size, limit,
                    POSITION_GREP_HEAD_LIMIT))
-    return True, errors
+    return bool(judged), errors
 
 
 def edit_flow_errors(tr, cfg, spec, targets, full_read):

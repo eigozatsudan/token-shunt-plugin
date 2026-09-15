@@ -517,7 +517,7 @@ class SkillDocumentTests(unittest.TestCase):
         # one standard, two places that must agree
         # (reviews/head-limit-consistency-2026-09-15.md).
         body = self.SKILL.read_text(encoding='utf-8')
-        self.assertIn('`head_limit` <= 20', body)
+        self.assertIn('`head_limit`\n   1-20 and no `-A`/`-B`/`-C`', body)
         # Step 4's position Grep inherits the 26.5 form when over budget,
         # and stays on 11.6's limited-output basis within budget.
         step4 = body.split('4. **Edit contract')[1].split('\n5.')[0]
@@ -530,8 +530,8 @@ class SkillDocumentTests(unittest.TestCase):
             sys.path.pop(0)
         self.assertEqual(flow_checks.POSITION_GREP_HEAD_LIMIT, 20)
         self.assertEqual(flow_checks.SMALL_TASK_BUDGET, 16384)
-        self.assertIn('`head_limit` <= %d' % flow_checks.POSITION_GREP_HEAD_LIMIT,
-                      body)
+        self.assertIn('1-%d and no `-A`/`-B`/`-C`'
+                      % flow_checks.POSITION_GREP_HEAD_LIMIT, body)
 
     def test_position_grep_check_applies_only_over_budget_and_per_call(self):
         sys.path.insert(0, str(ROOT / 'evals/compare'))
@@ -628,13 +628,27 @@ class PositionGrepFormTests(unittest.TestCase):
         self.assertTrue(applicable)
         self.assertEqual(len(errors), 1, errors)
 
-    def test_head_limit_over_the_shared_standard_is_a_violation(self):
+    def test_head_limit_must_be_a_positive_integer_inside_the_standard(self):
+        # 1-20, not "<= 20": 0, a negative, a bool or a non-integer is not
+        # a bound, and must not be read as one.
         fc = self._flow_checks()
-        applicable, errors = self._run(
-            20000, [{'pattern': '^MARK', 'output_mode': 'content',
-                     'head_limit': fc.POSITION_GREP_HEAD_LIMIT + 1}])
-        self.assertTrue(applicable)
-        self.assertEqual(len(errors), 1, errors)
+        for bad in (fc.POSITION_GREP_HEAD_LIMIT + 1, 0, -1, True, '5', 1.0):
+            applicable, errors = self._run(
+                20000, [{'pattern': '^MARK', 'output_mode': 'content',
+                         'head_limit': bad}])
+            self.assertTrue(applicable)
+            self.assertEqual(len(errors), 1, (bad, errors))
+        for good in (1, fc.POSITION_GREP_HEAD_LIMIT):
+            applicable, errors = self._run(
+                20000, [{'pattern': '^MARK', 'output_mode': 'content',
+                         'head_limit': good}])
+            self.assertEqual(errors, [], (good, errors))
+
+    def test_the_context_flag_ban_is_stated_in_the_body_too(self):
+        # The judge must not be stricter than the skill it judges.
+        body = (ROOT / 'plugin/skills/bulk-reader/SKILL.md').read_text(
+            encoding='utf-8')
+        self.assertIn('no `-A`/`-B`/`-C`', body)
 
     def test_a_context_window_defeats_the_bound(self):
         # §26.5 names -A/-B beside head_limit: context multiplies output.
@@ -653,10 +667,13 @@ class PositionGrepFormTests(unittest.TestCase):
         self.assertFalse(applicable)
         self.assertEqual(errors, [])
 
-    def test_a_run_with_no_content_search_reports_nothing(self):
-        applicable, errors = self._run(20000, [])
-        self.assertTrue(applicable)
-        self.assertEqual(errors, [])
+    def test_no_content_search_is_not_recorded_as_a_conforming_search(self):
+        # "no call to judge" must not be logged as a passed check.
+        for greps in ([], [{'pattern': '^MARK',
+                            'output_mode': 'files_with_matches'}]):
+            judged, errors = self._run(20000, greps)
+            self.assertFalse(judged)
+            self.assertEqual(errors, [])
 
 
 # New test classes from later tasks go ABOVE this block. unittest.main() must

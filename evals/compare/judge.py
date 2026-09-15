@@ -1513,8 +1513,8 @@ def judge(transcript_path, spec, ctx):
         if not errors:
             passed("edit_flow")
         # §26.5 form for position-only search, over-budget targets only.
-        applicable, form_errors = position_grep_errors(tr, exp["edit_flow"]["path"])
-        if applicable:
+        judged, form_errors = position_grep_errors(tr, exp["edit_flow"]["path"])
+        if judged:
             for error in form_errors:
                 fail("position_grep_form", error)
             if not form_errors:
