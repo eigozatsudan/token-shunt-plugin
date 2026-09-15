@@ -214,6 +214,27 @@ class LineRetentionTests(unittest.TestCase):
         self.assertEqual(r['status'], rc.UNDETERMINED)
 
 
+class LocatorRetentionTests(unittest.TestCase):
+    """What stripping the locator does to the verbatim comparison.
+
+    The citation is now the file either way, so the line is judged
+    instead of passing as UNDETERMINED -- and the judgement is the
+    contract's: the line is kept verbatim or it is not. Dropping `:12`
+    while restating the fact is an alteration, and a block.
+    """
+
+    def test_restating_without_the_line_number_is_an_alteration(self):
+        child = [item(A + ':12', 'TOKEN is 42')]
+        got = rc.check_line_retention(child, item(A, 'TOKEN is 42'), here)
+        self.assertEqual(got['status'], rc.VIOLATION)
+        self.assertEqual(got['altered'], [item(A + ':12', 'TOKEN is 42')])
+
+    def test_keeping_the_line_as_written_passes(self):
+        line = item(A + ':12', 'TOKEN is 42')
+        self.assertEqual(rc.check_line_retention([line], line, here)['status'],
+                         rc.OK)
+
+
 class VanishedFileTests(unittest.TestCase):
     """Lines citing a file that is gone cannot be judged -- or reported OK.
 
