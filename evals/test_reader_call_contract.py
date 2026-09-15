@@ -456,8 +456,30 @@ class SkillDocumentTests(unittest.TestCase):
                      'unreadable_line'):
             self.assertIn(kept, body)
 
-    def test_skill_shrinks_below_six_kilobytes(self):
-        self.assertLess(self.SKILL.stat().st_size, 6144,
+    def test_description_names_the_triggers_the_deny_cannot_carry(self):
+        # A rule that only applies when NO deny fires is unreachable unless
+        # the description names it: the body is loaded only once the parent
+        # has already decided to open the skill. Task 6 moved these three out
+        # of the description, which made auto-routing-boundary-16k-plus fail
+        # 3/3 (reviews/repeat3-2026-09-15.md §2.1). Grep is not hooked at all,
+        # so no deny can ever stand in for the route-before-search rule.
+        head = self.SKILL.read_text(encoding='utf-8').split('---')[1]
+        self.assertIn('16384', head)
+        self.assertIn('known ranges totaling at most 16384 bytes', head)
+        self.assertIn('Grep output_mode=content', head)
+        # v2: the metadata check is a step of the procedure, not an aside,
+        # so it has to be stated before the delegation conditions it feeds.
+        self.assertIn('before the first Read', head)
+        self.assertLess(head.index('metadata'), head.index('delegate'), head)
+
+    def test_skill_stays_far_below_its_pre_reduction_size(self):
+        # Was < 6144 while the description omitted the no-deny triggers.
+        # v2 adds the metadata-first step and the whole-file/needed-I/O
+        # distinction, ~240 B more.
+        # Restoring them costs ~180 bytes and is reachability-critical, so the
+        # cap is raised rather than paid for by deleting body rules the tests
+        # above require. The point of the bound is the reduction from 11522.
+        self.assertLess(self.SKILL.stat().st_size, 6700,
                         self.SKILL.stat().st_size)
 
 
