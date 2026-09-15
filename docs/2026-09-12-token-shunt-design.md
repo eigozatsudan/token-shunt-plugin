@@ -806,9 +806,12 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 
 - `@` 参照は Read ツールを通らないのでフック不能
 - Explore / Plan / general-purpose の起動自体は止めない。それらの大きな Read は deny する。Grep や最終メッセージの引用は残る
-- `sed`、`python -c`、PowerShell `Get-Content` は対象外。Grep `output_mode=content` は 2026-09-15 に §26.5 の2規則としてフックで強制した（§28）。ディレクトリ・`glob`・cwd 全体の検索は依然として対象外
+- `sed`、`python -c`、PowerShell `Get-Content` は 2026-09-16 に対象化した。インタプリタ（`sed`/`awk`/`perl`/`python`/`ruby`/`node`/`php`/`pwsh`/`bash -c` 等）は、呼び出し文字列に現れる実在パスをすべて全文閾値で判定する。`-c`/`-e` の引用された program 文字列の中も走査する。`sed -i` は通し、script オペランド（`python3 big.py` の `big.py`）は判定対象外。プログラムが実行時に組み立てるパス・変数経由のパスは検出できない。Grep `output_mode=content` は 2026-09-15 に §26.5 の2規則としてフックで強制した（§28）。ディレクトリ・`glob`・cwd 全体の検索は依然として対象外
 - **パイプの残穴:** 未知・解釈不能な末尾でも §10-4 は各段の対応 reader を検査する（`cat large | grep` も `cat large | cat` も deny）。未対応コマンド自身の読み取りは封鎖しない。引用内の `|` と複合コマンドのリダイレクトはパイプ／リダイレクト通過にしない
-- **入力リダイレクト `<`:** 単語オペランドが無い `cat <large.txt` / `head -c 70000 <large.txt` は検査せず通過する。実 bash は本文を出す。ファイルオペランド付きの `cat large` / `head -c 70000 large` は deny のまま。空白付き `cat < large` も入力元のサイズ検査対象外。`dd if=` / `bash -c` と同種の穴
+- **入力リダイレクト `<`（2026-09-16 に閉鎖）:** 素の `<`（`N<` を含む）のターゲットはファイルオペランドと同じ read source として `FILES` に入れる。`cat <large` は deny、`head -c 100 <large` と `wc -c <large` は pass。`<<`・`<<<`・`<&`・`<>` は heredoc・文字列・ディスクリプタなので対象外。リダイレクトだけが残った段（`done <large`）も read source として判定する
+- **前置語・グループ化（2026-09-16 に閉鎖）:** `strip_vars` が `time`・`command`・`exec`・`nice`・`ionice`・`stdbuf`・`env`・`timeout`・`sudo`・`busybox`・`toybox` と、構文語 `!`・`(`・`{`・`)`・`}`・`if`/`then`/`else`/`elif`/`fi`・`while`/`until`/`do`/`done`・`esac` を、各前置語自身のオプションごと取り除く。分類できないオプションが現れた時点で除去を止めるため、未知のオプションを伴う前置は従来どおり素通りする（fail-open だが、判定は除去前と同じ）
+- **`dd` / `xargs` / `find -exec`（2026-09-16 に閉鎖）:** `dd if=` は `of=` が無く `bs`×`count` が `MIN_BYTES` 以下でもなければ全文閾値で判定する。`xargs -a file` と `xargs cmd <file` は引数として読まれる file を判定する。`find ... -exec` の直後が全文 reader、または上限フラグの無い `grep` なら、一致ファイルのサイズが不明なのでサイズによらず deny する。`-exec python3 -c ...` のようにインタプリタを挟む形は対象外
+- **全文 reader カタログ（2026-09-16）:** `cat`/`less`/`more` に加えて `nl`・`od`・`xxd`・`base64`・`strings`・`rev`・`tac`・`fold`・`expand`・`unexpand`・`pr`・`shuf`・`cut`・`paste`・`column`・`diff`・`sdiff`・`comm` を同じ閾値で判定する。`od -N` / `xxd -l` の出力側上限は解釈しないので fail-closed 側に倒れる。`grep`/`egrep`/`fgrep`/`rg` は `-l`/`-L`/`-c`/`-q`（長形式含む）がある場合のみ pass。カタログに無い reader は依然として穴であり、許可ではない
 - **ドル展開・ANSI-C引用:** コマンド名・対応 reader のオペランドにある引用外／二重引用内の有効な `$` は未解決として扱う。`cat $'large.txt'` も既存の出力隔離・バイト制限例外を除いて deny。単一引用内・エスケープされた `$` はリテラルとして保持する。
 - **逐次 targeted Read:** 成功条件 6 が実測 lines/bytes が両閾値以下の targeted Read を許すため、親は `limit=350` を offset ずらしで繰り返し全文を回収できる。1 行が `MIN_BYTES` 以下なら `limit=1` の繰り返しでも回収できる（巨大行の `limit=1` は §9.7 で deny）。フックは呼び出しをまたぐ回収を検出しない。比較 eval の直接モードでは観測し、委譲側では §26.5 に従い deny 後の連続 Read / パイプ回収を path_ok fail にする。isolation_ok の量的判定も別途適用する
 - code-writer の Write フック強制はしない。完了は §11 の検証段階と受入条件の確認に依存する。最小・構文チェックだけなら生成済み・内容未検証と報告する。検証を省略した利用は製品手順違反であり、eval では fail
