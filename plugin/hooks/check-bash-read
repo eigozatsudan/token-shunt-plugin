@@ -576,7 +576,11 @@ strip_vars() {
 strip_prefix_words() {
   local base rounds=0
   while (( ${#VTOKS[@]} )) && (( rounds++ < 8 )); do
-    [[ ${VTOK_KINDS[0]} == word ]] || return 0
+    case ${VTOK_KINDS[0]} in
+      word) ;;
+      operator) case ${VTOKS[0]} in '('|'{'|')'|'}') ;; *) return 0 ;; esac ;;
+      *) return 0 ;;
+    esac
     base=${VTOKS[0]##*/}
     case $base in
       time)            _drop_prefix '-p' '' ;;
@@ -587,6 +591,9 @@ strip_prefix_words() {
       env)             _drop_prefix '-i|-|--ignore-environment|-0|--null|*=*' '-u|--unset' ;;
       timeout)         _drop_prefix '--preserve-status|--foreground|-k?*|-s?*|--signal=*|--kill-after=*' '-k|-s|--signal|--kill-after' && _drop_duration ;;
       busybox|toybox)  _drop_prefix '' '' ;;
+      # Syntax, not commands: without dropping these the reader behind them
+      # is never seen. `(` and `{` arrive as operators, the rest as words.
+      '!'|'('|'{'|')'|'}'|if|then|else|elif|fi|do|done|while|until|esac) _drop_prefix '' '' ;;
       sudo)            _drop_prefix '-b|-E|-H|-n|-P|-S|--background|--preserve-env|--non-interactive' '-u|-g|-p|-C|--user|--group' ;;
       *)               return 0 ;;
     esac || return 0
@@ -724,6 +731,137 @@ grep_output_is_bounded() { # TOKS holds the command
     esac
   done
   return 1
+}
+
+# An interpreter reads whatever its program tells it to, and the program is
+# usually a quoted string the tokenizer keeps in one word. Rather than parse
+# another language, every word of the call is searched for a path that exists
+# on disk, and each one is judged at the full threshold.
+is_interpreter() {
+  case $1 in
+    sed|awk|gawk|mawk|nawk|perl|python|python2|python3|ruby|node|nodejs|php|\
+    pwsh|powershell|bash|sh|dash|zsh|ksh) return 0 ;;
+  esac
+  return 1
+}
+
+# Interpreters whose first non-option operand is the program to run, not data
+# it prints. `python3 big.py` runs a large script; it does not read it out.
+interpreter_skips_script() {
+  case $1 in
+    perl|python|python2|python3|ruby|node|nodejs|php|bash|sh|dash|zsh|ksh) return 0 ;;
+  esac
+  return 1
+}
+
+# Split a word on the punctuation that surrounds a path in shell and in the
+# languages above, then keep the pieces that name an existing file. Quoting
+# has already been removed by the tokenizer.
+scan_text_for_files() { # text; appends to FILES
+  local text=$1 word
+  local -a words=()
+  text=${text//[\'\"(),;:=\[\]\{\}\`\$\&\|\<\>\!\?\*]/ }
+  text=${text//$'\t'/ }; text=${text//$'\n'/ }
+  IFS=' ' read -r -a words <<<"$text"
+  for word in ${words[@]+"${words[@]}"}; do
+    [[ -n $word && $word != -* && -f $word ]] && FILES+=("$word")
+  done
+}
+
+# FILES for an interpreter call: every path mentioned anywhere in it, minus
+# the program itself. `sed -i` edits in place and prints nothing.
+interpreter_files() { # base; TOKS holds the command
+  local base=$1 i n=${#TOKS[@]} t script_seen=0
+  FILES=()
+  for ((i=1; i<n; i++)); do
+    (( i % 128 )) || check_parse_budget
+    t=${TOKS[i]}
+    if [[ ${TOK_KINDS[i]} != word ]]; then
+      _redirect_source "$i" && FILES+=("${TOKS[i+1]}")
+      ((i++)); continue
+    fi
+    case $base in
+      sed|awk|gawk|mawk|nawk)
+        case $t in -i*|--in-place*) FILES=(); return 1 ;; esac ;;
+    esac
+    if [[ $t != -* ]] && (( ! script_seen )) && interpreter_skips_script "$base"; then
+      script_seen=1
+      [[ -f $t ]] && continue
+    fi
+    scan_text_for_files "$t"
+  done
+  return 0
+}
+
+# `xargs -a big cmd` feeds the file's contents to the command as arguments,
+# and a command such as echo prints them straight back. The file is read
+# whole either way.
+run_xargs() { # TOKS holds the command
+  local i n=${#TOKS[@]} t
+  FILES=()
+  for ((i=1; i<n; i++)); do
+    (( i % 128 )) || check_parse_budget
+    if [[ ${TOK_KINDS[i]} != word ]]; then
+      # xargs reads its argument list from stdin when -a is absent.
+      _redirect_source "$i" && FILES+=("${TOKS[i+1]}")
+      ((i++)); continue
+    fi
+    t=${TOKS[i]}
+    case $t in
+      -a|--arg-file) ((i++)); [[ -f ${TOKS[i]-} ]] && FILES+=("${TOKS[i]}") ;;
+      -a?*)          [[ -f ${t#-a} ]] && FILES+=("${t#-a}") ;;
+      --arg-file=*)  [[ -f ${t#--arg-file=} ]] && FILES+=("${t#--arg-file=}") ;;
+    esac
+  done
+  ((${#FILES[@]})) && check_files_full xargs
+  return 0
+}
+
+# `find ... -exec cat {} +` runs a reader over every match. The matches are
+# not known here, so there is no size to measure and no bound to accept: an
+# unbounded reader behind -exec is refused outright.
+run_find_exec() { # TOKS holds the command
+  local i j n=${#TOKS[@]} cmd
+  local -a saved_toks saved_kinds exec_toks exec_kinds
+  for ((i=1; i<n; i++)); do
+    (( i % 128 )) || check_parse_budget
+    [[ ${TOK_KINDS[i]} == word ]] || continue
+    case ${TOKS[i]} in -exec|-execdir|-ok|-okdir) ;; *) continue ;; esac
+    ((i++)); cmd=${TOKS[i]-}; cmd=${cmd##*/}
+    [[ -n $cmd ]] || continue
+    if is_full_reader "$cmd"; then
+      deny "find ${TOKS[i-1]} runs '$cmd' on every match and its output has no bound. List the matches with -print, read what you need, or use /token-shunt:bulk-reader."
+    fi
+    if is_grep_reader "$cmd"; then
+      exec_toks=(); exec_kinds=()
+      for ((j=i; j<n; j++)); do
+        [[ ${TOK_KINDS[j]} == word && ( ${TOKS[j]} == ';' || ${TOKS[j]} == '+' ) ]] && break
+        exec_toks+=("${TOKS[j]}"); exec_kinds+=("${TOK_KINDS[j]}")
+      done
+      saved_toks=("${TOKS[@]}"); saved_kinds=("${TOK_KINDS[@]}")
+      TOKS=("${exec_toks[@]}"); TOK_KINDS=("${exec_kinds[@]}")
+      if ! grep_output_is_bounded; then
+        TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
+        deny "find ${TOKS[i-1]} runs '$cmd' on every match with no output bound. Add -l, -c or -q, or use /token-shunt:bulk-reader."
+      fi
+      TOKS=("${saved_toks[@]}"); TOK_KINDS=("${saved_kinds[@]}")
+    fi
+  done
+  return 0
+}
+
+# A stage that is only redirections still consumes a file: `done <big` hands
+# the whole file to the loop that just ended.
+redirect_only_sources() { # VTOKS holds the stage
+  local j
+  FILES=()
+  TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+  for ((j=0; j<${#TOKS[@]}; j++)); do
+    [[ ${TOK_KINDS[j]} == input_redirect ]] || continue
+    _redirect_source "$j" && FILES+=("${TOKS[j+1]}")
+  done
+  ((${#FILES[@]})) && check_files_full read
+  return 0
 }
 
 check_files_full() { # toolname; deny on first exceeding/undetermined target
@@ -1035,6 +1173,7 @@ check_stage_full() {
   scan_ops "$1"; unresolved=$S_EXPANSION
   tokenize "$1"; strip_vars
   ((${#VTOKS[@]})) || return 0
+  if [[ ${VTOK_KINDS[0]} != word ]]; then redirect_only_sources; return 0; fi
   base=${VTOKS[0]##*/}
   case $base in
     dd)
@@ -1049,6 +1188,12 @@ check_stage_full() {
   elif is_grep_reader "$base"; then
     TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
     grep_output_is_bounded || stage_full_reader "$base" "$unresolved"
+  elif is_interpreter "$base"; then
+    TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+    interpreter_files "$base" && check_files_full "$base"
+  elif [[ $base == xargs || $base == find ]]; then
+    TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+    [[ $base == xargs ]] && run_xargs || run_find_exec
   fi
 }
 
@@ -1244,5 +1389,13 @@ if is_full_reader "$base"; then
 elif is_grep_reader "$base"; then
   grep_output_is_bounded && pass
   expansion_guard; collect_file_args; check_files_full "$base"; pass
+elif is_interpreter "$base"; then
+  expansion_guard
+  interpreter_files "$base" && check_files_full "$base"
+  pass
+elif [[ $base == xargs ]]; then
+  expansion_guard; run_xargs; pass
+elif [[ $base == find ]]; then
+  run_find_exec; pass
 fi
 pass

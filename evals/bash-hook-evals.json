@@ -667,5 +667,190 @@
   "id": "bash-grep-pipe-bound",
   "cmd": "grep foo @FIX@/large-80k.txt | head -c 100",
   "expect": "pass"
+ },
+ {
+  "id": "bash-interp-sed-large",
+  "cmd": "sed -n 1p @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-sed-small",
+  "cmd": "sed -n 1p @FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-sed-inplace",
+  "cmd": "sed -i s/a/b/ @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-awk-large",
+  "cmd": "awk '{print}' @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-python-c",
+  "cmd": "python3 -c \"print(open('@FIX@/large-80k.txt').read())\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-python-script",
+  "cmd": "python3 @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-perl-e",
+  "cmd": "perl -e 'open(F, \"@FIX@/large-80k.txt\"); print <F>'",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-node-e",
+  "cmd": "node -e \"console.log(require('fs').readFileSync('@FIX@/large-80k.txt','utf8'))\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-ruby-e",
+  "cmd": "ruby -e 'puts File.read(\"@FIX@/large-80k.txt\")'",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-bash-c",
+  "cmd": "bash -c \"cat @FIX@/large-80k.txt\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-sh-c-small",
+  "cmd": "sh -c \"cat @FIX@/small-10.txt\"",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-pwsh",
+  "cmd": "pwsh -c \"Get-Content @FIX@/large-80k.txt\"",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-interp-awk-redirect-out",
+  "cmd": "awk '{print}' @FIX@/large-80k.txt >/tmp/ts-out",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-sed-pipe-bound",
+  "cmd": "sed -n p @FIX@/large-80k.txt | head -c 100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-interp-no-file",
+  "cmd": "awk 'BEGIN{print 1}'",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-group-subshell",
+  "cmd": "(cat @FIX@/large-80k.txt)",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-subshell-small",
+  "cmd": "(cat @FIX@/small-10.txt)",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-group-brace",
+  "cmd": "{ cat @FIX@/large-80k.txt; }",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-if",
+  "cmd": "if true; then cat @FIX@/large-80k.txt; fi",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-if-else",
+  "cmd": "if false; then echo a; else cat @FIX@/large-80k.txt; fi",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-while-body",
+  "cmd": "while true; do cat @FIX@/large-80k.txt; done",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-until-body",
+  "cmd": "until false; do cat @FIX@/large-80k.txt; done",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-loop-redirect-in",
+  "cmd": "while read l; do echo x; done <@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-loop-redirect-in-small",
+  "cmd": "while read l; do echo x; done <@FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-group-bang",
+  "cmd": "! cat @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-nested",
+  "cmd": "( if true; then cat @FIX@/large-80k.txt; fi )",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-group-unrelated",
+  "cmd": "if true; then echo ok; fi",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-xargs-a-large",
+  "cmd": "xargs -a @FIX@/large-80k.txt echo",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-xargs-a-small",
+  "cmd": "xargs -a @FIX@/small-10.txt echo",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-xargs-a-attached",
+  "cmd": "xargs -a@FIX@/large-80k.txt echo",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-find-exec-cat",
+  "cmd": "find @FIX@ -name large-80k.txt -exec cat {} ;",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-find-exec-plus",
+  "cmd": "find @FIX@ -name large-80k.txt -exec cat {} +",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-find-exec-grep-bounded",
+  "cmd": "find @FIX@ -name large-80k.txt -exec grep -l foo {} +",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-find-exec-rm",
+  "cmd": "find @FIX@ -name nothing-here.txt -exec rm {} ;",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-find-plain",
+  "cmd": "find @FIX@ -name large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-xargs-stdin-large",
+  "cmd": "xargs echo <@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-xargs-stdin-small",
+  "cmd": "xargs echo <@FIX@/small-10.txt",
+  "expect": "pass"
  }
 ]
