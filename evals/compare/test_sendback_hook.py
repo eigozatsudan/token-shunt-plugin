@@ -389,3 +389,40 @@ class SingleParseTests(HookFixture):
         rec, _ = sh.decide(self.event())
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
         self.assertEqual(reads.count(self.session), 1)
+
+
+class SwitchTests(HookFixture):
+    """The eval baseline can exclude the send-back (decision §3.4)."""
+
+    def off(self, value='off'):
+        os.environ[sh.SWITCH_ENV] = value
+        self.addCleanup(os.environ.pop, sh.SWITCH_ENV, None)
+
+    def test_off_leaves_a_violation_alone(self):
+        self.session_with('Here is a summary with no citations.')
+        self.off()
+        rec, out = sh.decide(self.event())
+        self.assertEqual(rec['outcome'], sh.DISABLED)
+        self.assertEqual(out, {})
+        # Nothing was read: the switch costs a process start, not a parse.
+        self.assertNotIn('checks', rec)
+
+    def test_on_by_default_and_for_any_other_value(self):
+        self.session_with('Here is a summary with no citations.')
+        for value in (None, 'on', '1', 'true', ''):
+            with self.subTest(value=value):
+                if value is None:
+                    os.environ.pop(sh.SWITCH_ENV, None)
+                else:
+                    self.off(value)
+                rec, out = sh.decide(self.event())
+                self.assertEqual(rec['outcome'], sh.BLOCKED)
+                self.assertEqual(out['decision'], 'block')
+
+    def test_the_off_spellings(self):
+        self.session_with('Here is a summary with no citations.')
+        for value in ('off', 'OFF', '0', 'false', 'No', ' off '):
+            with self.subTest(value=value):
+                self.off(value)
+                rec, _ = sh.decide(self.event())
+                self.assertEqual(rec['outcome'], sh.DISABLED)

@@ -26,6 +26,8 @@ import sendback_session as se
 
 LOG_ENV = 'SENDBACK_TRIAL_LOG'
 SIZE_ENV = 'TOKEN_SHUNT_SESSION_MAX_BYTES'
+SWITCH_ENV = 'TOKEN_SHUNT_SENDBACK'
+OFF = ('off', '0', 'false', 'no')
 
 # The hook runs at every turn end and a session file only grows. The cap
 # bounds the worst case rather than excluding ordinary work: the largest
@@ -41,6 +43,7 @@ DEFAULT_MAX_BYTES = 64 * 1024 * 1024
 # field identically.
 VERSION_FLOOR = (2, 1, 269)
 
+DISABLED = 'disabled'
 TOO_LARGE = 'too_large'
 BLOCKED = 'blocked'
 NO_BLOCK = 'no_block'
@@ -148,6 +151,18 @@ def final_from_event(event, rows):
     return None, 'final answer not identified'
 
 
+def enabled():
+    """Whether this turn end is judged at all.
+
+    On by default: that is the product's behaviour. The comparison eval
+    turns it off so its baseline keeps measuring the skills rather than
+    the send-back (decision section 3.4). The runner sets the variable
+    itself after clearing every TOKEN_SHUNT_* name, so a caller's
+    environment cannot decide this for it.
+    """
+    return os.environ.get(SWITCH_ENV, '').strip().lower() not in OFF
+
+
 def parse_version(text):
     """'2.1.272' -> (2, 1, 272); anything else -> None."""
     if not isinstance(text, str):
@@ -194,6 +209,10 @@ def decide(event):
            'session_id': event.get('session_id'),
            'transcript_path': event.get('transcript_path'),
            'stop_hook_active': bool(event.get('stop_hook_active'))}
+    if not enabled():
+        # Nothing is read, so a disabled hook costs one process start.
+        rec.update(outcome=DISABLED, reason='%s is off' % SWITCH_ENV)
+        return rec, {}
     if event.get('hook_event_name') != 'Stop' or event.get('agent_id'):
         # A SubagentStop (the CLI converts a Stop hook into one for a
         # subagent) is a worker concluding, not the parent's answer. The
