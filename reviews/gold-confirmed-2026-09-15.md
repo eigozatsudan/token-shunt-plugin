@@ -29,11 +29,13 @@ basename（`user.rb`）なのに `fixtures` が入れ子（`rails/app/models/use
 サブエージェント側 assistant メッセージから取った（非同期 Agent の
 `tool_result` は起動メタデータしか含まない）。
 
-### 2.1 子の返答には引用元の絶対パスがあるか → **ある**
+### 2.1 子の返答には引用元の絶対パスがあるか → **おおむねある**
 
 359項目中344（96%）が `confirmed: <絶対パス> — <事実>` 形式。
-子が項目を1つも出さなかったのは 85実行中3件のみ。
-子側契約（`plugin/agents/bulk-reader.md:56`）は守られている。
+子が項目を1つも出さなかったのは 85実行中3件。
+子側契約（`plugin/agents/bulk-reader.md:56`）の遵守率は高いが、
+**完全遵守ではない**（15項目がパスを欠く）。子側の残り15項目は
+今回の修正対象外であり、未処理のまま残る。
 
 ### 2.2 親が落としているのか、契約が届いていないのか → **親が落としている**
 
@@ -56,17 +58,17 @@ basename（`user.rb`）なのに `fixtures` が入れ子（`rails/app/models/use
 | `Preserve one `confirmed: <path> — <fact>` item per corroborated fact in the final answer` | SKILL.md §2 **Inter-batch evidence contract** 段落内 | 「4+ paths を3件ずつに分割した場合の統合規則」の段落。3パス単一起動には適用されない読みになる |
 
 description には保持要求が一切なかった。
-すなわち §2.1.1・worker-model・content search・検索前メタデータ確認と
-**同型の到達性欠陥**である。
+したがって**親の保持義務には到達性の欠陥がある**。今回修正したのは
+この欠陥である。
 
-**裏付け。** プロンプト自身が `confirmed: items that name matching paths` と
-要求する `reader-batch-evidence` は 5/7 合格、要求しない2ケースは
-6/78 合格。要求が親の文脈にあるかどうかで結果が分かれている。
-
-**限界。** 契約文字列がトランスクリプトに現れた実行に限っても合格率は
-上がらなかった（`auto` 1/23、`compare` 2/9）。`head_limit` と同じく、
-**規則への到達は遵守を意味しない**。今回の修正は到達性を直すもので、
-行動が変わるかは別問題である。
+**限定。** 「到達性の欠陥があり、修正した」以上のことは言えない。
+契約文字列がトランスクリプトに現れた実行に限っても合格率は上がって
+おらず（`auto` 1/23、`compare` 2/9）、**契約が見えていても失敗して
+いる**。したがって到達性だけが失敗の原因とは確定できない。
+プロンプト自身が `confirmed: items that name matching paths` と要求する
+`reader-batch-evidence` が 5/7、要求しない2ケースが 6/78 という差は
+到達性の寄与を示唆するが、寄与の大きさも、他の要因の有無も未確定である。
+`head_limit` と同じく、**規則への到達は遵守を意味しない**。
 
 ## 3. 適用した修正（SKILL.md 6996 → 6972 B）
 
