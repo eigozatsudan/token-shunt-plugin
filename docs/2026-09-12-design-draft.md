@@ -1,7 +1,7 @@
 # token-shunt 設計ドラフト（レビュー対象）
 
 日付: 2026-09-12
-状態: セクション1・2までユーザー合意。セクション3（ZIP・テスト・限界の詳細）は未提示。
+状態: **本書は履歴。正本は `2026-09-12-token-shunt-design.md`。** 当時の状態はセクション1・2までユーザー合意、セクション3（ZIP・テスト・限界の詳細）は未提示。以降の決定・限界はすべて正本を参照すること。
 参照記事: https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90
 
 ## 合意済み決定
