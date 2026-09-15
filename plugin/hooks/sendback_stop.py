@@ -27,6 +27,9 @@ import sendback_session as se
 LOG_ENV = 'SENDBACK_TRIAL_LOG'
 SIZE_ENV = 'TOKEN_SHUNT_SESSION_MAX_BYTES'
 SWITCH_ENV = 'TOKEN_SHUNT_SENDBACK'
+# The only worker under the reader contract. Other agents -- the writer,
+# anything the user delegates to -- are not judged by it.
+WORKER_AGENT = 'token-shunt:bulk-reader'
 OFF = ('off', '0', 'false', 'no')
 
 # The hook runs at every turn end and a session file only grows. The cap
@@ -196,6 +199,78 @@ def max_bytes():
     return val if val > 0 else DEFAULT_MAX_BYTES
 
 
+def worker_block_reason(check):
+    """What the worker must fix, in its own terms.
+
+    Both violations are the worker holding the facts and not stating them
+    in the contracted form, which is something it can fix by restating.
+    A citation naming a file that no longer exists is undetermined, never
+    a violation, and never reaches here.
+    """
+    if not check['items']:
+        return ('token-shunt: your report carried no confirmed item. State '
+                'each fact on its own line as '
+                '`confirmed: <absolute path> — <the fact>`, or as '
+                '`unconfirmed: <what you could not verify>` where you could '
+                'not read it, then finish.')
+    head = ('token-shunt: every confirmed item must cite an absolute path. '
+            'Restate these lines with the full path of the file each fact '
+            'came from, one per line:')
+    return '\n'.join([head] + list(check['unusable']))
+
+
+def decide_worker(event):
+    """The reader worker's own report, judged before it reaches the parent.
+
+    The parent hook cannot repair what never arrived: a worker that
+    reports no confirmed item, or items with no usable path, leaves the
+    parent nothing to retain, and the saved corpus shows that is the
+    single largest failure left (79 launches). This is the same decision
+    shape as the parent's -- block only a violation the worker can fix,
+    never something undetermined -- applied one level down.
+    """
+    rec = {'event': event.get('hook_event_name'),
+           'session_id': event.get('session_id'),
+           'agent_id': event.get('agent_id'),
+           'agent_type': event.get('agent_type'),
+           'stop_hook_active': bool(event.get('stop_hook_active'))}
+    if rec['stop_hook_active']:
+        rec.update(outcome=SUPPRESSED, reason='stop_hook_active')
+        return rec, {}
+    if event.get('agent_type') != WORKER_AGENT:
+        rec.update(outcome=NO_BLOCK, reason='not a bulk-reader worker')
+        return rec, {}
+    said = event.get('last_assistant_message')
+    if not (isinstance(said, str) and said.strip()):
+        # Same rule as the parent: the worker's transcript does not yet
+        # hold the message this stop is about, so there is nothing to judge.
+        rec.update(outcome=NO_BLOCK,
+                   reason='worker report not in the SubagentStop input')
+        return rec, {}
+    check = rc.check_child_items([said])
+    demoted = rc.unconfirmed_lines(said)
+    rec['checks'] = {'child_items': check['status']}
+    rec['items'] = len(check['items'])
+    rec['unconfirmed'] = len(demoted)
+    if demoted and not check['usable']:
+        # The worker said, in the contracted form, that it could not verify
+        # what it was asked for -- an unreadable file, a line past the token
+        # limit. Demanding a `confirmed:` line here would be demanding it
+        # invent one. This covers the reports that pair `unconfirmed:` with
+        # a placeholder head (`confirmed: none`, `confirmed: (none)`): the
+        # placeholder is not a citation, and what the report actually says
+        # is that nothing could be confirmed.
+        rec.update(outcome=NO_BLOCK,
+                   reason='worker reported only unconfirmed items')
+        return rec, {}
+    if check['status'] != rc.VIOLATION:
+        rec.update(outcome=NO_BLOCK, reason='worker items %s' % check['status'])
+        return rec, {}
+    rec.update(outcome=BLOCKED, reason=check['reason'],
+               unusable=len(check['unusable']))
+    return rec, {'decision': 'block', 'reason': worker_block_reason(check)}
+
+
 def block_reason(lost):
     # The text names token-shunt: it is what the parent (and anyone reading
     # the transcript) sees, and the eval's isolation check attributes a
@@ -217,12 +292,13 @@ def decide(event):
         # Nothing is read, so a disabled hook costs one process start.
         rec.update(outcome=DISABLED, reason='%s is off' % SWITCH_ENV)
         return rec, {}
-    if event.get('hook_event_name') != 'Stop' or event.get('agent_id'):
-        # A SubagentStop (the CLI converts a Stop hook into one for a
-        # subagent) is a worker concluding, not the parent's answer. The
-        # parent contract must not be applied to it.
-        rec.update(outcome=NO_BLOCK, reason='not a parent Stop',
-                   agent_id=event.get('agent_id'))
+    if event.get('hook_event_name') == 'SubagentStop' or event.get('agent_id'):
+        # A worker concluding, not the parent's answer. The parent's
+        # retention contract says nothing about it; the reader contract
+        # does, and that is decide_worker's question.
+        return decide_worker(event)
+    if event.get('hook_event_name') != 'Stop':
+        rec.update(outcome=NO_BLOCK, reason='not a Stop event')
         return rec, {}
     if rec['stop_hook_active']:
         # The documented contract: return success while this is true. That

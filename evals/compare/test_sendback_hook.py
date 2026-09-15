@@ -319,9 +319,11 @@ class EventKindTests(HookFixture):
         self.session_with('Summary with no citations.')
         rec, out = sh.decide(self.event(hook_event_name='SubagentStop',
                                         agent_id=ts.AGENT,
+                                        agent_type='some-other:agent',
                                         last_assistant_message='Summary.'))
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
-        self.assertEqual(rec['reason'], 'not a parent Stop')
+        self.assertEqual(rec['reason'], 'not a bulk-reader worker')
+        self.assertNotIn('line_retention', rec.get('checks') or {})
         self.assertEqual(out, {})
 
 
@@ -432,6 +434,110 @@ class SwitchTests(HookFixture):
                 self.off(value)
                 rec, _ = sh.decide(self.event())
                 self.assertEqual(rec['outcome'], sh.DISABLED)
+
+
+
+class WorkerTests(HookFixture):
+    """The reader worker's own report (the 79 worker-side losses)."""
+
+    def worker_event(self, said, agent_type=sh.WORKER_AGENT, **kw):
+        ev = {'hook_event_name': 'SubagentStop', 'session_id': 's1',
+              'agent_id': ts.AGENT, 'agent_type': agent_type,
+              'transcript_path': self.session, 'stop_hook_active': False}
+        if said is not None:
+            ev['last_assistant_message'] = said
+        ev.update(kw)
+        return ev
+
+    def test_a_report_with_no_confirmed_item_is_sent_back(self):
+        rec, out = sh.decide(self.worker_event(
+            'I read the three files and they define the user model.'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('no confirmed item', rec['reason'])
+        self.assertIn('confirmed: <absolute path>', out['reason'])
+
+    def test_items_without_a_usable_path_are_sent_back_with_the_lines(self):
+        rec, out = sh.decide(self.worker_event(
+            'confirmed: user.rb — class User < ApplicationRecord'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('absolute path', out['reason'])
+        self.assertIn('user.rb', out['reason'])
+        self.assertEqual(rec['unusable'], 1)
+
+    def test_a_contracted_report_is_left_alone(self):
+        rec, out = sh.decide(self.worker_event(self.line))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['child_items'], 'ok')
+        self.assertEqual(out, {})
+
+    def test_a_vanished_file_is_undetermined_not_a_violation(self):
+        # The eval corpus is full of these: the run's temp tree is gone.
+        # Blaming the worker for it would send back a correct report.
+        rec, out = sh.decide(self.worker_event(
+            'confirmed: /gone/user.rb — class User < ApplicationRecord'))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['child_items'], 'undetermined')
+        self.assertEqual(out, {})
+
+    def test_an_honest_unconfirmed_report_is_left_alone(self):
+        # The worker could not read the line and said so in the contracted
+        # form. A send-back here would be asking it to invent a citation.
+        rec, out = sh.decide(self.worker_event(
+            'unconfirmed: /srv/one.json — payload_sha; the single line '
+            'exceeds the read limit'))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['unconfirmed'], 1)
+        self.assertIn('only unconfirmed', rec['reason'])
+        self.assertEqual(out, {})
+
+    def test_a_placeholder_head_over_an_unconfirmed_item_is_left_alone(self):
+        # `confirmed: none` is not a citation, and the report as a whole
+        # says nothing could be confirmed. The saved corpus has this shape.
+        for head in ('confirmed: none', 'confirmed: (none)', 'confirmed:'):
+            with self.subTest(head=head):
+                rec, out = sh.decide(self.worker_event(
+                    head + '\nunconfirmed: /srv/one.json — unreadable line'))
+                self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+                self.assertEqual(out, {})
+
+    def test_a_usable_item_beside_an_unconfirmed_one_is_still_judged(self):
+        rec, out = sh.decide(self.worker_event(
+            self.line + '\nunconfirmed: /srv/two.json — unreadable line'))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['child_items'], 'ok')
+
+    def test_another_agent_is_not_under_the_reader_contract(self):
+        rec, _ = sh.decide(self.worker_event('No citations here.',
+                                             agent_type='token-shunt:code-writer'))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['reason'], 'not a bulk-reader worker')
+
+    def test_a_report_absent_from_the_input_is_not_judged(self):
+        rec, out = sh.decide(self.worker_event(None))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertIn('not in the SubagentStop input', rec['reason'])
+        self.assertEqual(out, {})
+
+    def test_re_blocking_is_declined_the_same_way(self):
+        rec, out = sh.decide(self.worker_event('No citations here.',
+                                               stop_hook_active=True))
+        self.assertEqual(rec['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_the_switch_turns_the_worker_side_off_too(self):
+        os.environ[sh.SWITCH_ENV] = 'off'
+        self.addCleanup(os.environ.pop, sh.SWITCH_ENV, None)
+        rec, out = sh.decide(self.worker_event('No citations here.'))
+        self.assertEqual(rec['outcome'], sh.DISABLED)
+        self.assertEqual(out, {})
+
+    def test_the_worker_side_reads_no_transcript(self):
+        reads = []
+        real = sh.se.read_jsonl
+        sh.se.read_jsonl = lambda p, m=None: (reads.append(p), real(p, m))[1]
+        self.addCleanup(setattr, sh.se, 'read_jsonl', real)
+        sh.decide(self.worker_event('No citations here.'))
+        self.assertEqual(reads, [])
 
 
 if __name__ == '__main__':
