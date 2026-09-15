@@ -24,6 +24,19 @@ record() { # id ok detail
 }
 PASS=0; FAIL=0; FAILED=()
 
+report_summary() { # authoritative aggregate, including disk/isolation failures
+  jq -er '
+    if (.cases | type) != "object" then error("missing aggregate cases") else
+      [.cases[].modes[]] as $runs |
+      ($runs | map(select(.verdict == "pass")) | length) as $pass |
+      "done: pass=\($pass) fail=\(($runs | length) - $pass) runs=\($runs | length)",
+      (.cases | to_entries[] | .key as $id | .value.modes | to_entries[] |
+       select(.value.verdict != "pass") |
+       "FAIL \($id)/\(.key): \((.value.reasons // []) | join("; "))"),
+      (.errors[]? | "ERROR \(.)")
+    end' "$1"
+}
+
 write_skip() { # reason
   jq -nc --arg r "$1" '{skip_reason:$r,selected_run_valid:false,release_eligible:false,generated_at:(now|todate)}' >"$LASTRUN"
   say "skip: $1"; exit 0
@@ -243,6 +256,9 @@ run_claude() { # prompt transcript extra-args...
     # The baseline measures the skills, not the send-back: off unless a run
     # is deliberately measuring the hook itself (registration decision 3.4).
     export TOKEN_SHUNT_SENDBACK=${SENDBACK:-off}
+    # Pin the native Read limit across modes; callers' settings must not alter
+    # an isolation baseline. The 70KB single-line cases need a readable line.
+    export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=${READ_MAX_OUTPUT_TOKENS:-25000}
     cd "$CWD0" && printf '%s' "$prompt" | timeout --kill-after=10s "$TIMEOUT" claude \
       "${CLAUDE_COMMON[@]}" --setting-sources "" --add-dir "$FIX" --add-dir "$TMP" "$@" \
       >"$out" 2>"$out.err")
@@ -482,12 +498,16 @@ if (( FAIL > 0 )); then
 fi
 
 say "== cases =="
+say "probes: pass=$PASS fail=$FAIL"
+PASS=0; FAIL=0; FAILED=()
 CASE_N=0
 while IFS= read -r case; do
   id=$(jq -r .id <<<"$case")
   suite=$(jq -r .suite <<<"$case")
   [[ -n $ONLY ]] && [[ ,$ONLY, != *,$id,* ]] && continue
   [[ -n $SUITE && $suite != "$SUITE" ]] && continue
+  READ_MAX_OUTPUT_TOKENS=$(jq -er '.read_max_output_tokens // 25000 |
+    select(type == "number" and . > 0 and . == floor)' <<<"$case") || exit 1
   for mode in $(jq -r '.modes[]' <<<"$case"); do
     CASE_N=$((CASE_N+1))
     # build prompt
@@ -518,7 +538,8 @@ while IFS= read -r case; do
     spec=${case//\{FIX\}/$FIX}
     spec=${spec//\{TMP\}/$TMP}
     spec=${spec//\{JUDGE_DIR\}/$CMP}
-    spec=$(jq -c --arg root "$FIX" --arg cwd "$CWD0" '.fixture_root = $root | .tool_cwd = $cwd' <<<"$spec")
+    spec=$(jq -c --arg root "$FIX" --arg cwd "$CWD0" --argjson read_cap "$READ_MAX_OUTPUT_TOKENS" \
+      '.fixture_root = $root | .tool_cwd = $cwd | .read_max_output_tokens = $read_cap' <<<"$spec")
     # Restore fixtures before loading gold, which prior modes may have edited.
     gen_fixtures || exit 1
     gf=$(jq -r '.gold_file // empty' <<<"$spec")
@@ -599,10 +620,13 @@ python3 "$CMP/judge.py" --aggregate "$VRD" "$SPD" "$FIX" "$RUN_ROOT/summary.json
 # Publish only a complete JSON result; leave the startup invalid marker on error.
 if jq -e 'type == "object"' "$RUN_ROOT/summary.json" >/dev/null 2>&1; then
   cp "$RUN_ROOT/summary.json" "$LASTRUN.tmp" && mv "$LASTRUN.tmp" "$LASTRUN" || exit 1
+else
+  say "aggregate failed: no complete summary (attempted runs=$CASE_N)"
+  restore_fixtures
+  exit 1
 fi
 say "last-run: $LASTRUN"
-say "done: pass=$PASS fail=$FAIL runs=$CASE_N"
-for f in ${FAILED[@]+"${FAILED[@]}"}; do say "FAIL $f"; done
+report_summary "$LASTRUN" || exit 1
 restore_fixtures
 (( FAIL > 0 )) && exit 1
 exit $agg
