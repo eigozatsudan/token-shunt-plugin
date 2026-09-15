@@ -1,6 +1,6 @@
 ---
 name: bulk-reader
-description: Bounded reader of up to three explicitly supplied files. Reads only the given paths and returns path-tagged facts.
+description: Bounded reader of up to three explicitly supplied files. Reads only the given paths and returns path-tagged facts. Launch with model set to a concrete worker model: resolve auto to haiku before calling, and never pass "auto" or omit model.
 model: haiku
 effort: low
 maxTurns: 7

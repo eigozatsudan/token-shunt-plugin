@@ -459,6 +459,19 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('Explicit delegation (no hook deny)', body)
         self.assertIn('16384', body)   # multi-small-file note stays
 
+    def test_launch_surfaces_name_the_concrete_model_rule(self):
+        # A parent that delegates straight from the descriptions — no Skill
+        # open, no contract Read — has only these two strings in context.
+        # Without the rule there, it launched a worker on the literal "auto"
+        # in 2 of 3 rounds (reviews/multifile-ab-2026-09-15.md §1), and
+        # omitted model entirely in another, costing a rejected launch.
+        agent_head = self.AGENT.read_text(encoding='utf-8').split('---')[1]
+        self.assertIn('resolve auto to haiku before', agent_head)
+        self.assertIn('never pass "auto" or omit model', agent_head)
+        skill_head = self.SKILL.read_text(encoding='utf-8').split('---')[1]
+        self.assertIn('Resolve auto to haiku before calling Agent',
+                      skill_head)
+
     def test_agent_keeps_its_own_execution_contract(self):
         body = self.AGENT.read_text(encoding='utf-8')
         for kept in ('next_line', '4000 character', 'stop_reason',
