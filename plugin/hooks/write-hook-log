@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Append optional hook telemetry without writing to protocol streams or FIFOs."""
+import json
+import os
+import stat
+import sys
+
+
+def main():
+    target = os.environ.get('TOKEN_SHUNT_HOOK_LOG')
+    if not target:
+        return
+    record = json.load(sys.stdin)
+    data = (json.dumps(record, separators=(',', ':')) + '\n').encode()
+    streams = []
+    # Capture inherited descriptors before open can reuse an absent fd 3.
+    for stream in (1, 2, 3):
+        try:
+            streams.append(os.fstat(stream))
+        except OSError:
+            pass
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND |
+                 os.O_NONBLOCK | os.O_NOFOLLOW, 0o600)
+    try:
+        destination = os.fstat(fd)
+        if not stat.S_ISREG(destination.st_mode):
+            return
+        for other in streams:
+            if (destination.st_dev, destination.st_ino) == (other.st_dev, other.st_ino):
+                return
+        # O_APPEND protects existing records; short writes remain best effort.
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        pass  # Optional telemetry must not affect hook decisions or output.

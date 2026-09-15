@@ -214,7 +214,7 @@ python3 -B -m unittest discover -s "$ROOT/evals/compare" -p test_cost_probe_metr
   && record cost-probe-metrics 0 "" || record cost-probe-metrics 1 "cost probe metric regression failed"
 
 # These standalone suites are part of the result-accounted release checks.
-for suite in reader_contract reader_call_contract bash_finding_fixes doctor_record; do
+for suite in reader_contract reader_call_contract bash_finding_fixes clean_context_fixes hook_logging doctor_record; do
   echo "== $suite regression checks =="
   python3 -B "$ROOT/evals/test_${suite}.py" \
     && record "$suite-regressions" 0 "" || record "$suite-regressions" 1 "$suite regression failed"
