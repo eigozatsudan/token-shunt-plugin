@@ -9,8 +9,8 @@ the call:
   bounded output   that search returns `files_with_matches`, or
                    `head_limit` 1-20 with no context window (-A/-B/-C, context)
 
-Only a single existing file is judged. A directory, a bare cwd search and
-a `glob` set do not resolve to one size here, and enumerating them at
+Only a single existing file is judged. A directory and a bare cwd search
+do not resolve to one size here, and enumerating them at
 PreToolUse would cost more than the rule is worth; they pass untouched,
 which leaves that part of §26.5 unenforced rather than guessed at
 (reviews/enforcement-design-2026-09-15.md §1.2).
@@ -40,14 +40,13 @@ DENY_CAP = 6
 CONTEXT_FLAGS = ('-A', '-B', '-C', 'context')
 # Metadata commands whose operands are files the caller has just measured.
 _STAT_FLAG = re.compile(r'^-[A-Za-z]+$|^--[A-Za-z-]+(=.*)?$')
-# Flags whose value is the next word, not a file: stat's format strings.
-# `wc -c` is the byte count itself, so this is keyed by command.
-_TAKES_VALUE = {'stat': ('-c', '--format', '--printf'), 'wc': ()}
 # A size the caller was never shown is not a measurement. `stat` prints one
 # by default, but a format string prints exactly what it names, so the
 # format has to name the size; `%%` is a literal percent, not a directive.
 _SIZE_DIRECTIVE = re.compile(r'%[-#0 +\']*[0-9]*s')
 _STAT_FORMAT = ('-c', '--format', '--printf')
+# `stat -c%s` and `stat -Lc%s`: GNU takes the format attached to the flag.
+_STAT_ATTACHED = re.compile(r'^-L?c(.+)$')
 _UNSAFE = set('$`|;&<>()#\n\\*?[]{}!~')
 # The writer has Read, Write, Grep, Glob and no Bash, and check-file-size
 # exempts its Reads, so neither way of learning a size is open to it. It is
@@ -64,9 +63,13 @@ def _key(st):
 
 
 def target_file(inp, isfile=os.path.isfile):
-    """The one file this Grep searches, or None if it is not one file."""
-    if inp.get('glob'):
-        return None
+    """The one file this Grep searches, or None if it is not one file.
+
+    A `glob` beside a `path` that names one file does not make the size
+    uncertain: the glob can only decide whether that one file is searched.
+    Treating any glob as out of scope put the escape from this rule one
+    extra key away from the call that had just been refused.
+    """
     path = inp.get('path')
     if not isinstance(path, str) or not path:
         return None
@@ -77,8 +80,28 @@ def target_file(inp, isfile=os.path.isfile):
     return path if isfile(path) else None
 
 
-def record(state, path, source, stat=os.stat):
+def follows_links(command):
+    """Did this metadata command report the target of a symlink?
+
+    `wc -c` reads through the link; `stat` describes the link itself
+    unless asked not to. Recording the target from a bare `stat` marked a
+    large file measured on the strength of the link's own tiny size.
+    """
+    if not isinstance(command, str):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if not words or os.path.basename(words[0]) != 'stat':
+        return True                       # `wc -c` follows
+    return any(w in ('-L', '--dereference') for w in words[1:])
+
+
+def record(state, path, source, stat=os.stat, follow=True):
     """Note that the caller has been told this file's size."""
+    if not follow and os.path.islink(path):
+        return False
     try:
         st = stat(path)
     except OSError:
@@ -105,27 +128,43 @@ def is_measured(state, path, stat=os.stat):
                 and got.get('mtime_ns') == st.st_mtime_ns)
 
 
-def _stat_shows_size(rest):
-    """Does this `stat` print the byte count of its operands?
+def _stat_operands(rest):
+    """Files a `stat` showed a size for, or None if we cannot tell.
 
-    Bare `stat` does. A format string prints only what it names, so it
-    must contain a `%s` directive -- `stat -c %n` names the path alone.
-    `-f` describes the filesystem rather than the file and never does.
+    Bare `stat` prints one. A format string prints exactly what it names,
+    so it has to name the size, in whichever spelling GNU accepts:
+    `-c %s`, `-c%s`, `-Lc%s`, `--format=%s`, `--printf=%s`. Any other
+    option -- `-f` for the filesystem, `-t` for the terse line, anything
+    unknown -- reads as "we do not know what this printed", and nothing
+    is recorded. A missed record costs the caller one `wc -c`; a wrong
+    one licenses an unbounded search.
     """
-    formats = []
-    take = False
+    paths, formats = [], []
+    take = operands_only = False
     for word in rest:
         if take:
             formats.append(word)
             take = False
+        elif operands_only or not word.startswith('-') or word == '-':
+            paths.append(word)
+        elif word == '--':
+            operands_only = True
+        elif word in ('-L', '--dereference'):
             continue
-        if word in ('-f', '--file-system'):
-            return False
-        if word in _STAT_FORMAT:
+        elif word in _STAT_FORMAT:
             take = True
         elif any(word.startswith(f + '=') for f in _STAT_FORMAT):
             formats.append(word.split('=', 1)[1])
-    return all(_SIZE_DIRECTIVE.search(f.replace('%%', '')) for f in formats)
+        else:
+            attached = _STAT_ATTACHED.match(word)
+            if not attached:
+                return None
+            formats.append(attached.group(1))
+    if take:
+        return None
+    if not all(_SIZE_DIRECTIVE.search(f.replace('%%', '')) for f in formats):
+        return None
+    return paths
 
 
 def metadata_paths(command):
@@ -149,22 +188,16 @@ def metadata_paths(command):
     if base not in ('stat', 'wc'):
         return []
     rest = words[1:]
-    if base == 'wc' and not any(w in ('-c', '--bytes') for w in rest):
+    if base == 'stat':
+        return _stat_operands(rest) or []
+    if not any(w in ('-c', '--bytes') for w in rest):
         return []
-    if base == 'stat' and not _stat_shows_size(rest):
-        return []
+    # `wc` prints the byte count whenever -c is given, whatever else it
+    # was asked for, so its other options only have to be skipped.
     paths = []
-    skip = False
     for word in rest:
-        if skip:
-            skip = False
-            continue
-        if word == '--':
-            continue
-        if _STAT_FLAG.match(word):
-            skip = word in _TAKES_VALUE[base]
-            continue
-        paths.append(word)
+        if not _STAT_FLAG.match(word) and word != '--':
+            paths.append(word)
     return paths
 
 
@@ -173,8 +206,16 @@ def _form_error(inp):
     context = 0
     for flag in CONTEXT_FLAGS:
         value = inp.get(flag)
+        if value is None:
+            continue
         if isinstance(value, int) and not isinstance(value, bool):
             context = max(context, value)
+        else:
+            # Anything else is a window we cannot size. head_limit already
+            # refuses a value it cannot act on; reading `-C: "50"` as no
+            # window at all was the one reading that leaves output
+            # unbounded, so the window fails closed too.
+            context = max(context, 1)
     if limit is None:
         return ('this content search has no bound. Use '
                 'output_mode="files_with_matches", or head_limit 1-%d'

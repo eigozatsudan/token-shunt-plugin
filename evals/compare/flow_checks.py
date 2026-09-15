@@ -50,6 +50,32 @@ def blocked_by_token_shunt(result):
     return (result.get('text') or '').lstrip().startswith('token-shunt:')
 
 
+# Every spelling the Grep schema accepts for rg's context window, kept in
+# step with grep_bounds.CONTEXT_FLAGS: the hook refuses all four, and a
+# run the hook never saw (direct mode loads no plugin) is graded here.
+CONTEXT_KEYS = ('-A', '-B', '-C', 'context')
+
+
+def context_window(inp):
+    """Lines of context this Grep asked for, judged the way the hook does.
+
+    A value that is not a whole number is counted as a window rather than
+    ignored: `int('two')` used to raise here and abandon the case, and
+    reading it as "no window" is the one reading that lets the output go
+    unbounded.
+    """
+    window = 0
+    for key in CONTEXT_KEYS:
+        value = inp.get(key)
+        if value is None:
+            continue
+        if isinstance(value, int) and not isinstance(value, bool):
+            window = max(window, value)
+        else:
+            window = max(window, 1)
+    return window
+
+
 def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
     """§26.5 form for position-only Grep on an over-budget target.
 
@@ -86,7 +112,7 @@ def position_grep_errors(tr, target, budget=SMALL_TASK_BUDGET):
             continue
         judged += 1
         limit = inp.get('head_limit')
-        context = max(int(inp.get(f) or 0) for f in ('-A', '-B', '-C'))
+        context = context_window(inp)
         if limit is not None and context:
             # §26.5 names -A/-B alongside head_limit: a context window
             # multiplies the returned lines, so the bound no longer holds.

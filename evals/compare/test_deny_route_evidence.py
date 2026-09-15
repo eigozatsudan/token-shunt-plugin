@@ -127,6 +127,28 @@ class DenyRouteEvidenceTests(unittest.TestCase):
         verdict, _ = self.evaluate(ev)
         self.assertFalse(verdict['checks']['deny_route'])
 
+    def test_a_command_that_printed_no_size_does_not_count(self):
+        # `stat -c%n` prints the path. The parent that ran it knows no
+        # more about the size than before, in either spelling.
+        for command in ('stat -c %%n %s', 'stat -c%%n %s', 'stat -t %s'):
+            with self.subTest(command=command):
+                verdict, _ = self.evaluate(
+                    self.metadata_events(command=command % self.path))
+                self.assertFalse(verdict['checks']['deny_route'])
+
+    def test_a_measurement_that_never_came_back_does_not_count(self):
+        """An errored or unanswered command told the parent nothing."""
+        for mutate in ('error', 'no_result'):
+            with self.subTest(mutate=mutate):
+                ev = self.metadata_events()
+                if mutate == 'error':
+                    ev[2]['message']['content'][0].update(
+                        is_error=True, content='wc: No such file')
+                else:
+                    ev.pop(2)
+                verdict, _ = self.evaluate(ev)
+                self.assertFalse(verdict['checks']['deny_route'])
+
     def test_a_measurement_of_some_other_file_does_not_count(self):
         verdict, _ = self.evaluate(
             self.metadata_events(command='wc -c %s/elsewhere.txt' % self.root))

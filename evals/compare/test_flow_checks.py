@@ -4,7 +4,9 @@ import os
 import tempfile
 import unittest
 
-from flow_checks import edit_flow_errors, verification_errors, verify_artifact, report_fields
+from flow_checks import (edit_flow_errors, verification_errors,
+                         verify_artifact, report_fields,
+                         position_grep_errors)
 from judge import Transcript, is_full_parent_read, use_targets_path
 
 
@@ -369,3 +371,43 @@ class ArtifactCheckerTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PositionGrepTest(unittest.TestCase):
+    """The post-hoc half of the Grep bound.
+
+    It grades runs the hook never saw -- `direct` mode loads no plugin --
+    so anything the hook refuses has to be an error here too, or the two
+    halves disagree about what conforms.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.big = os.path.join(self.dir, 'big.txt')
+        with open(self.big, 'w') as fh:
+            fh.write('x' * 36000)
+
+    def errors(self, **inp):
+        body = {'path': self.big, 'output_mode': 'content'}
+        body.update(inp)
+        tr = Transcript([call('g', 'Grep', body), result('g', 'a match')])
+        return position_grep_errors(tr, self.big)
+
+    def test_a_bounded_search_with_no_window_conforms(self):
+        self.assertEqual(self.errors(head_limit=5), (True, []))
+
+    def test_every_spelling_of_the_window_is_an_error(self):
+        for key in ('-A', '-B', '-C', 'context'):
+            with self.subTest(key=key):
+                judged, errors = self.errors(head_limit=5, **{key: 3})
+                self.assertTrue(judged)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn('context window', errors[0])
+
+    def test_a_window_that_is_not_a_number_is_reported_not_raised(self):
+        # A malformed tool input has to become a reasoned failure; a
+        # traceback here abandons the whole case.
+        judged, errors = self.errors(head_limit=5, **{'-A': 'two'})
+        self.assertTrue(judged)
+        self.assertEqual(len(errors), 1, errors)
+

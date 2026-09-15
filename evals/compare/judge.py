@@ -1085,8 +1085,45 @@ def ts_hook_denies(tr):
 # -- a bare `wc -c` or `stat` naming the file, nothing a shell expands.
 _METADATA_CMDS = ("wc", "stat")
 _META_UNSAFE = set("$`|;&<>()#\n\\*?[]{}!~")
-_META_VALUE_FLAGS = {"stat": ("-c", "--format", "--printf"), "wc": ()}
+_META_FORMAT = ("-c", "--format", "--printf")
+_META_ATTACHED = re.compile(r"^-L?c(.+)$")
 _META_SIZE = re.compile(r"%[-#0 +']*[0-9]*s")
+
+
+def _stat_operands(rest):
+    """Files a `stat` showed a size for, or None if we cannot tell.
+
+    Same narrow reading the hook applies, written out here rather than
+    imported: scoring the product with the product's own parser would
+    loosen the check whenever the parser loosened. Any option we do not
+    recognise means we do not know what the parent was shown.
+    """
+    paths, formats = [], []
+    take = operands_only = False
+    for word in rest:
+        if take:
+            formats.append(word)
+            take = False
+        elif operands_only or not word.startswith("-") or word == "-":
+            paths.append(word)
+        elif word == "--":
+            operands_only = True
+        elif word in ("-L", "--dereference"):
+            continue
+        elif word in _META_FORMAT:
+            take = True
+        elif any(word.startswith(f + "=") for f in _META_FORMAT):
+            formats.append(word.split("=", 1)[1])
+        else:
+            attached = _META_ATTACHED.match(word)
+            if not attached:
+                return None
+            formats.append(attached.group(1))
+    if take:
+        return None
+    if not all(_META_SIZE.search(f.replace("%%", "")) for f in formats):
+        return None
+    return paths
 
 
 def measures_path(use, path, spec):
@@ -1104,40 +1141,17 @@ def measures_path(use, path, spec):
     if base_cmd not in _METADATA_CMDS:
         return False
     rest = words[1:]
-    if base_cmd == "wc" and not any(w in ("-c", "--bytes") for w in rest):
-        return False
     if base_cmd == "stat":
-        # The format prints what it names, so it has to name the size; a
-        # `stat -c %n` showed the parent a path and nothing else.
-        formats, take = [], False
-        for word in rest:
-            if take:
-                formats.append(word)
-                take = False
-            elif word in ("-f", "--file-system"):
-                return False
-            elif word in _META_VALUE_FLAGS["stat"]:
-                take = True
-            elif any(word.startswith(f + "=")
-                     for f in _META_VALUE_FLAGS["stat"]):
-                formats.append(word.split("=", 1)[1])
-        if not all(_META_SIZE.search(f.replace("%%", "")) for f in formats):
-            return False
+        operands = _stat_operands(rest)
+    elif any(w in ("-c", "--bytes") for w in rest):
+        operands = [w for w in rest if not w.startswith("-") and w != "--"]
+    else:
+        operands = None
+    if not operands:
+        return False
     cwd = (spec or {}).get("tool_cwd") or ""
-    skip = False
-    for word in rest:
-        if skip:
-            skip = False
-            continue
-        if word == "--":
-            continue
-        if word.startswith("-"):
-            skip = word in _META_VALUE_FLAGS[base_cmd]
-            continue
-        if word == path or os.path.normpath(
-                os.path.join(cwd, word)) == os.path.normpath(path):
-            return True
-    return False
+    return any(w == path or os.path.normpath(os.path.join(cwd, w))
+               == os.path.normpath(path) for w in operands)
 
 
 def judge(transcript_path, spec, ctx):
@@ -1452,9 +1466,16 @@ def judge(transcript_path, spec, ctx):
             # trip (reviews/deny-route-case-2026-09-15.md). The body must
             # still stay out of the parent, so any successful Read of the
             # target -- whole or ranged -- keeps this a failure.
+            def told_the_size(u):
+                # A command that errored, or that has no result at all,
+                # told the parent nothing -- it cannot stand in for the
+                # deny this branch excuses.
+                result = tr.result_of(u["id"])
+                return (bool(result) and not result.get("is_error", False)
+                        and result.get("parent_tool_use_id") is None)
+
             measured = next((u for u in tr.parent_tool_uses("Bash")
-                             if measures_path(u, p, spec)
-                             and (tr.result_of(u["id"]) or {}).get("parent_tool_use_id") is None
+                             if measures_path(u, p, spec) and told_the_size(u)
                              and u["position"] < agent["position"]), None)
             body = any(use_targets_path(u, p, spec)
                        and not (tr.result_of(u["id"]) or {}).get("is_error", True)

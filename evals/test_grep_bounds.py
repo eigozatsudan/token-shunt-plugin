@@ -50,14 +50,29 @@ class TargetTests(unittest.TestCase):
         self.assertIsNone(self.decide(
             grep_event(self.big, output_mode='files_with_matches')))
 
-    def test_a_directory_a_bare_search_and_a_glob_are_out_of_scope(self):
+    def test_a_directory_and_a_bare_search_are_out_of_scope(self):
+        # Neither resolves to one size, and enumerating them in front of
+        # the call would cost more than the rule is worth. A glob is a
+        # different matter once `path` names one file: see below.
         for inp in ({'path': self.dir}, {'path': None},
-                    {'path': self.big, 'glob': '*.txt'}):
+                    {'path': self.dir, 'glob': '*.txt'}):
             with self.subTest(inp=inp):
                 event = grep_event(inp.get('path'))
                 if 'glob' in inp:
                     event['tool_input']['glob'] = inp['glob']
                 self.assertIsNone(self.decide(event))
+
+    def test_a_glob_beside_one_named_file_does_not_lift_the_rule(self):
+        """`path` names one file, so the size is not in doubt.
+
+        The glob exemption is for a set of files with no single size.
+        Read as "any glob at all", it made the escape from this rule one
+        extra key on the call the hook had just refused.
+        """
+        for glob in ('*', 'big.txt', '**/*.py'):
+            with self.subTest(glob=glob):
+                self.assertIn('size has not been checked', self.decide(
+                    grep_event(self.big, head_limit=5, glob=glob)))
 
     def test_a_missing_file_is_left_to_grep_itself(self):
         self.assertIsNone(self.decide(grep_event(self.big + '.gone')))
@@ -86,6 +101,27 @@ class MeasuredStateTests(TargetTests):
             with self.subTest(key=key):
                 self.assertIn('context window', self.decide(
                     grep_event(self.big, head_limit=5, **{key: 3}), state))
+
+    def test_a_context_window_that_is_not_a_number_is_still_a_window(self):
+        """head_limit fails closed on a bad type; the window must too.
+
+        Counting only ints read `-C: "50"` as no window at all, which is
+        the one reading that lets the output go unbounded.
+        """
+        state = self.measured_state()
+        for value in ('50', 50.0, True, [5], {'n': 5}):
+            with self.subTest(value=value):
+                self.assertIn('context window', self.decide(
+                    grep_event(self.big, head_limit=5, **{'-C': value}),
+                    state))
+
+    def test_an_absent_or_zero_window_is_not_a_window(self):
+        state = self.measured_state()
+        for value in (None, 0):
+            with self.subTest(value=value):
+                self.assertIsNone(self.decide(
+                    grep_event(self.big, head_limit=5, **{'-C': value}),
+                    state))
 
     def test_a_changed_file_is_no_longer_measured(self):
         state = self.measured_state()
@@ -173,13 +209,22 @@ class MetadataCommandTests(unittest.TestCase):
         """
         for command in ('stat -c %n /srv/a.py', 'stat --format=%n /srv/a.py',
                         'stat --printf=%N /srv/a.py', 'stat -c %%s /srv/a.py',
-                        'stat -f /srv/a.py', 'stat -f -c %s /srv/a.py'):
+                        'stat -f /srv/a.py', 'stat -f -c %s /srv/a.py',
+                        # The same formats written as GNU also accepts
+                        # them, with the value attached to the flag.
+                        'stat -c%n /srv/a.py', 'stat -Lc%n /srv/a.py',
+                        'stat --printf=%y /srv/a.py',
+                        # And a flag whose meaning we do not know: a
+                        # missed record costs a round trip, a wrong one
+                        # licenses the search.
+                        'stat -t /srv/a.py', 'stat --terse /srv/a.py'):
             with self.subTest(command=command):
                 self.assertEqual(gb.metadata_paths(command), [])
 
     def test_a_format_that_does_print_the_size_still_records(self):
         for command in ('stat -c %s /srv/a.py', 'stat -c "%n %s" /srv/a.py',
-                        'stat --printf=%10s /srv/a.py'):
+                        'stat --printf=%10s /srv/a.py', 'stat -c%s /srv/a.py',
+                        'stat -Lc%s /srv/a.py', 'stat -L /srv/a.py'):
             with self.subTest(command=command):
                 self.assertEqual(gb.metadata_paths(command), ['/srv/a.py'])
 
@@ -271,6 +316,26 @@ class HookProcessTests(unittest.TestCase):
             self.assertIn('size has not been checked', denied)
         capped = self.run_hook(grep_event(self.big, self.session, head_limit=5))
         self.assertIn('refused %d times' % gb.DENY_CAP, capped)
+
+    def test_stat_of_a_symlink_does_not_measure_what_it_points_at(self):
+        """`stat` prints the link's own size, not the target's.
+
+        Recording the target marked a 20 KB file measured on the strength
+        of a 27-byte answer -- a size the caller was never shown.
+        """
+        link = os.path.join(self.dir, 'link.txt')
+        os.symlink(self.big, link)
+        self.run_hook({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash',
+                       'session_id': self.session,
+                       'tool_input': {'command': 'stat -c %s ' + link}})
+        self.assertIn('size has not been checked', self.run_hook(
+            grep_event(self.big, self.session, head_limit=5)))
+        # `stat -L` and `wc -c` both follow the link, so both do measure it.
+        self.run_hook({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash',
+                       'session_id': self.session,
+                       'tool_input': {'command': 'wc -c ' + link}})
+        self.assertEqual(self.run_hook(
+            grep_event(self.big, self.session, head_limit=5)), '')
 
     def test_a_relative_path_resolves_against_the_session_cwd(self):
         # The hook process runs wherever the CLI starts it. Only the event's

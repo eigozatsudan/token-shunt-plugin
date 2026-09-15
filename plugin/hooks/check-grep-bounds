@@ -105,10 +105,11 @@ def resolvable(paths, bad_cwd):
     return [p for p in paths if os.path.isabs(p)]
 
 
-def record_paths(event, paths, source):
+def record_paths(event, paths, source, follow=True):
     if not paths:
         return
-    with_state(event, lambda state: [gb.record(state, p, source) for p in paths])
+    with_state(event, lambda state: [gb.record(state, p, source, follow=follow)
+                                     for p in paths])
 
 
 def main(argv):
@@ -131,7 +132,7 @@ def main(argv):
     if recording:
         command = (event.get('tool_input') or {}).get('command')
         record_paths(event, resolvable(gb.metadata_paths(command), bad_cwd),
-                     'bash')
+                     'bash', follow=gb.follows_links(command))
     elif stage in (None, 'PreToolUse'):
         judge(event)
     return 0

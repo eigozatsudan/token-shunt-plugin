@@ -186,6 +186,23 @@ class AmbiguityResolutionTests(unittest.TestCase):
                          % (line % self.ALPHA, self.BETA))
                 self.assertEqual([], self.check(final))
 
+    def test_an_asserted_link_is_not_an_absence(self):
+        """The absence branch has to see a denial, not just a non-TOKEN line.
+
+        Accepting "any relation line that is not a positive TOKEN claim"
+        let an answer that invents the link -- the thing this case exists
+        to catch -- count as resolved on evidence, because neither the
+        absence test nor the positive test looks at a relation clause
+        that never says TOKEN.
+        """
+        final = ('**Answer: Yes.** alpha TOKEN is the same object as beta '
+                 'TOKEN.\n'
+                 'confirmed: %s — this file references %s\n'
+                 'confirmed: %s — this file is referenced by %s\n'
+                 'status: complete' % (self.ALPHA, self.BETA,
+                                       self.BETA, self.ALPHA))
+        self.assertIn('batch_evidence', self.check(final))
+
     def test_a_boundary_confirmation_carrying_both_files_also_resolves(self):
         # The other branch the prompt offers: one fresh Agent with both.
         agent = {'id': 'b1', 'name': 'Agent', 'position': (9, 0),

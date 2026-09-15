@@ -338,6 +338,20 @@ def positive_relationship(line):
     return False
 
 
+def denies_relationship(line):
+    """Does this confirmed line state that the link is not there?
+
+    The absence branch needs a denial, in its own clause. "Not a positive
+    TOKEN claim" is not the same thing: `positive_relationship` only
+    looks at lines that say TOKEN, so a line asserting the link in other
+    words satisfied neither test and counted as evidence of absence.
+    """
+    if not _CONFIRMED.search(line):
+        return False
+    return any(_RELATION.search(clause) and _NEGATED.search(clause)
+               for clause in _CLAUSE.split(line))
+
+
 def absence_covers_collision(final, colliding):
     """Every colliding file reported, by path, as referring to no other.
 
@@ -349,7 +363,7 @@ def absence_covers_collision(final, colliding):
     for path in colliding:
         lines = [l for l in final.splitlines()
                  if path in l and _CONFIRMED.search(l)]
-        if not any(_RELATION.search(l) and not positive_relationship(l)
+        if not any(denies_relationship(l) and not positive_relationship(l)
                    for l in lines):
             return False
     return True
