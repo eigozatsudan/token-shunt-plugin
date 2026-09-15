@@ -37,7 +37,7 @@
  {
   "id": "bash-pipe",
   "cmd": "cat @FIX@/large-80k.txt | grep foo",
-  "expect": "pass"
+  "expect": "deny"
  },
  {
   "id": "bash-pipe-cat",
@@ -236,7 +236,7 @@
  {
   "id": "bash-pipe-tail-unknown",
   "cmd": "cat @FIX@/large-80k.txt | wc -l",
-  "expect": "pass"
+  "expect": "deny"
  },
  {
   "id": "bash-pipe-tail-empty",
