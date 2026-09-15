@@ -689,6 +689,43 @@ run_dd() { # TOKS[0] is dd
   FILES=("$src"); check_files_full dd; pass
 }
 
+# Commands that put a whole file into the transcript in some other shape.
+# Nothing in their options bounds the output, so each one is judged exactly
+# as cat is. diff/sdiff/comm take two operands; either one can be the large
+# file. A reader missing from this list is a hole, not a permission.
+is_full_reader() {
+  case $1 in
+    cat|less|more|nl|od|xxd|base64|strings|rev|tac|fold|expand|unexpand|\
+    pr|shuf|cut|paste|column|diff|sdiff|comm) return 0 ;;
+  esac
+  return 1
+}
+
+is_grep_reader() {
+  case $1 in grep|egrep|fgrep|rg|ripgrep) return 0 ;; esac
+  return 1
+}
+
+# grep prints matching lines, and a pattern that matches most of a large file
+# prints most of it. Only the flags that replace the matches with a name, a
+# count or an exit status bound the output; -m and the context flags do not.
+grep_output_is_bounded() { # TOKS holds the command
+  local i n=${#TOKS[@]} t eoo=0
+  for ((i=1; i<n; i++)); do
+    (( i % 128 )) || check_parse_budget
+    [[ ${TOK_KINDS[i]} == word ]] || { ((i++)); continue; }
+    t=${TOKS[i]}
+    (( eoo )) && continue
+    case $t in
+      --) eoo=1 ;;
+      --count|--files-with-matches|--files-without-match|--quiet|--silent) return 0 ;;
+      --*) ;;
+      -?*) [[ ${t#-} == *[clLq]* ]] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
 check_files_full() { # toolname; deny on first exceeding/undetermined target
   local tool=$1 f v nl rb rd el
   for f in ${FILES[@]+"${FILES[@]}"}; do
@@ -1004,12 +1041,22 @@ check_stage_full() {
       (( unresolved )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
       TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
       ( pass() { exit 0; }; run_dd ) || exit $? ;;
-    cat|head|tail|less|more)
-      (( ${FS_UNCERTAIN:-0} )) && deny "A command in this Bash call may change reader files before execution. Separate file preparation and reading into different Bash calls, then use /token-shunt:bulk-reader if needed."
-      (( unresolved )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
-      (( ${CD_UNCERTAIN:-0} )) && deny "A preceding cd has an unresolved destination or redirection. Use absolute file paths in a separate Bash call."
-      TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$base" ;;
+    head|tail)
+      stage_full_reader "$base" "$unresolved" ;;
   esac
+  if is_full_reader "$base"; then
+    stage_full_reader "$base" "$unresolved"
+  elif is_grep_reader "$base"; then
+    TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+    grep_output_is_bounded || stage_full_reader "$base" "$unresolved"
+  fi
+}
+
+stage_full_reader() { # base, unresolved-expansion flag
+  (( ${FS_UNCERTAIN:-0} )) && deny "A command in this Bash call may change reader files before execution. Separate file preparation and reading into different Bash calls, then use /token-shunt:bulk-reader if needed."
+  (( $2 )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
+  (( ${CD_UNCERTAIN:-0} )) && deny "A preceding cd has an unresolved destination or redirection. Use absolute file paths in a separate Bash call."
+  TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}"); collect_file_args; check_files_full "$1"
 }
 
 # For an explicit side output, retain head/tail's own output bound. The
@@ -1184,9 +1231,18 @@ tokenize "$cmd"; strip_vars
 ((${#VTOKS[@]})) || pass
 base=${VTOKS[0]##*/}
 TOKS=("${VTOKS[@]}"); TOK_KINDS=("${VTOK_KINDS[@]}")
+expansion_guard() {
+  (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."
+  return 0
+}
 case $base in
-  cat|less|more) (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; collect_file_args; check_files_full "$base"; pass ;;
-  head|tail)     (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; run_head_tail ;;
-  dd)            (( CMD_EXPANSION )) && deny "Shell-expanded file operands cannot be checked safely. Use literal paths with /token-shunt:bulk-reader."; run_dd ;;
-  *)             pass ;;
+  head|tail) expansion_guard; run_head_tail ;;
+  dd)        expansion_guard; run_dd ;;
 esac
+if is_full_reader "$base"; then
+  expansion_guard; collect_file_args; check_files_full "$base"; pass
+elif is_grep_reader "$base"; then
+  grep_output_is_bounded && pass
+  expansion_guard; collect_file_args; check_files_full "$base"; pass
+fi
+pass

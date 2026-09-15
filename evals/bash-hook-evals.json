@@ -472,5 +472,200 @@
   "id": "bash-dd-if-to-file",
   "cmd": "dd if=@FIX@/large-80k.txt of=@FIX@/copy.out",
   "expect": "pass"
+ },
+ {
+  "id": "bash-reader-nl-large",
+  "cmd": "nl @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-od-large",
+  "cmd": "od @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-xxd-large",
+  "cmd": "xxd @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-base64-large",
+  "cmd": "base64 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-strings-large",
+  "cmd": "strings @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-rev-large",
+  "cmd": "rev @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-tac-large",
+  "cmd": "tac @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-fold-large",
+  "cmd": "fold @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-expand-large",
+  "cmd": "expand @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-pr-large",
+  "cmd": "pr @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-shuf-large",
+  "cmd": "shuf @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-paste-large",
+  "cmd": "paste @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-column-large",
+  "cmd": "column @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-cut-large",
+  "cmd": "cut -d: -f1 @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-diff-large",
+  "cmd": "diff @FIX@/small-10.txt @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-sdiff-large",
+  "cmd": "sdiff @FIX@/small-10.txt @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-comm-large",
+  "cmd": "comm @FIX@/small-10.txt @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-nl-small",
+  "cmd": "nl @FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-reader-od-stdin",
+  "cmd": "od",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-reader-nl-redirect-out",
+  "cmd": "nl @FIX@/large-80k.txt >/tmp/ts-out",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-reader-nl-redirect-in",
+  "cmd": "nl <@FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-nl-prefix",
+  "cmd": "time nl @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-reader-tac-pipe-bound",
+  "cmd": "tac @FIX@/large-80k.txt | head -c 100",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-large",
+  "cmd": "grep foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-egrep-large",
+  "cmd": "egrep foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-fgrep-large",
+  "cmd": "fgrep foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-rg-large",
+  "cmd": "rg foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-count",
+  "cmd": "grep -c foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-count-long",
+  "cmd": "grep --count foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-files-with-matches",
+  "cmd": "grep -l foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-files-without-match",
+  "cmd": "grep -L foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-quiet",
+  "cmd": "grep -q foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-bundled-flags",
+  "cmd": "grep -ic foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-long-files-with-matches",
+  "cmd": "grep --files-with-matches foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-small",
+  "cmd": "grep foo @FIX@/small-10.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-context-large",
+  "cmd": "grep -C 3 foo @FIX@/large-80k.txt",
+  "expect": "deny"
+ },
+ {
+  "id": "bash-grep-stdin",
+  "cmd": "grep foo",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-rg-count",
+  "cmd": "rg -c foo @FIX@/large-80k.txt",
+  "expect": "pass"
+ },
+ {
+  "id": "bash-grep-pipe-bound",
+  "cmd": "grep foo @FIX@/large-80k.txt | head -c 100",
+  "expect": "pass"
  }
 ]
