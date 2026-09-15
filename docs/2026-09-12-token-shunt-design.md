@@ -73,7 +73,7 @@ Spotify の shunt と同じ分離（hooks + skills + workers）だが、Portal /
 
 - Portal / AiKA / Gemini、外部 API を直接呼ぶワーカー。その実装・比較・フォールバック
 - code-writer の Write フック強制
-- Explore / Grep / `@ファイル` / `sed` / `python -c` による本文取得の封鎖（パイプは §10-4 で各段の対応 reader を検査するが、未対応コマンドの内部は解析しない）
+- Explore / `@ファイル` / `sed` / `python -c` による本文取得の封鎖（パイプは §10-4 で各段の対応 reader を検査するが、未対応コマンドの内部は解析しない）。Grep の `output_mode=content` は 2026-09-15 に対象化した（§28）
 - Cursor / Codex 向け配布
 - 請求額 90% 減の再現や、その数字を製品文面に書くこと
 - Spotify `shunt@portal` との共存（同時有効にしない）
@@ -553,7 +553,7 @@ tools: Read, Write, Grep, Glob
 | bash-usr-bin-cat | `/usr/bin/cat large` | deny |
 | bash-cat-stderr | `cat large 2>/dev/null` | deny |
 | bash-cat-2and1 | `cat large 2>&1` | deny |
-| bash-pipe | `cat large \| grep foo` | 通過 |
+| bash-pipe | `cat large \| grep foo` | **deny**（2026-09-15 訂正。§10-4 は全段の対応 reader を検査し、先頭の `cat large` が通らない。`evals/bash-hook-evals.json:38` と README:231 が製品の挙動で、この行だけが旧案のまま残っていた） |
 | bash-pipe-cat | `cat large \| cat` | **deny**（§10-4。末尾が絞り込み無しの `cat`。記事のパイプ全通過は踏襲しない） |
 | bash-quoted-pipe-name | `cat 'large\|name.txt'` を 80KiB 超の通常ファイルに | **deny**（引用内の `\|` はパイプではない。記号の包含だけで通過させない） |
 | bash-pipe-head-line | `cat large \| head -n 1`（1 行 70KiB） | deny（行指定からバイト上限は分からない） |
@@ -806,7 +806,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 
 - `@` 参照は Read ツールを通らないのでフック不能
 - Explore / Plan / general-purpose の起動自体は止めない。それらの大きな Read は deny する。Grep や最終メッセージの引用は残る
-- Grep `output_mode=content`、`sed`、`python -c`、PowerShell `Get-Content` は対象外
+- `sed`、`python -c`、PowerShell `Get-Content` は対象外。Grep `output_mode=content` は 2026-09-15 に §26.5 の2規則としてフックで強制した（§28）。ディレクトリ・`glob`・cwd 全体の検索は依然として対象外
 - **パイプの残穴:** 未知・解釈不能な末尾でも §10-4 は各段の対応 reader を検査する（`cat large | grep` も `cat large | cat` も deny）。未対応コマンド自身の読み取りは封鎖しない。引用内の `|` と複合コマンドのリダイレクトはパイプ／リダイレクト通過にしない
 - **入力リダイレクト `<`:** 単語オペランドが無い `cat <large.txt` / `head -c 70000 <large.txt` は検査せず通過する。実 bash は本文を出す。ファイルオペランド付きの `cat large` / `head -c 70000 large` は deny のまま。空白付き `cat < large` も入力元のサイズ検査対象外。`dd if=` / `bash -c` と同種の穴
 - **ドル展開・ANSI-C引用:** コマンド名・対応 reader のオペランドにある引用外／二重引用内の有効な `$` は未解決として扱う。`cat $'large.txt'` も既存の出力隔離・バイト制限例外を除いて deny。単一引用内・エスケープされた `$` はリテラルとして保持する。
@@ -1012,3 +1012,16 @@ bulk-reader の Read 予算は6回のまま、maxTurns=7 として最後の1タ�
 - 任意の判定ログは Python 3 による通常ファイルへの追記に限定し、危険な symlink・FIFO・fd 保存先をスキップする。ログJSONを標準出力に混入させない。ログにはパス・コマンド全文が含まれるため保存先の権限は利用者が管理する。
 - A7 の単純な `<<$D` による「後続コマンド隠蔽」は偽陽性。Bash の区切りは文字列 `$D` のままで変数展開されず、提示例の `cat big` は本文だった。一方、`cat <<$(true)\nx\n$(true)\ncat big` は旧フックが pass し、実 Bash で802Bを出力する別の実例だった。複雑な非引用の `$()`・バッククォート区切りはマスク前に拒否し、完全に引用された同形の区切りは許容する。
 - heredoc 本文では、まず区切りとの一致を確認してから、非引用本文の有効なコマンド置換を検査・拒否する。引用済み区切りの本文はリテラルとして扱う。これにより終了区切りそのものを実行可能な本文と誤認しない。
+
+## 28. 2026-09-15 Grep ゲートと差し戻しフックの反映
+
+§7 のマニフェスト全文、§4 / §11.8 / §15 の「Grep content は対象外」、および Stop フックの不在は、いずれも 2026-09-13 以前の設計であり、出荷済みの挙動と食い違っていた。挙動の正本は README と `plugin/hooks/hooks.json` で、この節はその差分を設計側に取り込む。旧記述は本節が優先する。
+
+- **登録は7件・実行スクリプトは7本。** §7 の5件に加えて `PreToolUse:Grep` → `check-grep-bounds`、`PostToolUse:Bash` → `check-grep-bounds`（サイズ記録）、`Stop` / `SubagentStop` → `check-final-answer` を既定で登録する。`grep_bounds.py` と `sendback_*.py` は実行されず、上記から読み込まれるモジュール。
+- **Grep `output_mode=content` は §26.5 の2規則として前置きで強制する。** ①予算超過ファイルはサイズを確認済みでなければ拒否、②確認済みでも `head_limit` 1〜20 かつ前後行の窓（`-A`/`-B`/`-C`/`context`）なし。単一の実在ファイルだけが対象で、ディレクトリ・`glob`・cwd 全体は §15 の限界として残す。§11.8 の「フックでは塞げない」は、この範囲については解消した。
+- **サイズの「確認済み」はセッション状態。** 記録源は展開もコメントも含まない `wc -c` / `stat`（`stat` は書式指定ならサイズ `%s` を含むものに限る）と、`check-file-size` の拒否本文が実際にサイズを告げたパスのみ。成功した Read は記録しない。
+- **`token-shunt:code-writer` にはサイズを知る手段が無い**（Bash が無く、その Read はサイズ免除）ため、拒否本文では `wc -c` も bulk-reader への委譲も案内せず、`files_with_matches` か必要範囲の Read を案内する。
+- **Stop / SubagentStop の差し戻し**は既定で有効。ワーカーの `confirmed:` 行を親が落とした場合に限り差し戻し、判定不能は通す。取得できなかったワーカーは除外し、取得できたワーカーは判定する。`TOKEN_SHUNT_SENDBACK=off` で無効化できる。比較 eval は測定分離のため既定を off にする（製品の既定とは逆）。
+- **Python 3 への依存が増えた。** `check-grep-bounds` と `check-final-answer` は Python 3 で動き、欠けると遮断ではなく**不動作**になる（該当呼び出しが無検査で通る）。SessionStart の警告はこの3件をまとめて告げる。
+
+根拠と経緯: `reviews/grep-hook-implementation-2026-09-15.md`、`reviews/grep-gate-behaviour-2026-09-15.md`、`reviews/sendback-registration-decision-2026-09-15.md`、`reviews/clean-context-three-2026-09-15/README.md`（F4・F6・F7・F9）。
