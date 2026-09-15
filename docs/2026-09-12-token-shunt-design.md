@@ -1,7 +1,7 @@
 # token-shunt 設計仕様
 
 日付: 2026-09-12
-状態: ユーザー承認済み（2026-09-13）。再レビュー反映。読取経路は Claude Code の named subagent に確定（§26.0）。目的・制約・手段の階層を §1.1 に明示し、費用ゲートを出荷区分から内部回帰チェックへ格下げ（§26.5）。目的への穴 4 件を設計変更として反映（`limit=1` 例外の削除、パイプ末尾判定、複数明示パス 1 起動、code-writer の汎用フォールバック検証）。§13〜§15・§26 の旧文（1 起動 1 ファイル、`limit=1` 通過、パイプ全通過、費用最適化版）を同じ正本へ揃えた。2026-09-13 偽陽性チェック反映: 生成の検証段階、親トークン測定、バッチ間の根拠、Bash 判定を補正。判定記録は末尾 §27。実装・費用削減率は未検証。
+状態: ユーザー承認済み（2026-09-13）。再レビュー反映。読取経路は Claude Code の named subagent に確定（§26.0）。目的・制約・手段の階層を §1.1 に明示し、費用ゲートを出荷区分から内部回帰チェックへ格下げ（§26.5）。目的への穴 4 件を設計変更として反映（`limit=1` 例外の削除、パイプ末尾判定、複数明示パス 1 起動、code-writer の汎用フォールバック検証）。§13〜§15・§26 の旧文（1 起動 1 ファイル、`limit=1` 通過、パイプ全通過、費用最適化版）を同じ正本へ揃えた。2026-09-13 偽陽性チェック反映: 生成の検証段階、親トークン測定、バッチ間の根拠、Bash 判定を補正。判定記録は末尾 §27。実装・費用削減率は未検証。2026-09-16: Bash の既知の穴（入力リダイレクト、前置語・グループ化、`dd`、全文 reader カタログ、`grep`、インタプリタ、`xargs`、`find -exec`）を塞ぎ、§4 のスコープ変更を §2 に記録。偽陽性の代表例は §15。
 参照: https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90
 レビュー: `reviews/primary.md` / `secondary.md` / `adversarial.md` / `synthesis.md`
 
@@ -30,6 +30,8 @@ Spotify の shunt と同じ分離（hooks + skills + workers）だが、Portal /
 ## 2. 決定一覧
 
 読取・生成とも Claude Code の named subagent を採用する（§26.0）。
+
+2026-09-16 のスコープ変更: §4 で対象外としていた `sed` / `python -c` などのインタプリタ経由の本文取得を、Bash ゲートの対象に変更した。理由は、入力リダイレクト・前置語・`dd` を塞いだ後、インタプリタが唯一の「一行で全文を出せる」既知経路として残り、目的（親コンテキストから本文を外す）に直接反する穴だったため。同時に、手段が目的の適用範囲を削らないよう（§1.1）次の 2 点を制限として置く: シェルの `-c` プログラムはパスの文字列走査ではなく同じゲートへ再入して判定する（`bash -c 'wc -l big'` は通る）。Bash の `grep` には Grep ツールと同じ 20 行までの上限経路を与える（`-m N` またはパイプ末尾の `head -n N`）。この変更で偽陽性が残る代表例は §15 に実コマンドで列挙する。
 
 | 項目 | 値 |
 |---|---|
@@ -73,7 +75,7 @@ Spotify の shunt と同じ分離（hooks + skills + workers）だが、Portal /
 
 - Portal / AiKA / Gemini、外部 API を直接呼ぶワーカー。その実装・比較・フォールバック
 - code-writer の Write フック強制
-- Explore / `@ファイル` / `sed` / `python -c` による本文取得の封鎖（パイプは §10-4 で各段の対応 reader を検査するが、未対応コマンドの内部は解析しない）。Grep の `output_mode=content` は 2026-09-15 に対象化した（§28）
+- Explore / `@ファイル` による本文取得の封鎖（パイプは §10-4 で各段の対応 reader を検査する）。Grep の `output_mode=content` は 2026-09-15 に、`sed` / `python -c` などのインタプリタ経路と Bash の間接読み取りは 2026-09-16 に対象化した（§28、§15）。未対応コマンドの内部は引き続き解析しない（シェルの `-c` プログラムだけは同じゲートに再入して判定する）
 - Cursor / Codex 向け配布
 - 請求額 90% 減の再現や、その数字を製品文面に書くこと
 - Spotify `shunt@portal` との共存（同時有効にしない）
@@ -811,6 +813,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - **入力リダイレクト `<`（2026-09-16 に閉鎖）:** 素の `<`（`N<` を含む）のターゲットはファイルオペランドと同じ read source として `FILES` に入れる。`cat <large` は deny、`head -c 100 <large` と `wc -c <large` は pass。`<<`・`<<<`・`<&`・`<>` は heredoc・文字列・ディスクリプタなので対象外。リダイレクトだけが残った段（`done <large`）も read source として判定する
 - **前置語・グループ化（2026-09-16 に閉鎖）:** `strip_vars` が `time`・`command`・`exec`・`nice`・`ionice`・`stdbuf`・`env`・`timeout`・`sudo`・`busybox`・`toybox` と、構文語 `!`・`(`・`{`・`)`・`}`・`if`/`then`/`else`/`elif`/`fi`・`while`/`until`/`do`/`done`・`esac` を、各前置語自身のオプションごと取り除く。分類できないオプションが現れた時点で除去を止めるため、未知のオプションを伴う前置は従来どおり素通りする（fail-open だが、判定は除去前と同じ）
 - **`dd` / `xargs` / `find -exec`（2026-09-16 に閉鎖）:** `dd if=` は `of=` が無く `bs`×`count` が `MIN_BYTES` 以下でもなければ全文閾値で判定する。`xargs -a file` と `xargs cmd <file` は引数として読まれる file を判定する。`find ... -exec` の直後が全文 reader、または上限フラグの無い `grep` なら、一致ファイルのサイズが不明なのでサイズによらず deny する。`-exec python3 -c ...` のようにインタプリタを挟む形は対象外
+- **目的を超えて拒否する既知の偽陽性（2026-09-16 時点の実測）:** 出力が小さくても、フックが上限を読み取れなければ deny になる。`awk -F, '{s+=NF} END{print s}' big.csv`（数値1行）、`sed -n '1,5p' big.csv`（5行）、`cut -d, -f1 big.csv | sort -u | head -5`（5行）、`grep -n xyz big.csv`（不一致で0行。`-m 20` を足せば通る）、`diff big.csv big2.csv`（差分のみ）、`find . -name '*.csv' -exec grep -n xyz {} +`（0行）。`cat big | head -n 20` も deny のままで、20行上限は grep にのみ与える（grep の出力は既に一致行だけだが、全文 reader の出力はそうではない）。`find -exec` の per-match 上限は一致ファイル数だけ総量が増えるので上限として認めない。回避は `wc`/`stat` でサイズを確認してから範囲指定の Read、または委譲
 - **全文 reader カタログ（2026-09-16）:** `cat`/`less`/`more` に加えて `nl`・`od`・`xxd`・`base64`・`strings`・`rev`・`tac`・`fold`・`expand`・`unexpand`・`pr`・`shuf`・`cut`・`paste`・`column`・`diff`・`sdiff`・`comm` を同じ閾値で判定する。`od -N` / `xxd -l` の出力側上限は解釈しないので fail-closed 側に倒れる。`grep`/`egrep`/`fgrep`/`rg` は `-l`/`-L`/`-c`/`-q`（長形式含む）がある場合のみ pass。カタログに無い reader は依然として穴であり、許可ではない
 - **ドル展開・ANSI-C引用:** コマンド名・対応 reader のオペランドにある引用外／二重引用内の有効な `$` は未解決として扱う。`cat $'large.txt'` も既存の出力隔離・バイト制限例外を除いて deny。単一引用内・エスケープされた `$` はリテラルとして保持する。
 - **逐次 targeted Read:** 成功条件 6 が実測 lines/bytes が両閾値以下の targeted Read を許すため、親は `limit=350` を offset ずらしで繰り返し全文を回収できる。1 行が `MIN_BYTES` 以下なら `limit=1` の繰り返しでも回収できる（巨大行の `limit=1` は §9.7 で deny）。フックは呼び出しをまたぐ回収を検出しない。比較 eval の直接モードでは観測し、委譲側では §26.5 に従い deny 後の連続 Read / パイプ回収を path_ok fail にする。isolation_ok の量的判定も別途適用する
