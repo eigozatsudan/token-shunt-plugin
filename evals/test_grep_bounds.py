@@ -237,6 +237,41 @@ class HookProcessTests(unittest.TestCase):
         self.assertEqual(
             self.run_hook(grep_event(self.big, self.session, head_limit=5)), '')
 
+    def test_the_real_read_deny_records_the_size_it_named(self):
+        """Through `check-file-size` itself, not through `--sized`.
+
+        The test above calls the recording mode directly, which says
+        nothing about whether the deny path ever reaches it: unwire
+        `record_sized` and it still passes. This one denies a real
+        over-threshold Read and then searches the file.
+        """
+        wide = os.path.join(self.dir, 'wide.txt')
+        with open(wide, 'w') as fh:
+            fh.write(('y' * 200 + '\n') * 400)
+        event = {'hook_event_name': 'PreToolUse', 'tool_name': 'Read',
+                 'session_id': self.session, 'cwd': self.dir,
+                 'tool_input': {'file_path': wide}}
+        proc = subprocess.run([str(HOOKS / 'check-file-size')],
+                              input=json.dumps(event), capture_output=True,
+                              text=True)
+        self.assertIn('deny', proc.stdout)
+        self.assertIn(str(os.path.getsize(wide)), proc.stdout)
+        self.assertEqual(self.run_hook(
+            grep_event(wide, self.session, head_limit=5)), '')
+
+    def test_each_refusal_is_counted_until_the_cap(self):
+        """The counter lives in the executable, not in `decide()`.
+
+        The cap tests set `state['denials']` themselves, so the increment
+        that gets there could be deleted without turning any of them red.
+        """
+        for _ in range(gb.DENY_CAP):
+            denied = self.run_hook(
+                grep_event(self.big, self.session, head_limit=5))
+            self.assertIn('size has not been checked', denied)
+        capped = self.run_hook(grep_event(self.big, self.session, head_limit=5))
+        self.assertIn('refused %d times' % gb.DENY_CAP, capped)
+
     def test_a_relative_path_resolves_against_the_session_cwd(self):
         # The hook process runs wherever the CLI starts it. Only the event's
         # cwd says what "big.txt" meant to the caller, as check-file-size:238
