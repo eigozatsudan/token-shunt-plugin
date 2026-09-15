@@ -30,6 +30,11 @@ LOG_ENV = 'SENDBACK_TRIAL_LOG'
 BLOCKED = 'blocked'
 NO_BLOCK = 'no_block'
 SUPPRESSED = 'reblock_suppressed'
+EARLY = 'early_stop'
+
+# Statuses the CLI reports for work that has not finished. A stop while one
+# of these is outstanding is a pause, not the end of the answer.
+PENDING = ('running', 'pending', 'in_progress', 'queued', 'backgrounded')
 
 
 def parent_progress(rows):
@@ -71,6 +76,63 @@ def resumption(baseline, rows):
                            - baseline.get('transcript_lines', 0)}
 
 
+def in_flight_workers(event):
+    """Subagent tasks the CLI reports as still outstanding at this stop.
+
+    The Stop hook also fires while a worker is still running -- the parent's
+    turn ends and resumes when the report arrives. The lines that worker has
+    not delivered yet are not lines the parent dropped, so such a stop is
+    recorded apart and never judged.
+    """
+    out = []
+    for task in event.get('background_tasks') or []:
+        if not isinstance(task, dict):
+            continue
+        if task.get('type') != 'subagent':
+            continue
+        if str(task.get('status', '')).lower() in PENDING:
+            out.append({'id': task.get('id'),
+                        'agent_type': task.get('agent_type'),
+                        'status': task.get('status')})
+    return out
+
+
+def final_from_event(event, rows):
+    """The answer this stop is about, preferring what the CLI handed us.
+
+    The Stop input carries `last_assistant_message`, the text of the message
+    the turn is ending on, which is why the trial's transcript reading failed:
+    at hook time that message is not in the session file yet.
+
+    It is used only when it is the CURRENT turn's text. If the same text
+    already appears before the last interruption, it is narration from an
+    earlier turn -- the CLI hands over the last assistant message, which need
+    not be a turn-ending one when the turn ended on a tool result. Such a
+    stop is left unidentified rather than judged against stale text.
+    """
+    said = event.get('last_assistant_message')
+    if isinstance(said, str) and said.strip():
+        cut = -1
+        for i, entry in enumerate(rows):
+            if se._is_interruption(entry):
+                cut = i
+        earlier = set()
+        for entry in rows[:cut + 1]:
+            if entry.get('type') != 'assistant' or entry.get('isSidechain'):
+                continue
+            for block in (entry.get('message') or {}).get('content') or []:
+                if isinstance(block, dict) and block.get('type') == 'text' \
+                        and block.get('text'):
+                    earlier.add(rc.normalize(block['text']))
+        if rc.normalize(said) in earlier:
+            return None, 'last_assistant_message repeats earlier narration'
+        return said, 'last_assistant_message'
+    got = se.final_answer_from_rows(rows)
+    if got['status'] == 'ok':
+        return got['text'], 'transcript'
+    return None, 'final answer not identified'
+
+
 def block_reason(lost):
     head = ('Your answer dropped lines the reader worker confirmed. Restate '
             'every line below verbatim, each on its own line, before you '
@@ -84,25 +146,42 @@ def decide(event):
            'session_id': event.get('session_id'),
            'transcript_path': event.get('transcript_path'),
            'stop_hook_active': bool(event.get('stop_hook_active'))}
+    if event.get('hook_event_name') != 'Stop' or event.get('agent_id'):
+        # A SubagentStop (the CLI converts a Stop hook into one for a
+        # subagent) is a worker concluding, not the parent's answer. The
+        # parent contract must not be applied to it.
+        rec.update(outcome=NO_BLOCK, reason='not a parent Stop',
+                   agent_id=event.get('agent_id'))
+        return rec, {}
     if rec['stop_hook_active']:
         # The documented contract: return success while this is true. That
         # is the hook declining to re-block -- NOT an observation that the
         # CLI hit its cap (spec section 4.4).
         rec.update(outcome=SUPPRESSED, reason='stop_hook_active')
         return rec, {}
+    waiting = in_flight_workers(event)
+    if waiting:
+        # Not a no_block verdict on the parent: there is no finished answer
+        # to judge yet, and the missing lines are still in transit.
+        rec.update(outcome=EARLY, reason='worker still running',
+                   in_flight=waiting)
+        return rec, {}
     path = event.get('transcript_path')
     if not path or not os.path.isfile(path):
         rec.update(outcome=NO_BLOCK, reason='no transcript to read')
         return rec, {}
+    rows = se.read_jsonl(path)
+    final, source = final_from_event(event, rows)
     got = se.check_inputs(path)
-    checks = rc.run_all(got['child_texts'], got['final'])
+    checks = rc.run_all(got['child_texts'], final)
     rec['checks'] = {k: v['status'] for k, v in checks.items()}
-    rec['final_identified'] = got['final'] is not None
+    rec['final_identified'] = final is not None
+    rec['final_source'] = source
     if got['child_texts'] is None:
         rec.update(outcome=NO_BLOCK, reason='worker output unobtainable')
         return rec, {}
-    if got['final'] is None:
-        rec.update(outcome=NO_BLOCK, reason='final answer not identified')
+    if final is None:
+        rec.update(outcome=NO_BLOCK, reason=source)
         return rec, {}
     if checks['child_items']['status'] != rc.OK:
         rec.update(outcome=NO_BLOCK,

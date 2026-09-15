@@ -238,7 +238,16 @@ def final_answer(session_path):
     tool result, an MCP end-turn or a loop tick -- the endings whose
     Stop-hook block is discarded -- so the two must not be equated here.
     """
-    rows = read_jsonl(session_path)
+    return final_answer_from_rows(read_jsonl(session_path))
+
+
+def final_answer_from_rows(rows):
+    """final_answer() on rows already in hand.
+
+    Note for hook callers: a Stop hook runs before the message ending the
+    turn reaches the session file, so these rows do not yet contain it. The
+    Stop input's `last_assistant_message` is the source there.
+    """
     cut = -1
     for i, entry in enumerate(rows):
         if _is_interruption(entry):
