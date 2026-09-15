@@ -135,6 +135,10 @@
 - `judge.py --selftest`: 全件 ok。
 - `./evals/run.sh`: **pass 125 / fail 0**。
 
+いずれも静的・オフラインの確認である。§4 の照合も**既存トランスクリプトの
+再解析**であって新規実行ではない。文言変更による行動改善は未検証
+（確認の種類は `reviews/residual-two-2026-09-15.md` §5）。
+
 `evals/run.sh` は変更していない（新テストは既存の
 `reader_call_contract` スイートに載せた）。
 
