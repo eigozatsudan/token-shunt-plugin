@@ -114,3 +114,89 @@ description が保持義務を持つことと、本文が同じ規則を重複�
   なるかは**未測定**。確認には課金を伴う動作測定が要る。
 - 旧 spec による47実行の失敗は、今回の修正とは無関係の陳腐化であり、
   再判定しても意味がない（期待パスが実在しない）。
+
+---
+
+# 追補（2026-09-15）— 転記方式への置換と、短縮箇所の照合
+
+## 6. A案の適用（`61d78ed`、短縮の是正は後続コミット）
+
+description の文言を、結果の要求から**転記手順**へ置き換えた。
+
+```
+- In the final answer keep one `confirmed: <absolute path> — <fact>` bullet
+- per corroborated fact, path unabbreviated.
++ Copy each worker `confirmed:` line into the final answer verbatim, one per
++ line; collapse only identical lines; a line whose path is not absolute
++ keeps its text but becomes `unconfirmed:`.
+```
+
+`pathless` ではなく `path is not absolute` としたのは、実測
+`run.qmvXaj0z/sonnet` の失敗が**相対パス風の記述**であって欠落では
+なかったため。相対・省略も同じ側に落ちる必要がある。
+
+## 7. 短縮4箇所の照合（変更前後）
+
+7000 B に収めるために短縮した箇所を、**適用条件・禁止事項・再呼び出し
+手順が残っているか**で照合した。テストが固定していないことは、
+意味が変わらない根拠にはならないので、1件ずつ文面で確認した。
+
+| # | 変更前 → 変更後 | 種別 | 判定 |
+|---|---|---|---|
+| 1 | `the whole file when the whole file is needed` → `the whole file when all of it is needed` | 適用条件 | **残る**。`it` の先行詞は直前の `the whole file`。ただし明示から代名詞になり、精度はわずかに下がった |
+| 2 | `— follow the deny and delegate.` → `— follow it and delegate.` | 手順 | **残る**。`it` は `the deny` とも `the call spec` とも読めるが、どちらの読みでも動作は同じ（deny の指示どおりに委譲する） |
+| 3 | `and retry or escalation decisions after a partial.` → `and retry or escalation after partial.` | 参照条件の列挙 | **残る**。「partial 後の再試行・エスカレーションでこのスキルを参照する」という列挙項目としての意味は同じ。`partial` は本文でも冠詞なしの名詞として使われている |
+| 4 | `never use it to fetch the answer, nor to discover a range and then claim the known-range exception.` | 禁止事項 | **残る**（下記） |
+| 5 | `stay in the parent, and position-only search` → `stay in the parent; position-only search` | 接続のみ | **変化なし**。独立した2節を接続詞からセミコロンに変えただけ |
+| 6 | `Re-ask in a NEW invocation, re-sending the same explicit paths.` → `Re-ask in a NEW invocation with the same explicit paths.` | 再呼び出し手順 | **残る**。「同じ明示パスを伴う新規起動」であり、直後の `No resume, no answer index; the re-input is paid.` が再送のコストを明示している |
+| 7 | `don't run metadata commands just to get a size.` → `don't run metadata commands for a size.` | 禁止事項 | **意味が変わった → 復元した** |
+
+### 7.1 #4 の詳細（禁止の範囲）
+
+変更後は `never use it to fetch the answer or to discover a range and
+claim the known-range exception.`。`never A or B` は否定が両方に及ぶ
+ため、2つの禁止はともに残る。`and then claim` から `then` が落ちたが、
+`and` が両方の成立を要求する点は変わらないので、
+「範囲を発見してから既知レンジ例外を主張する」形は依然として禁止される。
+`nor` に比べて係り方の読み違いの余地はわずかに増えた。
+
+### 7.2 #7 は復元した（+8 B）
+
+`just` は「サイズを得ることだけを目的に」という**範囲の限定**を担って
+いた。これを落とすと「サイズのためにメタデータ命令を実行するな」という
+無条件の禁止に読め、description 冒頭の
+`Judge size from metadata (stat/wc -c) before the first Read or content
+search` と正面から衝突する。**条件を落とさない**という方針に反するので
+復元した。
+
+復元の8 B は、意味を変えない2箇所で相殺した。
+
+- `metadata (stat / wc -c)` → `metadata (stat/wc -c)`（−2）。本文側は
+  既に `` `stat`/`wc -c` `` と空白なしで書いており、表記を揃えただけ。
+- `after a partial.` → `after partial.`（−2）。#3 のとおり。
+
+SKILL.md は **6999 B**（上限7000 B、変更なし）。
+
+## 8. 検証（すべて静的・オフライン）
+
+| 検査 | 結果 |
+|---|---|
+| `./evals/run.sh` | 125 pass / 0 fail |
+| 契約テスト | 55 tests OK（skipped 3。理由は §8.1） |
+| `evals/compare` | 272 tests OK |
+| `judge.py --selftest` | all checks passed |
+
+### 8.1 skip 3件の理由
+
+3件とも `BashRenderedDenyTests`（`RenderedDenyTests` の派生）で、
+**親クラスの Read 形のケースを Bash 形の文脈で無効化している**もの。
+未検証の項目が残っているわけではない。
+
+| テスト | 理由 |
+|---|---|
+| `test_bad_limit_on_an_oversized_file_carries_the_contract` | `Read-only case`。`limit` 引数は Bash 経路に存在しない |
+| `test_oversized_range_carries_the_contract` | `Read-only case`。範囲指定 Read は Bash 経路に存在しない |
+| `test_newline_in_filename_is_sanitized_not_injected` | `Read-only case; see the Bash-shaped variant below`。**同じ検査が Bash 形の別テストで実施されている** |
+
+動作上の効果（転記手順で親が実際に `confirmed:` 行を写すか）は
+**未検証**。確認には課金を伴う動作測定が要る。
