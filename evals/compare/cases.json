@@ -91,25 +91,25 @@
         "auto"
       ],
       "fixtures": [
-        "gen/bulk_facts.py"
+        "gen/deny_lines.py"
       ],
       "fixture_bytes": [
-        "gen/bulk_facts.py"
+        "gen/deny_lines.py"
       ],
-      "gold_file": "gen/gold-bulk-facts.json",
-      "prompt_direct": "First use the Read tool on {FIX}/gen/bulk_facts.py with no offset or limit. Then answer: what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)?",
+      "gold_file": "gen/gold-deny-lines.json",
+      "prompt_direct": "First use the Read tool on {FIX}/gen/deny_lines.py with no offset or limit. Then answer: what token string does report_token() return, which function supplies that string, and on which line does that supplying function definition begin (the def line, not the return line)?",
       "expect": {
         "delegate": {
           "agent_type": "token-shunt:bulk-reader",
           "deny_route": {
-            "path": "{FIX}/gen/bulk_facts.py"
+            "path": "{FIX}/gen/deny_lines.py"
           },
           "child_msg_max": 4000,
           "child_no_body": true
         }
       },
       "isolation": "delegate_lt_fixture",
-      "note": "prompt must not contain token-shunt/bulk-reader/Agent; deny-route runs via prompt_direct"
+      "note": "prompt must not contain token-shunt/bulk-reader/Agent; deny-route runs via prompt_direct. The fixture is over the line threshold but under the 16384 B budget on purpose: an over-budget file is delegated from metadata alone and no Read is ever denied (reviews/deny-route-case-2026-09-15.md)"
     },
     {
       "id": "compare-explicit-multifile",
@@ -514,8 +514,12 @@
           ],
           "child_msg_max": 4000,
           "child_no_body": true,
-          "ambiguous_batch": {"paths": ["{FIX}/gen/collide/alpha.py",
-                                    "{FIX}/gen/collide/beta.py"]},
+          "ambiguous_batch": {
+            "paths": [
+              "{FIX}/gen/collide/alpha.py",
+              "{FIX}/gen/collide/beta.py"
+            ]
+          },
           "retry_policy": true
         }
       }

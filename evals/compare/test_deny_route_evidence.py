@@ -83,6 +83,72 @@ class DenyRouteEvidenceTests(unittest.TestCase):
                 self.assertFalse(ok)
                 self.assertFalse(verdict['checks']['deny_route'])
 
+    def metadata_events(self, command=None, read=None):
+        """The route the skill actually produces: measure, then delegate."""
+        ev = self.events()
+        ev.pop(3)                                   # no failed Read result
+        ev.pop(2)                                   # no deny
+        ev.pop(1)                                   # no Read at all
+        meta = {'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': 'm', 'name': 'Bash',
+             'input': {'command': command or ('wc -c %s' % self.path)}}]}}
+        done = {'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 'm',
+             'content': '13982 %s' % self.path, 'is_error': False}]}}
+        head = [ev[0], meta, done]
+        if read is not None:
+            head += [{'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'r2', 'name': 'Read',
+                 'input': dict(read, file_path=self.path)}]}},
+                {'type': 'user', 'message': {'content': [
+                    {'type': 'tool_result', 'tool_use_id': 'r2',
+                     'content': 'body text', 'is_error': False}]}}]
+        return head + ev[1:]
+
+    def test_measuring_then_delegating_is_a_conforming_route(self):
+        # SKILL.md section 1 tells the parent to judge size from metadata
+        # before the first Read. When that alone decides the route, no Read
+        # is issued and there is no deny to match — the rule worked, and
+        # the round trip a deny would have cost was saved
+        # (reviews/deny-route-case-2026-09-15.md).
+        verdict, ok = self.evaluate(self.metadata_events())
+        self.assertTrue(verdict['checks']['deny_route'], verdict['reasons'])
+
+    def test_stat_counts_as_the_measurement_too(self):
+        verdict, _ = self.evaluate(
+            self.metadata_events(command='stat -c %%s %s' % self.path))
+        self.assertTrue(verdict['checks']['deny_route'], verdict['reasons'])
+
+    def test_delegating_with_no_measurement_at_all_is_not_a_route(self):
+        # Neither evidence: nothing establishes the parent judged size
+        # before handing the file over.
+        ev = self.metadata_events()
+        ev.pop(2); ev.pop(1)
+        verdict, _ = self.evaluate(ev)
+        self.assertFalse(verdict['checks']['deny_route'])
+
+    def test_a_measurement_of_some_other_file_does_not_count(self):
+        verdict, _ = self.evaluate(
+            self.metadata_events(command='wc -c %s/elsewhere.txt' % self.root))
+        self.assertFalse(verdict['checks']['deny_route'])
+
+    def test_reading_the_body_after_measuring_is_still_a_failure(self):
+        # The point of the case is that the parent does not take the body
+        # into its own context. Measuring first does not license that.
+        verdict, _ = self.evaluate(self.metadata_events(read={}))
+        self.assertFalse(verdict['checks']['deny_route'])
+
+    def test_a_ranged_read_after_measuring_does_not_excuse_the_route(self):
+        verdict, _ = self.evaluate(
+            self.metadata_events(read={'offset': 1, 'limit': 40}))
+        self.assertFalse(verdict['checks']['deny_route'])
+
+    def test_measuring_after_the_delegation_is_not_evidence(self):
+        ev = self.metadata_events()
+        ev.append(ev.pop(1)); ev.append(ev.pop(1))     # move both after Agent
+        verdict, _ = self.evaluate(ev)
+        self.assertFalse(verdict['checks']['deny_route'])
+
     def test_read_and_agent_in_same_message_do_not_prove_completed_denial(self):
         ev = self.events()
         ev[1]['message']['content'].append(copy.deepcopy(ev[4]['message']['content'][0]))

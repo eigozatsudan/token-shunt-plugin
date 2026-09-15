@@ -130,6 +130,41 @@ open(os.path.join(g, "bulk_facts.py"), "w").write(src)
 line_no = next(i for i, l in enumerate(lines, 1) if l.startswith("def " + fn))
 json.dump([val, fn, str(line_no)], open(os.path.join(g, "gold-bulk-facts.json"), "w"))
 
+# deny_lines.py: over the 350-line threshold but UNDER the 16384 B
+# small-task budget. The metadata check therefore keeps it in the parent
+# (nothing to route on), the parent legitimately attempts the full Read,
+# and only the line threshold denies it -- which is the deny -> delegate
+# route compare-hook-deny-route exists to measure. With an over-budget
+# file the skill delegates from `wc -c` alone and no Read is ever issued
+# (reviews/deny-route-case-2026-09-15.md).
+dval = "dlt_4c8a2b91de"
+dfn = "compute_deny_token"
+dl = ["import os", "", ""]
+while len(dl) < 17:
+    dl.append("# pad %d %s" % (len(dl), "-" * 22))
+dl.append("")                            # line 18
+dl.append("")                            # line 19
+dl.append("def %s():" % dfn)             # line 20
+dl.append('    return "%s"' % dval)      # line 21
+dl.append("")
+j = 0
+while len(dl) < 300:
+    dl.append("PAD%04d = %d  # %s" % (j, j, "z" * 20)); j += 1
+dl.append("")
+dl.append("def report_token():")         # ~line 301, references dfn
+dl.append("    return %s()" % dfn)
+dl.append("")
+while len(dl) < 380:
+    dl.append("TAIL%04d = %d  # %s" % (j, j, "z" * 20)); j += 1
+dsrc = "\n".join(dl) + "\n"
+if not (len(dl) > 350 and len(dsrc.encode()) < 16384):
+    raise SystemExit("deny_lines.py must be >350 lines and <16384 B, got %d/%d"
+                     % (len(dl), len(dsrc.encode())))
+open(os.path.join(g, "deny_lines.py"), "w").write(dsrc)
+dline = next(i for i, l in enumerate(dl, 1) if l.startswith("def " + dfn))
+json.dump([dval, dfn, str(dline)],
+          open(os.path.join(g, "gold-deny-lines.json"), "w"))
+
 # oneline.json: single line ~70KiB containing payload_sha
 sha = "sha256:0a1b2c3d4e5f" + "6" * 40
 doc = '{"payload_sha":"%s","pad":"%s"}' % (sha, "p" * 69800)

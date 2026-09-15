@@ -1080,6 +1080,48 @@ def ts_hook_denies(tr):
     return out
 
 
+# Deliberately not grep_bounds.metadata_paths: the evaluator must not
+# certify the product with the product's own parser. Same narrow reading
+# -- a bare `wc -c` or `stat` naming the file, nothing a shell expands.
+_METADATA_CMDS = ("wc", "stat")
+_META_UNSAFE = set("$`|;&<>()\n\\*?[]{}!~")
+_META_VALUE_FLAGS = {"stat": ("-c", "-f", "--format", "--printf"), "wc": ()}
+
+
+def measures_path(use, path, spec):
+    """A parent Bash call that read this file's metadata, not its body."""
+    command = (use.get("input") or {}).get("command")
+    if not isinstance(command, str) or _META_UNSAFE & set(command):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if not words:
+        return False
+    base_cmd = os.path.basename(words[0])
+    if base_cmd not in _METADATA_CMDS:
+        return False
+    rest = words[1:]
+    if base_cmd == "wc" and not any(w in ("-c", "--bytes") for w in rest):
+        return False
+    cwd = (spec or {}).get("tool_cwd") or ""
+    skip = False
+    for word in rest:
+        if skip:
+            skip = False
+            continue
+        if word == "--":
+            continue
+        if word.startswith("-"):
+            skip = word in _META_VALUE_FLAGS[base_cmd]
+            continue
+        if word == path or os.path.normpath(
+                os.path.join(cwd, word)) == os.path.normpath(path):
+            return True
+    return False
+
+
 def judge(transcript_path, spec, ctx):
     v = {"case": spec["id"], "mode": ctx["mode"], "checks": {}, "reasons": []}
     error = spec_evidence_error(spec)
@@ -1384,10 +1426,26 @@ def judge(transcript_path, spec, ctx):
                 if "bulk-reader" in reason and reason in result["text"]:
                     matched = True
                     break
+        if not matched and agent:
+            # The other conforming route, and the one the skill now
+            # produces: judge the size from metadata and delegate without
+            # ever issuing the Read. There is then no deny to match, and
+            # requiring one would fail the parent for saving that round
+            # trip (reviews/deny-route-case-2026-09-15.md). The body must
+            # still stay out of the parent, so any successful Read of the
+            # target -- whole or ranged -- keeps this a failure.
+            measured = next((u for u in tr.parent_tool_uses("Bash")
+                             if measures_path(u, p, spec)
+                             and (tr.result_of(u["id"]) or {}).get("parent_tool_use_id") is None
+                             and u["position"] < agent["position"]), None)
+            body = any(use_targets_path(u, p, spec)
+                       and not (tr.result_of(u["id"]) or {}).get("is_error", True)
+                       for u in tr.parent_tool_uses("Read"))
+            matched = bool(measured) and not body
         if matched:
             passed("deny_route")
         else:
-            fail("deny_route", "target Read lacks matching token-shunt deny and failed result before reader Agent on " + p)
+            fail("deny_route", "target Read lacks matching token-shunt deny and failed result before reader Agent, and no metadata-first delegation, on " + p)
 
     # post-deny / B-large bypass: any successful parent Read of the path, or pipe recovery
     db_paths = deny_bypass_paths(exp)
