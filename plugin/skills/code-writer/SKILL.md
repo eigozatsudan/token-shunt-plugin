@@ -1,6 +1,6 @@
 ---
 name: code-writer
-description: Use for substantial tests, config, docstrings, type stubs, or generation where more than 80% is predictable from a reference file. Keep small generation in the parent under the small-task policy. Do not use for novel logic, debugging, or safety-critical code.
+description: Use for substantial tests, config, docstrings, type stubs, or generation where more than 80% is predictable from a reference file. Decide before Write/Edit; delegate at 50 expected lines or more. Keep smaller generation in the parent only when reference I/O is at most 16384 bytes and Reads pass. Do not use for novel logic, debugging, or safety-critical code.
 ---
 
 # code-writer
@@ -22,7 +22,10 @@ Examples:
 1. **Small-task check first (§26.2).** If the expected output is under 50
    lines AND the reference total is <= 16384 bytes AND each needed Read
    would pass the Read hook, the parent writes and verifies directly — no
-   delegation. Never spawn a worker just to estimate output size.
+   delegation. At exactly 50 expected lines, or above, delegate when the
+   task fits this skill. Make this decision before Write/Edit; a passing
+   reference Read does not authorize parent generation. Never spawn a
+   worker just to estimate output size.
 
    Two things outrank this check:
 
@@ -42,7 +45,23 @@ Examples:
 2. **Delegation.** `subagent_type` is exactly `token-shunt:code-writer`;
    `model` per --worker-model (auto starts with haiku). Pass: the spec,
    the reference path(s), the target path, and the **verification
-   command**. The verification command takes only the target path as an
+   command**. Include this response contract verbatim in every worker prompt,
+   including retries and unreadable-reference requests:
+
+   "Read the supplied reference before writing. Return only the target path,
+   line count, and 3–5 short bullets when written; otherwise the path and
+   reason without writing. No generated source or code fences. Maximum
+   800 characters total. End with these two separate plain lines, choosing
+   complete or partial as the status value:
+   status: <complete|partial>
+   stop_reason: <concrete reason>
+   Complete means generation finished, not parent verification passed."
+
+   Preserve the worker's status and stop_reason in the parent report and
+   report parent verification separately. Missing fields are a response
+   contract violation, not permission to invent a successful worker status.
+
+   The verification command takes only the target path as an
    argument and must not print the body to stdout. If the spec does not
    name one, use the generic fallback:
 
