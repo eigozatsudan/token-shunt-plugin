@@ -32,7 +32,8 @@ BUILTIN_HOOKS = {"SessionStart:startup"}
 # hook responses it may produce. See `foreign_hooks` for the residual gap.
 TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash", "PreToolUse:Agent",
                  "PreToolUse:Task", "PreToolUse:Agent|Task",
-                 "PostToolUse:Read", "PostToolUseFailure:Read", "Stop"}
+                 "PostToolUse:Read", "PostToolUseFailure:Read", "Stop",
+                 "SubagentStop"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
