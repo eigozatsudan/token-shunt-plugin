@@ -249,5 +249,34 @@ class EndToEndTests(SessionFixture):
         self.assertEqual(r['line_retention']['status'], rc.UNDETERMINED)
 
 
+    def test_one_unobtainable_worker_does_not_excuse_dropping_another(self):
+        """A reader we cannot read is not a licence over the ones we can.
+
+        Excluding the blocked worker is right -- nothing can be said about
+        lines nobody saw. Excluding the completed worker with it turned
+        retention off for the whole answer, which any failed or abandoned
+        launch would then do.
+        """
+        other, other_use = 'b1234567890abcdef', 'toolu_02example'
+        self.write([prompt(), assistant(tool_use()), tool_result(), note(),
+                    assistant(tool_use(tid=other_use)),
+                    tool_result(tid=other_use),
+                    note(agent_id=other, result=None, tool_use=other_use),
+                    assistant(text('Answer with no citations.'))])
+        sub = os.path.join(self.dir, 'sess', 'subagents')
+        with open(os.path.join(sub, 'agent-%s.meta.json' % other), 'w',
+                  encoding='utf-8') as fh:
+            json.dump({'agentType': 'token-shunt:bulk-reader',
+                       'toolUseId': other_use}, fh)
+        got = se.check_inputs(self.session)
+        self.assertEqual(len(got['launches']), 2)
+        self.assertEqual(len(got['child_texts']), 1)
+        self.assertIn('class User', got['child_texts'][0])
+        self.assertIn(other[:8], got['child_detail'])
+        r = rc.run_all(got['child_texts'], got['final'],
+                       exists=lambda p: p == '/srv/app/user.rb')
+        self.assertEqual(r['line_retention']['status'], rc.VIOLATION)
+
+
 if __name__ == '__main__':
     unittest.main()

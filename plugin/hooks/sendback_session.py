@@ -301,6 +301,9 @@ def check_inputs(session_path, agent_type='token-shunt:bulk-reader',
                  rows=None, max_bytes=None):
     """Worker texts and final answer, or None where they cannot be had.
 
+    `child_texts` holds the workers that reported; `child_blocked` counts
+    the ones that could not be read and are therefore not judged.
+
     Parses the session once: `rows`, when given, is used for both the
     launches and the final answer.
     """
@@ -311,9 +314,13 @@ def check_inputs(session_path, agent_type='token-shunt:bulk-reader',
     usable = [r for r in runs if r['text'] is not None]
     blocked = [r for r in runs if r['text'] is None]
     final = final_answer_from_rows(rows)
+    # A worker whose output cannot be had is excluded, not contagious:
+    # nothing can be said about lines nobody saw, but the workers that did
+    # report are still judged. Making one blocked launch stand the whole
+    # answer down let any failed or abandoned reader turn retention off.
     return {'launches': runs,
-            'child_texts': [r['text'] for r in usable] if usable and not blocked
-                           else None,
+            'child_texts': [r['text'] for r in usable] if usable else None,
+            'child_blocked': len(blocked),
             'child_detail': '; '.join('%s: %s' % (r['agent_id'][:8], r['detail'])
                                       for r in blocked),
             'final': final['text'] if final['status'] == 'ok' else None,

@@ -367,6 +367,7 @@ def decide(event):
     # Recorded on every invocation, so a build that stops supplying the
     # field is visible in the log instead of quietly blocking nothing.
     rec['below_version_floor'] = bool(parsed and parsed < VERSION_FLOOR)
+    rec['child_blocked'] = got.get('child_blocked', 0)
     if got['child_texts'] is None:
         rec.update(outcome=NO_BLOCK, reason='worker output unobtainable')
         return rec, {}
