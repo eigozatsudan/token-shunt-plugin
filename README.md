@@ -216,7 +216,7 @@ bulk-reader の契約状態は同じセッション・エージェントで維�
 
 ### 依存不足からの復旧・無効化
 
-jq、Bash 4以降、Python 3の導入は、Claude の Bash ツールではなく通常の外部ターミナルで行ってください。導入後、同じ PATH で Claude を再起動します。古い Bash は Read / Bash フックで終了コード2により拒否し、doctor も失敗として報告します。Python 3がない場合は `check-file-size` が bulk-reader の Read を終了コード2で遮断し、契約フックの起動失敗だけで読み取りが通過することを防ぎます。契約フック自体は全 Read の Pre / Post / Failure イベントに登録されているため、Python 3がなければ非ワーカーでも起動に失敗します。その場合の非ワーカーへの影響は、CLIの起動失敗の扱いに依存し、実機では未確認です。
+jq、Bash 4以降、Python 3の導入は、Claude の Bash ツールではなく通常の外部ターミナルで行ってください。導入後、同じ PATH で Claude を再起動します。古い Bash は Read / Bash フックで終了コード2により拒否し、doctor も失敗として報告します。Python 3がない場合は `check-file-size` が bulk-reader の Read を終了コード2で遮断し、契約フックの起動失敗だけで読み取りが通過することを防ぎます。契約フック自体は全 Read の Pre / Post / Failure イベントに登録されているため、Python 3がなければ非ワーカーでも起動に失敗します。その場合の非ワーカーへの影響は、CLIの起動失敗の扱いに依存し、実機では未確認です。`check-grep-bounds` と `check-final-answer` も Python 3 で動くため、Python 3 がなければ Grep の上限と差し戻しは**一切動かず**、該当の呼び出しは無検査で通ります（終了コード2ではないため遮断になりません）。SessionStart の警告はこの3件をまとめて告げます。
 
 ユーザースコープの導入を一時停止する場合も、外部ターミナルで次を実行してから Claude を再起動します。
 

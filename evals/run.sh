@@ -165,6 +165,16 @@ if [[ $EC == 0 ]] \
 else
   record sessionstart-python-missing 1 "ec=$EC out=$OUT"
 fi
+# python3 carries three registrations, not one. The bulk-reader Read
+# contract blocks without it; the Grep bound and the send-back simply do
+# not run, which is worse to leave unsaid.
+OUT=$(printf '{"session_id":"t"}' | env PATH="$STUB" "$HOOKS/check-jq" 2>/dev/null); EC=$?
+if [[ $EC == 0 ]] \
+  && jq -e '.hookSpecificOutput.additionalContext | test("Grep") and test("Stop")' <<<"$OUT" >/dev/null 2>&1; then
+  record sessionstart-python-names-every-hook 0 ""
+else
+  record sessionstart-python-names-every-hook 1 "ec=$EC out=$OUT"
+fi
 rm -rf "$STUB"
 
 OUT=$(printf '{"session_id":"t"}' | "$HOOKS/check-jq" 2>/dev/null); EC=$?

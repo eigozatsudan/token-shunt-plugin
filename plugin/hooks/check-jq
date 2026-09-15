@@ -17,7 +17,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-  add 'Python 3 is required for the bulk-reader runtime contract. Bulk-reader Reads remain blocked until it is available.'
+  add 'Python 3 is required for the bulk-reader runtime contract, the Grep bound, and the Stop/SubagentStop send-back. Bulk-reader Reads remain blocked; the Grep bound and the send-back do not run at all, so those calls go unchecked.'
 fi
 
 [ -z "$missing" ] && exit 0
