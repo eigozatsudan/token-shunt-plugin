@@ -4,11 +4,10 @@ bulk-reader skill for this call.
 Agent: subagent_type=token-shunt:bulk-reader
   model: the worker model the caller specified; if none or "auto",
   use haiku. Pass a concrete model, never "auto".
-  prompt must contain: your question; the paths below with sizes; and —
-  "One bullet per fact: confirmed: <absolute path> — <symbol>: <fact>.
-   unconfirmed for missing evidence. No source lines or code fences.
-   Max 4000 chars. End with two plain lines: status: complete|partial,
-   then stop_reason: <reason>."
+  prompt must contain exactly: your question, then the paths below with
+  sizes. Do not restate the response format. The worker's own contract
+  already requires path-tagged confirmed bullets, a 4000-char cap, and
+  final status / stop_reason lines.
 {PATHS}
 First call only. If the worker is refused by this same limit, stop and
 report partial — do not delegate again. For any other partial, consult

@@ -36,7 +36,16 @@ class ContractBodyTests(unittest.TestCase):
         for marker in MARKERS[:3]:
             self.assertIn(marker, body)
         self.assertIn('unabbreviated', body)
-        self.assertIn('status: complete|partial', body)
+        # The response format lives in the worker's own system prompt, not
+        # here: restating it made the parent re-emit 229 chars of identical
+        # boilerplate in every Agent prompt (reviews/multifile-cost-2026-09-15
+        # .md §6.3). The contract now only forbids restating it.
+        self.assertIn('Do not restate the response format', body)
+        self.assertIn('status: complete|partial',
+                      self.AGENT.read_text(encoding='utf-8')
+                      if hasattr(self, 'AGENT')
+                      else (ROOT / 'plugin/agents/bulk-reader.md')
+                      .read_text(encoding='utf-8'))
 
 
 # Captured from the unmodified hooks on 2026-09-14. The fallback path must keep
