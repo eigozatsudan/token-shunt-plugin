@@ -41,19 +41,25 @@ plugin を読み込む**。作業ツリーには測定に影響する未コミ�
 総合合否は 45実行中 **30 pass / 15 fail**。ただし総合合否は
 「どの契約が成立したか」を隠すので、項目別に数える。
 
-| ケース | 確認項目 | 成立 | 変更前（現行 spec の既存実測） |
-|---|---|---|---|
-| `auto-explicit-multifile` | `gold_confirmed`（絶対パス付き項目の保持） | **0 / 9** | 1 / 57 |
-| | `agent_type`（委譲先） | 9 / 9 | — |
-| | `single_invocation`（1起動3パス） | 9 / 9 | — |
-| | `deny_bypass` | 9 / 9 | — |
-| | `requested_model` が具象（`auto` を渡さない） | 9 / 9（haiku×6, sonnet×3） | — |
-| `compare-explicit-multifile` | `gold_confirmed`（絶対パスの省略解消） | **6 / 9** | 5 / 21 |
-| `auto-edit-grep-location` | content search 前のメタデータ確認 | **0 / 9** | 0 / 9 |
-| | `edit_flow`（§11.6 編集契約） | 12 / 12 | — |
-| `auto-small-files-four` | `agent_zero`（不要な委譲なし） | **6 / 6** | 未測定 |
-| | `parent_reads`（4件を親が読む） | 6 / 6 | 未測定 |
-| `compare-edit-dense-lines` | `position_grep_form`（各 content Grep の形式） | **0 / 3** | 0 / 24 |
+| ケース | 確認項目 | 母数の内訳 | 成立 | 変更前 |
+|---|---|---|---|---|
+| `auto-explicit-multifile` | `gold_confirmed`（絶対パス付き項目の保持） | 委譲3モード（haiku/sonnet/auto）×3周 = 9 | **0 / 9**（haiku 0/3・sonnet 0/3・auto 0/3） | 1 / 57 |
+| | `agent_type`（委譲先） | 同上 = 9 | 9 / 9 | — |
+| | `single_invocation`（1起動3パス） | 同上 = 9 | 9 / 9 | — |
+| | `deny_bypass` | 同上 = 9 | 9 / 9 | — |
+| | `requested_model` が具象（`auto` を渡さない） | 同上 = 9 | 9 / 9（haiku×6, sonnet×3） | — |
+| `compare-explicit-multifile` | `gold_confirmed`（絶対パスの省略解消） | 委譲3モード×3周 = 9 | **6 / 9**（haiku 2/3・sonnet 1/3・auto 3/3） | 5 / 21 |
+| `auto-edit-grep-location` | content search 前のメタデータ確認 | 委譲3モード×3周 = 9（`direct` はプラグイン非ロードのため対象外、別に 0/3） | **0 / 9**（haiku 0/3・sonnet 0/3・auto 0/3） | 0 / 9 |
+| | `edit_flow`（§11.6 編集契約） | 全4モード（direct 含む）×3周 = 12 | 12 / 12 | — |
+| `auto-small-files-four` | `agent_zero`（不要な委譲なし） | 2モード（direct/auto）×3周 = 6 | **6 / 6**（direct 3/3・auto 3/3） | 未測定 |
+| | `parent_reads`（4件を親が読む） | 同上 = 6 | 6 / 6 | 未測定 |
+| `compare-edit-dense-lines` | `position_grep_form`（各 content Grep の形式） | 1モード（auto）×3周 = 3 | **0 / 3** | 0 / 24 |
+
+母数が 9・12・3・6 と揃わないのは、ケースごとに設定されたモード数と、
+検査の適用条件が違うためである。`gold_confirmed` は `direct`（委譲なし）
+には課されないので 9、`edit_flow` は `direct` にも課されるので 12、
+`compare-edit-dense-lines` は `auto` のみの1モードなので 3、
+`auto-small-files-four` は `direct`/`auto` の2モードなので 6 になる。
 
 「変更前」列は `reviews/gold-confirmed-2026-09-15.md` §2 および
 `reviews/head-limit-consistency-2026-09-15.md` の既存実測の再解析値。
@@ -151,7 +157,14 @@ description への到達性修正は、規則を親の文脈に載せるとこ�
 `edit_flow`、`deny_bypass`、`child_*`）はすべて 3周とも成立しており、
 今回の一連の変更が他の振る舞いを壊していないことは確認できた。
 
-## 5. 残件
+## 5. 観測条件についての注意
+
+本測定は「コミット + 保存差分」の構成での観測である。実行経路には
+`plugin/hooks/*` や `code-writer` 側の別変更も入っているため、
+**各修正単独の効果としては扱えない**。次回は専用チェックアウトを用意し、
+実行対象を固定して測る。
+
+## 6. 残件
 
 - 不成立3件は、文言をさらに強めるか、機械的な強制（フック側）に
   移すかの設計判断が必要。**本記録では判断していない。**
