@@ -55,6 +55,33 @@ def with_state(event, fn):
     return out
 
 
+def session_cwd(event):
+    """Move to the directory the caller's relative paths are relative to.
+
+    Returns a deny reason when the harness supplied a cwd we cannot use.
+    `check-file-size` and `check-bash-read` apply the same rule to Read and
+    Bash; without it a relative Grep path is resolved against wherever the
+    CLI happened to start this process, which silently judges a different
+    file or none at all.
+    """
+    if 'cwd' not in event:
+        return None                       # the hook's own directory, as before
+    cwd = event.get('cwd')
+    if not (isinstance(cwd, str) and cwd.startswith('/') and '\0' not in cwd):
+        return 'Invalid hook cwd.'
+    try:
+        os.chdir(cwd)
+    except OSError:
+        return 'Hook cwd is unavailable.'
+    return None
+
+
+def deny(reason):
+    print(json.dumps({'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+        'permissionDecisionReason': 'token-shunt: ' + reason}}))
+
+
 def judge(event):
     def run(state):
         reason = gb.decide(event, state)
@@ -63,9 +90,19 @@ def judge(event):
         return reason
     reason = with_state(event, run)
     if reason:
-        print(json.dumps({'hookSpecificOutput': {
-            'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-            'permissionDecisionReason': 'token-shunt: ' + reason}}))
+        deny(reason)
+
+
+def resolvable(paths, bad_cwd):
+    """Drop relative operands we cannot place; keep absolute ones.
+
+    Recording happens after the tool ran, where a deny says nothing. An
+    absolute path is unambiguous whatever the cwd was, and losing it would
+    leave its size unknowable for the rest of the session.
+    """
+    if not bad_cwd:
+        return paths
+    return [p for p in paths if os.path.isabs(p)]
 
 
 def record_paths(event, paths, source):
@@ -78,15 +115,23 @@ def main(argv):
     event = json.load(sys.stdin)
     if not isinstance(event, dict):
         raise ValueError('hook stdin must be an object')
+    bad_cwd = session_cwd(event)
+    recording = argv[1:2] == ['--sized'] or (
+        event.get('hook_event_name') == 'PostToolUse'
+        and event.get('tool_name') == 'Bash')
+    if bad_cwd and not recording:
+        deny(bad_cwd)
+        return 0
     if argv[1:2] == ['--sized']:
-        record_paths(event, argv[2:], 'read-deny')
+        record_paths(event, resolvable(argv[2:], bad_cwd), 'read-deny')
         return 0
     if len(argv) > 1:
         raise ValueError('unknown argument: %s' % argv[1])
     stage = event.get('hook_event_name')
-    if stage == 'PostToolUse' and event.get('tool_name') == 'Bash':
+    if recording:
         command = (event.get('tool_input') or {}).get('command')
-        record_paths(event, gb.metadata_paths(command), 'bash')
+        record_paths(event, resolvable(gb.metadata_paths(command), bad_cwd),
+                     'bash')
     elif stage in (None, 'PreToolUse'):
         judge(event)
     return 0

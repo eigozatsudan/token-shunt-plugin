@@ -21,6 +21,11 @@ Read deny whose contract named the path with its byte count. A successful
 Read does not count -- receiving a body is not judging metadata. State
 lost to a compact or a new session reads as unmeasured: the caller pays
 one round trip rather than the rule quietly lapsing (§3.3).
+
+Relative paths mean whatever they meant to the caller, so the entry point
+moves to the event's `cwd` first and everything here is absolute. Judging
+the hook process's own directory instead would let a same-named file that
+happens to be small pass a search on the big one.
 """
 import os
 import re
@@ -36,6 +41,10 @@ _STAT_FLAG = re.compile(r'^-[A-Za-z]+$|^--[A-Za-z-]+(=.*)?$')
 # `wc -c` is the byte count itself, so this is keyed by command.
 _TAKES_VALUE = {'stat': ('-c', '-f', '--format', '--printf'), 'wc': ()}
 _UNSAFE = set('$`|;&<>()\n\\*?[]{}!~')
+# The writer has Read, Write, Grep, Glob and no Bash, and check-file-size
+# exempts its Reads, so neither way of learning a size is open to it. It is
+# still held to the bound, but never sent down a route it does not have.
+CODE_WRITER = 'token-shunt:code-writer'
 
 
 def new_state():
@@ -53,7 +62,10 @@ def target_file(inp, isfile=os.path.isfile):
     path = inp.get('path')
     if not isinstance(path, str) or not path:
         return None
-    path = os.path.normpath(path)
+    # Absolute from here on: the caller's relative path is resolved against
+    # the session cwd the entry point already moved to, and the state key,
+    # the deny text and the `wc -c` it suggests must all name that file.
+    path = os.path.abspath(path)
     return path if isfile(path) else None
 
 
@@ -64,7 +76,7 @@ def record(state, path, source, stat=os.stat):
     except OSError:
         return False
     state.setdefault('measured', {})[_key(st)] = {
-        'path': os.path.normpath(path), 'size': st.st_size,
+        'path': os.path.abspath(path), 'size': st.st_size,
         'mtime_ns': st.st_mtime_ns, 'source': source}
     return True
 
@@ -164,11 +176,21 @@ def decide(event, state, stat=os.stat, isfile=os.path.isfile):
         return None                       # Grep will fail on its own terms
     if size <= BUDGET:
         return None                       # the small-task edit path (§11.6)
+    writer = event.get('agent_type') == CODE_WRITER
     if state.get('denials', 0) >= DENY_CAP:
+        if writer:
+            return ('this search has been refused %d times. Stop searching '
+                    '%s: use output_mode="files_with_matches", or Read the '
+                    'range you need, and report what you could not confirm.'
+                    % (DENY_CAP, path))
         return ('this search has been refused %d times. Stop searching %s '
                 'and report partial, or delegate it to '
                 '/token-shunt:bulk-reader.' % (DENY_CAP, path))
     if not is_measured(state, path, stat):
+        if writer:
+            return ('%s is over the %d B budget and its size is not known '
+                    'here. Use output_mode="files_with_matches" to locate '
+                    'it, or Read the range you need.' % (path, BUDGET))
         return ('%s is over the %d B budget and its size has not been '
                 'checked in this session. Run `wc -c %s` (or a Read that '
                 'the size hook refuses) first, then search it.'

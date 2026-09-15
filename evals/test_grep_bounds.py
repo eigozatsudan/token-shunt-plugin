@@ -103,6 +103,51 @@ class MeasuredStateTests(TargetTests):
         self.assertIn('report partial', reason)
 
 
+class CodeWriterTests(TargetTests):
+    """The writer has Read, Write, Grep, Glob — and no way to measure.
+
+    check-file-size exempts its Reads, so no deny ever names a size, and
+    without Bash it cannot run `wc -c`. Its content Grep on an over-budget
+    file is therefore always unmeasured; what it must not be told is to
+    hand the work to bulk-reader, which is not a route it has.
+    """
+
+    def writer_event(self, **inp):
+        event = grep_event(self.big, **inp)
+        event['agent_type'] = 'token-shunt:code-writer'
+        return event
+
+    def test_the_cap_does_not_send_the_writer_to_bulk_reader(self):
+        state = gb.new_state()
+        state['denials'] = gb.DENY_CAP
+        reason = self.decide(self.writer_event(), state)
+        self.assertNotIn('bulk-reader', reason)
+        self.assertIn('files_with_matches', reason)
+
+    def test_the_parent_is_still_sent_to_bulk_reader(self):
+        state = gb.new_state()
+        state['denials'] = gb.DENY_CAP
+        self.assertIn('bulk-reader', self.decide(grep_event(self.big), state))
+
+    def test_the_writer_is_not_told_to_run_a_command_it_cannot_run(self):
+        self.assertNotIn('wc -c', self.decide(self.writer_event()))
+
+    def test_the_parent_is_still_told_to_measure(self):
+        self.assertIn('wc -c', self.decide(grep_event(self.big)))
+
+    def test_a_spoofed_agent_type_in_the_tool_input_is_ignored(self):
+        # Only the harness's top-level field is trusted; the model can put
+        # anything in tool_input.
+        event = grep_event(self.big, agent_type='token-shunt:code-writer')
+        self.assertIn('wc -c', self.decide(event))
+
+    def test_the_writer_keeps_the_routes_it_does_have(self):
+        for inp in ({'output_mode': 'files_with_matches'},
+                    {'output_mode': 'count'}):
+            with self.subTest(inp=inp):
+                self.assertIsNone(self.decide(self.writer_event(**inp)))
+
+
 class MetadataCommandTests(unittest.TestCase):
     def test_a_bare_stat_or_wc_c_names_its_operands(self):
         for command, want in (
@@ -141,10 +186,10 @@ class HookProcessTests(unittest.TestCase):
         if path.exists():
             path.unlink()
 
-    def run_hook(self, event, *args):
+    def run_hook(self, event, *args, cwd=None):
         proc = subprocess.run([str(HOOKS / 'check-grep-bounds')] + list(args),
                               input=json.dumps(event), capture_output=True,
-                              text=True)
+                              text=True, cwd=cwd)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return proc.stdout
 
@@ -161,6 +206,50 @@ class HookProcessTests(unittest.TestCase):
         self.run_hook({'hook_event_name': 'PreToolUse', 'tool_name': 'Read',
                        'session_id': self.session, 'tool_input': {}},
                       '--sized', self.big)
+        self.assertEqual(
+            self.run_hook(grep_event(self.big, self.session, head_limit=5)), '')
+
+    def test_a_relative_path_resolves_against_the_session_cwd(self):
+        # The hook process runs wherever the CLI starts it. Only the event's
+        # cwd says what "big.txt" meant to the caller, as check-file-size:238
+        # and check-bash-read:248 already do for Read and Bash.
+        elsewhere = tempfile.mkdtemp()
+        event = grep_event('big.txt', self.session, head_limit=5)
+        event['cwd'] = self.dir
+        denied = self.run_hook(event, cwd=elsewhere)
+        self.assertIn('size has not been checked', denied)
+        self.run_hook({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash',
+                       'session_id': self.session, 'cwd': self.dir,
+                       'tool_input': {'command': 'wc -c big.txt'}},
+                      cwd=elsewhere)
+        self.assertEqual(self.run_hook(event, cwd=elsewhere), '')
+
+    def test_a_same_named_small_file_beside_the_hook_is_not_the_target(self):
+        # The dangerous shape: judging the wrong file passes the search on
+        # the big one, because the decoy is within budget.
+        elsewhere = tempfile.mkdtemp()
+        with open(os.path.join(elsewhere, 'big.txt'), 'w') as fh:
+            fh.write('x' * 10)
+        event = grep_event('big.txt', self.session)
+        event['cwd'] = self.dir
+        self.assertIn('size has not been checked',
+                      self.run_hook(event, cwd=elsewhere))
+
+    def test_a_cwd_that_is_not_a_usable_absolute_path_denies(self):
+        # check-file-size denies rather than guessing; so does this.
+        for cwd in ('relative/dir', '/nonexistent-%d' % os.getpid(), 5):
+            with self.subTest(cwd=cwd):
+                event = grep_event('big.txt', self.session, head_limit=5)
+                event['cwd'] = cwd
+                self.assertIn('cwd', self.run_hook(event))
+
+    def test_an_absolute_path_is_unaffected_by_a_broken_cwd(self):
+        # A Read deny names absolute paths; losing them to an unusable cwd
+        # would make the size unknowable for the rest of the session.
+        event = {'hook_event_name': 'PreToolUse', 'tool_name': 'Read',
+                 'session_id': self.session, 'cwd': 'relative/dir',
+                 'tool_input': {}}
+        self.run_hook(event, '--sized', self.big)
         self.assertEqual(
             self.run_hook(grep_event(self.big, self.session, head_limit=5)), '')
 
