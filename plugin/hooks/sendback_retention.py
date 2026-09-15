@@ -147,7 +147,7 @@ def check_child_items(child_texts, exists=os.path.exists):
                 'items': [], 'usable': [], 'unusable': []}
     if usable:
         return {'status': OK, 'reason': '', 'items': lines,
-                'usable': usable, 'unusable': unusable}
+                'usable': usable, 'unusable': unusable, 'unknown': unknown}
     if unknown:
         return {'status': UNDETERMINED,
                 'reason': 'every worker citation names a file that no longer exists',
@@ -239,12 +239,23 @@ def check_line_retention(child_texts, final, exists=os.path.exists):
         else:
             dropped.append(line)
     lost = len(demoted) + len(altered) + len(dropped)
-    return {'status': OK if not lost else VIOLATION,
-            'reason': '' if not lost else
-                      '%d demoted, %d altered, %d dropped'
-                      % (len(demoted), len(altered), len(dropped)),
+    unknown = child.get('unknown') or []
+    if lost:
+        status, reason = VIOLATION, ('%d demoted, %d altered, %d dropped'
+                                     % (len(demoted), len(altered),
+                                        len(dropped)))
+    elif unknown:
+        # Those lines were never targets, so nothing here says whether the
+        # parent kept them. Reporting OK claimed a check that did not run,
+        # and a parent that deletes the file it was told about would have
+        # been recorded as having passed.
+        status, reason = UNDETERMINED, ('%d worker line(s) cite a file that '
+                                        'no longer exists' % len(unknown))
+    else:
+        status, reason = OK, ''
+    return {'status': status, 'reason': reason,
             'kept': kept, 'demoted': demoted, 'altered': altered,
-            'dropped': dropped}
+            'dropped': dropped, 'unjudged': unknown}
 
 
 def run_all(child_texts, final, exists=os.path.exists):

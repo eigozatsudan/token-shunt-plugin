@@ -214,6 +214,31 @@ class LineRetentionTests(unittest.TestCase):
         self.assertEqual(r['status'], rc.UNDETERMINED)
 
 
+class VanishedFileTests(unittest.TestCase):
+    """Lines citing a file that is gone cannot be judged -- or reported OK.
+
+    They are excluded from the targets, which is right: nobody can say
+    whether the parent dropped them. Calling the result "retention ok"
+    was not right, because a line nobody checked was dropped from the
+    answer, and the record said the check had passed.
+    """
+
+    def test_an_unjudgeable_line_leaves_the_verdict_undetermined(self):
+        child = [item(A, 'one'), item('/srv/gone.rb', 'two')]
+        got = rc.check_line_retention(child, item(A, 'one'), here)
+        self.assertEqual(got['status'], rc.UNDETERMINED)
+        self.assertIn('no longer exists', got['reason'])
+
+    def test_a_judgeable_drop_is_still_a_violation(self):
+        child = [item(A, 'one'), item('/srv/gone.rb', 'two')]
+        got = rc.check_line_retention(child, 'nothing kept', here)
+        self.assertEqual(got['status'], rc.VIOLATION)
+
+    def test_nothing_missing_is_still_plain_ok(self):
+        got = rc.check_line_retention([item(A, 'one')], item(A, 'one'), here)
+        self.assertEqual(got['status'], rc.OK)
+
+
 class RunAllTests(unittest.TestCase):
     def test_the_three_checks_are_reported_separately(self):
         child = [item(A, 'first'), item(A, 'second'), item(B, 'third')]

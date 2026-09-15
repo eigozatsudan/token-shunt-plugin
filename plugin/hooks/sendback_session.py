@@ -183,10 +183,18 @@ def launches(session_path, agent_type=None, rows=None, max_bytes=None):
         transcript = transcript if os.path.isfile(transcript) else None
         tool_use_id = meta.get('toolUseId') or (notes[0]['tool_use_id']
                                                 if notes else None)
+        launch_input = tool_uses.get(tool_use_id)
+        # The meta file sits in a directory the judged agent can write, and
+        # deleting it used to leave the launch with no type, filter it out
+        # and turn the send-back off. The parent's own Agent call names the
+        # worker too, and it is in the session transcript.
+        agent_type_of = meta.get('agentType') or (
+            (launch_input or {}).get('subagent_type')
+            or (launch_input or {}).get('agent_type'))
         rec = {'agent_id': agent_id,
                'tool_use_id': tool_use_id,
-               'agent_type': meta.get('agentType'),
-               'launch_input': tool_uses.get(tool_use_id),
+               'agent_type': agent_type_of,
+               'launch_input': launch_input,
                'transcript': transcript,
                'output_file': final_note['output_file'] if final_note else None,
                'notifications': len(notes),

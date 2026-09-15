@@ -249,6 +249,28 @@ class EndToEndTests(SessionFixture):
         self.assertEqual(r['line_retention']['status'], rc.UNDETERMINED)
 
 
+    def test_a_missing_meta_file_falls_back_to_the_launch_itself(self):
+        """The meta file sits where the judged agent can delete it.
+
+        `rm subagents/agent-<id>.meta.json` left the launch with no agent
+        type, filtered it out, and turned the send-back off for the whole
+        answer. The parent's own Agent call names the worker type and
+        lives in the session transcript.
+        """
+        self.write([prompt(),
+                    assistant(tool_use(inp={
+                        'subagent_type': 'token-shunt:bulk-reader',
+                        'prompt': '/srv/app/user.rb'})),
+                    tool_result(), note(), assistant(text('Done.'))],
+                   meta=False)
+        (launch,) = se.launches(self.session)
+        self.assertEqual(launch['agent_type'], 'token-shunt:bulk-reader')
+        got = se.check_inputs(self.session)
+        self.assertEqual(len(got['child_texts']), 1)
+        r = rc.run_all(got['child_texts'], got['final'],
+                       exists=lambda p: p == '/srv/app/user.rb')
+        self.assertEqual(r['line_retention']['status'], rc.VIOLATION)
+
     def test_one_unobtainable_worker_does_not_excuse_dropping_another(self):
         """A reader we cannot read is not a licence over the ones we can.
 
