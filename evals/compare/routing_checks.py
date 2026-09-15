@@ -1,6 +1,68 @@
 """Per-invocation routing contracts for the comparison evaluator (§26.1/26.3)."""
 import re
+import shlex
 from report_text import plain_report
+
+
+def metadata_only_bash(command):
+    """Prove two bounded shell idioms emit metadata, never source text.
+
+    This is deliberately not a shell interpreter. Unknown syntax falls back to
+    the ordinary recovery check; substitutions and redirections are excluded.
+    """
+    if any(marker in command for marker in ('`', '$(', '${', '\n', '<', '>')):
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=';|&()')
+        lexer.whitespace_split = True
+        lexer.commenters = ''
+        words = list(lexer)
+    except ValueError:
+        return False
+
+    def literal_path(word):
+        return (word.startswith('/') and not any(c in word for c in '$*?[]\\'))
+
+    # A range scan whose sole stdout consumer is wc -c/-l emits only a count.
+    # No tee, alternate branch, extra command, or stderr redirection is allowed.
+    if (len(words) == 7 and words[:2] == ['sed', '-n']
+            and re.fullmatch(r'[1-9][0-9]*,[1-9][0-9]*p', words[2])
+            and literal_path(words[3]) and words[4:6] == ['|', 'wc']
+            and words[6] in ('-c', '-l')):
+        return True
+
+    # The size-probe loop used by the reader skill. Resolve only this explicit
+    # loop variable, never arbitrary shell assignments or interpreter programs.
+    if len(words) < 10 or words[:3] != ['for', 'f', 'in']:
+        return False
+    try:
+        split = words.index(';', 3)
+    except ValueError:
+        return False
+    if (split == 3 or not all(literal_path(p) for p in words[3:split])
+            or words[split + 1:split + 2] != ['do'] or words[-2:] != [';', 'done']):
+        return False
+    statements = []
+    current = []
+    for word in words[split + 2:-1]:
+        if word == ';':
+            statements.append(current)
+            current = []
+        else:
+            current.append(word)
+    if current or not statements:
+        return False
+    for statement in statements:
+        if statement == ['echo', '$f']:
+            continue
+        if (len(statement) == 3 and statement[0] == 'wc'
+                and statement[1] in ('-c', '-l') and statement[2] == '$f'):
+            continue
+        if (len(statement) == 3 and statement[0] == 'awk' and statement[2] == '$f'
+                and re.fullmatch(r'END\s*\{\s*print\s+NR\s*;?\s*\}', statement[1])):
+            continue
+        return False
+    return True
 
 
 def _prompt(agent):
