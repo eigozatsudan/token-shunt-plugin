@@ -500,7 +500,13 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('position-only search for the edit contract', head)
         # v2: the metadata check is a step of the procedure, not an aside,
         # so it has to be stated before the delegation conditions it feeds.
-        self.assertIn('before the first Read', head)
+        # The obligation must bind on a Grep-first flow too:
+        # auto-edit-grep-location never measured, because "before the first
+        # Read" does not fire when the first body contact is a content
+        # search, and "After the metadata check" is a conditional whose
+        # antecedent never holds if nothing was measured
+        # (reviews/residual-two-2026-09-15.md 1).
+        self.assertIn('before the first Read or content search', head)
         self.assertLess(head.index('metadata'), head.index('delegate'), head)
 
     def test_skill_stays_far_below_its_pre_reduction_size(self):
