@@ -1,13 +1,16 @@
 """Hold a content Grep on an over-budget file to the §26.5 form.
 
-Two rules the evaluation could only judge after the fact
-(`evals/compare/flow_checks.py:position_grep_errors`), moved in front of
-the call:
+Two rules moved in front of the call:
 
   metadata first   a file past the small-task budget may be content
                    searched only after its size is known to the caller
   bounded output   that search returns `files_with_matches`, or
                    `head_limit` 1-20 with no context window (-A/-B/-C, context)
+
+Only the second has a counterpart in the harness
+(`evals/compare/flow_checks.py:position_grep_errors`, and only for cases
+that declare `edit_flow`). Metadata-first is judged here and nowhere
+else, so a run made without the plugin is not measured against it.
 
 Only a single existing file is judged. A directory and a bare cwd search
 do not resolve to one size here, and enumerating them at

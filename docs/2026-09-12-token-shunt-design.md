@@ -264,7 +264,7 @@ ZIP 一次成果物は `plugin/` の中身（アーカイブ先頭または一�
 }
 ```
 
-`"args": []` は present なので公式どおり **exec form**（shell 無しで `command` を直接 spawn）。計 7 登録・5 スクリプト（PreToolUse は 4 スクリプト）。`check-reader-contract` は `#!/usr/bin/env python3`、残る 4 本は `#!/usr/bin/env bash` とし、全 5 本に Unix 実行ビットが必須。`timeout` の単位は秒。
+`"args": []` は present なので公式どおり **exec form**（shell 無しで `command` を直接 spawn）。計 7 登録・5 スクリプト（PreToolUse は 4 スクリプト）。`check-reader-contract` は `#!/usr/bin/env python3`、残る 4 本は `#!/usr/bin/env bash` とし、全 5 本に Unix 実行ビットが必須。**（2026-09-15: 11 登録・7 スクリプトに更新。§28 が正本。`check-grep-bounds` と `check-final-answer` も python3。）**`timeout` の単位は秒。
 
 公式: タイムアウトした PreToolUse の command hook は tool call を **block しない**（通常の権限フローへ進む = fail-open）。10 秒は上限であり「必ずそれより早く終わる」保証には使えない。走査は区間閾値の早期打ち切りに加え、§8.6 の走査予算（読み取りバイトと経過時間）で打ち切る。判定不能は deny。予算は timeout より短く取る。遅い FS で予算チェックより先に timeout へ達した場合の素通りは既知の限界（§15）。timeout を延ばして全走査する設計にはしない。
 
@@ -380,7 +380,7 @@ Pre の `tool_input.file_path` は絶対パス、`offset` は整数（既定 1�
 
 deny reason の骨子（英語、短く）:
 
-`File exceeds token-shunt thresholds (lines=<n>/<min_lines>, bytes=<b>/<min_bytes>). Use /token-shunt:bulk-reader. For edits, use a targeted Read of the original that passes the hook. If that fails, editing is outside v0.1 scope.`
+`File exceeds token-shunt thresholds (lines=<n>/<min_lines>, bytes_scanned=<b>/<min_bytes>). Use /token-shunt:bulk-reader. For edits, use a targeted Read of the original that passes the hook. If that fails, editing is outside v0.1 scope.`
 
 走査予算で deny するときは上に加えて `Scan budget exceeded; use /token-shunt:bulk-reader for analysis. Editing still requires a successful targeted Read of the original.` を含める。
 
@@ -582,17 +582,17 @@ tools: Read, Write, Grep, Glob
 | bash-head-full | `head` を 400 行・各行ちょうど 50 バイト（改行込み）の fixture に（既定 N=10） | **通過**（先頭 10 行 = 500 バイト。条件付き散文にしない） |
 | path-space | 空白を含む大きいファイルの Read | deny、JSON が parse できる |
 | worker-code-writer-read | agent_type=`token-shunt:code-writer`、大きいファイルの **Read** | 通過。Bash 側の同等ケースは作らない（tools に Bash が無く到達しない） |
-| zip-exec-bits | `scripts/build-zip.sh` の成果物 | `hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract` が zip 内で実行ビット付き |
+| zip-exec-bits | `scripts/build-zip.sh` の成果物 | `hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract` / `check-grep-bounds` / `check-final-answer` が zip 内で実行ビット付き（2026-09-15: 7 本、§28） |
 | sessionstart-jq-missing | PATH から jq を外して `check-jq` に SessionStart stdin | exit 0、`additionalContext` に jq 欠落の警告。block JSON を出さない |
 | marketplace-schema | `.claude-plugin/marketplace.json` | `name` / `owner.name` / `plugins` が存在。`claude plugin validate` が使えるならそれも実行して成功 |
 
 スキル/エージェントの RED: スキル無し（または「本文を返すな」契約無し）の子がコード引用を最終メッセージに載せることを 1 ケースで確認し、契約ありで載せないことを 1 ケースで確認する。実装フェーズで writing-skills に従う。フック eval が先。
 
-`scripts/build-zip.sh` は zip 前に 5 本のフックへ `chmod +x` し、`plugin/` を zip し、次を Python 3（なければ `zipinfo`）で確認して失敗なら非 0:
+`scripts/build-zip.sh` は zip 前に 7 本のフック（2026-09-15、§28）へ `chmod +x` し、`plugin/` を zip し、次を Python 3（なければ `zipinfo`）で確認して失敗なら非 0:
 
 - アーカイブ先頭または一段下に `.claude-plugin/plugin.json`
 - `__pycache__` / `*.pyc` / `*.pyo` を zip と Python 両ビルド経路で除外し、検証時も混入を拒否
-- `hooks/check-file-size` / `hooks/check-bash-read` / `hooks/check-jq` / `hooks/check-agent-model` / `hooks/check-reader-contract` の Unix 実行ビット（exec form と親 Bash からの spawn は実行ビット無しだと動かない）
+- `hooks/check-file-size` / `hooks/check-bash-read` / `hooks/check-jq` / `hooks/check-agent-model` / `hooks/check-reader-contract` / `hooks/check-grep-bounds` / `hooks/check-final-answer` の Unix 実行ビット（exec form と親 Bash からの spawn は実行ビット無しだと動かない）
 
 marketplace 検証（成功条件 8）: `evals/run.sh` または同梱の検証ステップが `.claude-plugin/marketplace.json` を読み、`name`・`owner.name`（非空文字列）・`plugins`（配列）を必須とする。`claude plugin validate` が PATH にあれば marketplace ルートに対して実行し、非 0 なら失敗。JSON の構文だけ通して `owner` 欠落を許さない。
 
@@ -622,8 +622,8 @@ claude --setting-sources "" $COMMON --plugin-dir <plugin-abs> "<prompt>"
   1. 認証: 既定の OAuth または API key を使い、隔離のために認証ファイルを移動しない。
   2. 設定ソース: `--setting-sources` を空（user / project / local をロードしない。SDK の `settingSources: []` に相当）。空を受け付けない CLI なら比較 eval は **fail**（`CLAUDE_CONFIG_DIR` だけに落とさない）。
   3. cwd: `.claude/` も `CLAUDE.md` も無い一時ディレクトリ。fixture は `--add-dir` で絶対パスを足す。リポジトリルートを cwd にしない。
-  4. 検出: `system/init.plugins` に token-shunt が無いことだけでは他フックは分からない。`--include-hook-events` の `hook_started` / `hook_response` で、token-shunt の 5 本（`hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract`）以外の command hook が 1 件でもあればそのケースは fail。直接モードは PreToolUse の hook_response が 0 件。managed settings は公式に切れない（既知の限界。managed のフックが混ざったら fail）。
-     - **実機で判明した制約（2026-09-13, CLI 2.1.270）:** この CLI の `hook_response` の `hook_name` は**マッチャ名だけ**（`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup`）で、コマンドパスを含まない。上のコマンドパスによる識別はそのままでは実装できない。代替として**隔離契約で識別する**: (a) 直接モードは `--plugin-dir` を渡さないので、PreToolUse の `hook_response` が 1 件でもあれば fail。(b) 委譲モードは `--setting-sources ""`・クリーン cwd・`--plugin-dir plugin/` のみなので、登録され得る command hook は token-shunt のフックだけであり、`PreToolUse:Read` / `PreToolUse:Bash` / `PreToolUse:Agent`（互換名 `PreToolUse:Task` / `PreToolUse:Agent|Task`）/ `PostToolUse:Read` / `PostToolUseFailure:Read` / `SessionStart:startup` 以外の hook_event が出れば fail。(c) 出力が非空なのに `token-shunt` を含まない `hook_response` は、上記マッチャ上でも外来として fail（他プラグインの deny を捕まえる）。
+  4. 検出: `system/init.plugins` に token-shunt が無いことだけでは他フックは分からない。`--include-hook-events` の `hook_started` / `hook_response` で、token-shunt の 7 本（`hooks/check-file-size` / `check-bash-read` / `check-jq` / `check-agent-model` / `check-reader-contract` / `check-grep-bounds` / `check-final-answer`。2026-09-15、§28）以外の command hook が 1 件でもあればそのケースは fail。直接モードは PreToolUse の hook_response が 0 件。managed settings は公式に切れない（既知の限界。managed のフックが混ざったら fail）。
+     - **実機で判明した制約（2026-09-13, CLI 2.1.270）:** この CLI の `hook_response` の `hook_name` は**マッチャ名だけ**（`PreToolUse:Read` / `PreToolUse:Bash` / `SessionStart:startup`）で、コマンドパスを含まない。上のコマンドパスによる識別はそのままでは実装できない。代替として**隔離契約で識別する**: (a) 直接モードは `--plugin-dir` を渡さないので、PreToolUse の `hook_response` が 1 件でもあれば fail。(b) 委譲モードは `--setting-sources ""`・クリーン cwd・`--plugin-dir plugin/` のみなので、登録され得る command hook は token-shunt のフックだけであり、`PreToolUse:Read` / `PreToolUse:Bash` / `PreToolUse:Agent`（互換名 `PreToolUse:Task` / `PreToolUse:Agent|Task`）/ `PreToolUse:Grep` / `PostToolUse:Read` / `PostToolUse:Bash` / `PostToolUseFailure:Read` / `SessionStart:startup` / `Stop` / `SubagentStop` 以外の hook_event が出れば fail（2026-09-15、§28）。(c) 出力が非空なのに `token-shunt` を含まない `hook_response` は、上記マッチャ上でも外来として fail（他プラグインの deny を捕まえる）。
      - deny の識別も `hook_name` ではなく `permissionDecisionReason` に `token-shunt` が含まれることで行う（§13 の `compare-hook-deny-route` の一次証拠）。
      - **残る穴（§15）:** 同じ `PreToolUse:Read` / `Bash` マッチャに載った**外来の通過フック**は出力が空なので、この CLI では token-shunt の通過と区別できない。コマンドパスが `hook_name` に載る CLI が出たら (b) をコマンドパス識別へ戻す。
 - `system/init` の `plugins`: 直接モードに `token-shunt` がいたらそのケースは fail（隔離失敗）。委譲モードに `token-shunt` が無ければ fail（ロード失敗）。`plugin_errors` に token-shunt があれば委譲は fail。
@@ -1017,11 +1017,11 @@ bulk-reader の Read 予算は6回のまま、maxTurns=7 として最後の1タ�
 
 §7 のマニフェスト全文、§4 / §11.8 / §15 の「Grep content は対象外」、および Stop フックの不在は、いずれも 2026-09-13 以前の設計であり、出荷済みの挙動と食い違っていた。挙動の正本は README と `plugin/hooks/hooks.json` で、この節はその差分を設計側に取り込む。旧記述は本節が優先する。
 
-- **登録は7件・実行スクリプトは7本。** §7 の5件に加えて `PreToolUse:Grep` → `check-grep-bounds`、`PostToolUse:Bash` → `check-grep-bounds`（サイズ記録）、`Stop` / `SubagentStop` → `check-final-answer` を既定で登録する。`grep_bounds.py` と `sendback_*.py` は実行されず、上記から読み込まれるモジュール。
+- **実行スクリプトは7本、登録は11件（1本が複数イベントに登録される）。** §7 の5件に加えて `PreToolUse:Grep` → `check-grep-bounds`、`PostToolUse:Bash` → `check-grep-bounds`（サイズ記録）、`Stop` / `SubagentStop` → `check-final-answer` を既定で登録する。`grep_bounds.py` と `sendback_*.py` は実行されず、上記から読み込まれるモジュール。
 - **Grep `output_mode=content` は §26.5 の2規則として前置きで強制する。** ①予算超過ファイルはサイズを確認済みでなければ拒否、②確認済みでも `head_limit` 1〜20 かつ前後行の窓（`-A`/`-B`/`-C`/`context`）なし。単一の実在ファイルだけが対象で、ディレクトリ・`glob`・cwd 全体は §15 の限界として残す。§11.8 の「フックでは塞げない」は、この範囲については解消した。
 - **サイズの「確認済み」はセッション状態。** 記録源は展開もコメントも含まない `wc -c` / `stat`（`stat` は書式指定ならサイズ `%s` を含むものに限る）と、`check-file-size` の拒否本文が実際にサイズを告げたパスのみ。成功した Read は記録しない。
 - **`token-shunt:code-writer` にはサイズを知る手段が無い**（Bash が無く、その Read はサイズ免除）ため、拒否本文では `wc -c` も bulk-reader への委譲も案内せず、`files_with_matches` か必要範囲の Read を案内する。
 - **Stop / SubagentStop の差し戻し**は既定で有効。ワーカーの `confirmed:` 行を親が落とした場合に限り差し戻し、判定不能は通す。取得できなかったワーカーは除外し、取得できたワーカーは判定する。`TOKEN_SHUNT_SENDBACK=off` で無効化できる。比較 eval は測定分離のため既定を off にする（製品の既定とは逆）。
-- **Python 3 への依存が増えた。** `check-grep-bounds` と `check-final-answer` は Python 3 で動き、欠けると遮断ではなく**不動作**になる（該当呼び出しが無検査で通る）。SessionStart の警告はこの3件をまとめて告げる。
+- **Python 3 への依存が増えた。** `check-grep-bounds` と `check-final-answer` は Python 3 で動き、欠けるとフックが起動せず、**規則が適用されない**。起動失敗を CLI がどう扱うかは実機未確認で、遮断されるとは限らない。SessionStart の警告はこの3件をまとめて告げる。
 
 根拠と経緯: `reviews/grep-hook-implementation-2026-09-15.md`、`reviews/grep-gate-behaviour-2026-09-15.md`、`reviews/sendback-registration-decision-2026-09-15.md`、`reviews/clean-context-three-2026-09-15/README.md`（F4・F6・F7・F9）。

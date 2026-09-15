@@ -142,7 +142,11 @@ deny_reason() { # lines bytes read_bytes elapsed undetermined
   if [[ $ln == -1 ]]; then
     parts="bytes=${by}/${MIN_BYTES}"
   else
-    parts="lines=${ln}/${MIN_LINES}, bytes=${by}/${MIN_BYTES}"
+    # The scan stops at the line that crossed a threshold, so this byte
+    # figure is what was read up to there, not the file's size -- which
+    # the contract below states separately. Labelling it `bytes=` made
+    # the two numbers in one deny read as a contradiction.
+    parts="lines=${ln}/${MIN_LINES}, bytes_scanned=${by}/${MIN_BYTES}"
   fi
   printf 'File exceeds token-shunt thresholds (%s). Use /token-shunt:bulk-reader. For edits, use a targeted Read of the original that passes the hook. If that fails, editing is outside v0.1 scope.' "$parts"
   if [[ $un == 1 ]]; then
@@ -212,7 +216,7 @@ deny_contract() { # template-reason fallback-reason
 contract_reason() { # lines bytes
   local parts
   if [[ $1 == -1 ]]; then parts="bytes=${2}/${MIN_BYTES}"
-  else parts="lines=${1}/${MIN_LINES}, bytes=${2}/${MIN_BYTES}"; fi
+  else parts="lines=${1}/${MIN_LINES}, bytes_scanned=${2}/${MIN_BYTES}"; fi
   printf 'File exceeds token-shunt thresholds (%s). For edits, use a targeted Read of the original that passes the hook.' "$parts"
 }
 

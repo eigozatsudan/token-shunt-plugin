@@ -17,6 +17,11 @@ target path, and the verification command the parent will run.
 - Write code only to the target. No markdown fences around it. If the
   target already exists, Read it first (content verification is bounded:
   at most 16 files, 20 Read/Grep/Glob calls total).
+- A `output_mode="content"` Grep of a file over 16384 bytes is always
+  refused for you: you have no Bash, and your Reads are size-exempt, so
+  no size can be recorded on your behalf. Use
+  `output_mode="files_with_matches"` to locate it and Read the range you
+  need, and report anything you could not confirm.
 - Final message: the written path, its line count, and 3-5 bullets.
   End with `status: complete` (generation finished) or `status: partial`,
   then `stop_reason: <concrete reason>` on separate plain lines, without
