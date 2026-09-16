@@ -8,20 +8,42 @@ import sendback_probe as sp
 
 
 class ScoreRunTests(unittest.TestCase):
-    def test_a_later_ok_stop_counts_as_parent_repair(self):
-        records = [
-            {'event': 'Stop', 'outcome': 'blocked',
+    BLOCK = {'event': 'Stop', 'outcome': 'blocked',
              'checks': {'line_retention': 'violation'}, 'lost_lines': 3,
              'baseline': {'assistant_replies': 4, 'tool_calls': 1,
-                          'transcript_lines': 10}},
-            {'event': 'Stop', 'outcome': 'reblock_suppressed',
-             'stop_hook_active': True,
-             'checks': {'line_retention': 'ok'}},
-        ]
-        got = sp.score_run(records, {'verdict': 'pass'})
+                          'transcript_lines': 10}}
+    # What the hook really writes when the re-stop arrives: it declines to
+    # re-block before computing anything, so the record carries no checks.
+    SUPPRESSED = {'event': 'Stop', 'outcome': 'reblock_suppressed',
+                  'stop_hook_active': True}
+
+    def test_parent_repair_is_the_finished_answer_not_a_later_record(self):
+        # The turn end after a send-back always arrives with
+        # stop_hook_active, and the hook suppresses it before judging, so no
+        # later record can say the answer was repaired. P1 is re-judged from
+        # the finished session
+        # (reviews/sendback-fixed-n-probe-design-2026-09-16.md section 3).
+        records = [self.BLOCK, self.SUPPRESSED]
+        got = sp.score_run(records, {'verdict': 'pass'},
+                           final_state={'line_retention': 'ok', 'workers': {}})
         self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 1})
         self.assertEqual(got['s1'], 0)
         self.assertEqual(got['s4'], 0)
+        got = sp.score_run(records, {'verdict': 'fail'},
+                           final_state={'line_retention': 'violation',
+                                        'workers': {}})
+        self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 0})
+
+    def test_p1_is_unmeasured_when_the_finished_answer_cannot_be_judged(self):
+        got = sp.score_run([self.BLOCK, self.SUPPRESSED], {'verdict': 'fail'})
+        self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 0})
+        self.assertEqual(got['p1_unmeasured'], 1)
+
+    def test_two_blocks_in_one_run_are_one_p1_denominator(self):
+        # P1 counts runs, not blocks: one answer is either repaired or not.
+        got = sp.score_run([self.BLOCK, self.SUPPRESSED, self.BLOCK],
+                           final_state={'line_retention': 'ok', 'workers': {}})
+        self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 1})
 
     def test_a_block_on_ok_retention_is_a_false_block(self):
         records = [{'event': 'Stop', 'outcome': 'blocked',
@@ -43,15 +65,21 @@ class ScoreRunTests(unittest.TestCase):
                     'checks': {'line_retention': 'violation'}}]
         self.assertEqual(sp.score_run(records)['s4'], 1)
 
-    def test_worker_rewrite_after_subagent_block_is_p2(self):
+    def test_worker_repair_is_that_worker_final_report(self):
+        # Two workers, one blocked. The other one's report says nothing
+        # about whether the blocked one rewrote its own.
         records = [
-            {'event': 'SubagentStop', 'outcome': 'blocked',
+            {'event': 'SubagentStop', 'outcome': 'blocked', 'agent_id': 'a1',
              'checks': {'child_items': 'violation'}},
-            {'event': 'SubagentStop', 'outcome': 'no_block',
+            {'event': 'SubagentStop', 'outcome': 'no_block', 'agent_id': 'a2',
              'checks': {'child_items': 'ok'}},
         ]
-        got = sp.score_run(records)
+        got = sp.score_run(records, final_state={
+            'line_retention': 'ok', 'workers': {'a1': 'ok', 'a2': 'ok'}})
         self.assertEqual(got['p2'], {'blocked': 1, 'repaired': 1})
+        got = sp.score_run(records, final_state={
+            'line_retention': 'ok', 'workers': {'a1': 'violation', 'a2': 'ok'}})
+        self.assertEqual(got['p2'], {'blocked': 1, 'repaired': 0})
 
     def test_not_resumed_needs_the_session_against_the_block_baseline(self):
         records = [{'event': 'Stop', 'outcome': 'blocked',
@@ -100,7 +128,10 @@ class ScoreDirTests(unittest.TestCase):
             json.dumps({'verdict': 'pass',
                         'metrics': {'total_cost_usd': 0.11}}))
         got = sp.score_dir(root)
-        self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 1})
+        # The log names no session, so the finished answer cannot be
+        # re-judged and P1 is unmeasured rather than scored.
+        self.assertEqual(got['p1'], {'blocked': 1, 'repaired': 0})
+        self.assertEqual(got['p1_unmeasured'], 1)
         self.assertEqual(got['c1']['total'], 0.11)
         self.assertEqual(got['runs'], 1)
         # No baseline in the record, so there is no S3 question to answer.

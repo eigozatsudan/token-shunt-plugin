@@ -474,6 +474,13 @@ jq -c '.planned | map(.case + "/" + .mode)' "$MANIFEST"
                 self.assertNotIn('PLANNED', result.stdout)
                 self.assertIn(bad, result.stdout + result.stderr)
 
+    def test_slots_reach_the_case_loop_not_only_the_manifest(self):
+        # The plan and the loop are separate filters; a slot honoured in one
+        # and not the other would still bill the modes the design excluded.
+        result = self.run_with_cli_double(SLOTS='auto-small-files/haiku')
+        calls = Path(self.temp.name) / 'calls.log'
+        self.assertEqual(calls.read_text().count('case'), 1, result.stdout)
+
     def test_unset_slots_plan_every_declared_pair(self):
         result = self.shell('''
 ONLY=auto-small-files; setup_run || exit 1
