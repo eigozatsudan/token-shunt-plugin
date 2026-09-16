@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 ZIP=$ROOT/token-shunt.zip
 
-chmod +x plugin/hooks/check-file-size plugin/hooks/check-bash-read plugin/hooks/check-jq plugin/hooks/check-agent-model plugin/hooks/check-reader-contract plugin/hooks/check-final-answer plugin/hooks/check-grep-bounds plugin/hooks/check-worker-resume
+chmod +x plugin/hooks/check-file-size plugin/hooks/check-bash-read plugin/hooks/check-jq plugin/hooks/check-agent-model plugin/hooks/check-reader-contract plugin/hooks/check-final-answer plugin/hooks/check-grep-bounds plugin/hooks/check-worker-resume plugin/hooks/check-worker-launch
 rm -f "$ZIP"
 
 if command -v zip >/dev/null 2>&1; then
@@ -50,7 +50,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
         prefix = manifests[0][:-len('.claude-plugin/plugin.json')]
         for hook in ('check-file-size', 'check-bash-read', 'check-jq', 'check-agent-model',
                      'check-reader-contract', 'check-final-answer',
-                     'check-grep-bounds', 'check-worker-resume'):
+                     'check-grep-bounds', 'check-worker-resume',
+                     'check-worker-launch'):
             name = prefix + 'hooks/' + hook
             if name not in names:
                 valid = False
@@ -78,8 +79,8 @@ PY
         }
       }
       END {
-        split("check-file-size check-bash-read check-jq check-agent-model check-reader-contract check-final-answer check-grep-bounds check-worker-resume", hooks, " ")
-        for (i = 1; i <= 8; i++) {
+        split("check-file-size check-bash-read check-jq check-agent-model check-reader-contract check-final-answer check-grep-bounds check-worker-resume check-worker-launch", hooks, " ")
+        for (i = 1; i <= 9; i++) {
           mode = modes[prefix "hooks/" hooks[i]]
           if (mode !~ /^[-?]/ || mode !~ /[xst]/) bad = 1
         }

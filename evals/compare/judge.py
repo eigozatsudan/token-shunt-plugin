@@ -23,7 +23,7 @@ READ_TOOLS = {"Read"}
 BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
 TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq", "check-agent-model",
             "check-reader-contract", "check-final-answer", "check-grep-bounds",
-            "check-worker-resume")
+            "check-worker-resume", "check-worker-launch")
 # Observed bootstrap matcher; the name alone cannot establish provenance.
 BUILTIN_HOOKS = {"SessionStart:startup"}
 # This CLI reports only the matcher in `hook_name` ("PreToolUse:Read"), never
@@ -35,6 +35,8 @@ TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash", "PreToolUse:Agent",
                  "PreToolUse:Task", "PreToolUse:Agent|Task",
                  "PreToolUse:Grep", "PreToolUse:SendMessage",
                  "PostToolUse:Read", "PostToolUse:Bash",
+                 "PostToolUse:Agent", "PostToolUse:Task",
+                 "PostToolUse:Agent|Task",
                  "PostToolUseFailure:Read", "Stop", "SubagentStop"}
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 

@@ -204,3 +204,56 @@ A スイートの実質失敗は、この 2 件の判定器修正を織り込む
 `judge.py --selftest` 全項目 pass。実行課金なし。
 
 zip は再生成していない（リリース時にまとめて）。
+
+## 10. 実装（2026-09-16、§1 haiku の製品側）
+
+§1 haiku は「親が絶対パスを basename に短縮した」。送り戻し（Stop フック）が
+この失敗を対象にしていて、固定 N プローブでは修復 12/12
+（`reviews/sendback-fixed-n-probe-2026-09-16.md`）。ただし修復は**事後**で、
+しかも SENDBACK が入のときだけである。予防側を足した。
+
+### 10.1 どこで言えるか（CLI 2.1.272 を実体で確認）
+
+ワーカーの報告は `<task-notification>` として親に届き、**この到着を観測する
+フックイベントは無い**（`reviews/stop-hook-spec-2026-09-15.md` §1。Agent の
+tool_result は起動メタデータのみ）。報告と最終回答の間に親側のツール呼び出しも
+普通は無い。したがって親に言える最後の瞬間は**起動そのもの**である。
+
+CLI の実体から確認したこと:
+
+- `hookSpecificOutput.additionalContext` を `hook_additional_context`
+  メッセージに変換しているのは PostToolUse / PostToolUseFailure /
+  PostToolBatch / SessionStart / Setup / SubagentStart / PostModelSwitch /
+  Stop / UserPromptSubmit。
+- **PreToolUse はスキーマが `additionalContext` を受け取るが、配送していない。**
+  よって `check-agent-model`（PreToolUse）には載せられない。
+- SubagentStop の additionalContext は**サブエージェント宛**であり、親には届かない。
+
+### 10.2 入れたもの
+
+- `plugin/hooks/worker_launch.py` + `check-worker-launch` を PostToolUse の
+  matcher `Agent|Task` に登録。`subagent_type` が token-shunt のワーカーで、
+  起動が実際に成立したときだけ `additionalContext` を返す。
+- 文面は保持規則そのもの: `confirmed:` 行を逐語で 1 行ずつ、絶対パスを短縮せず
+  （basename も相対パスも不可）、要約で置き換えない、同一行のみ畳む、絶対パスで
+  ない行は `unconfirmed:` に落とす。末尾に「これは親宛であってワーカー宛では
+  ない。プロンプトに写すな」を付けた（`reader-call-contract` が同じ取り違えを
+  警告している）。
+- 判定はしない。実際に保持したかは `check-final-answer` の仕事。
+
+これで、**フックの deny を経ない明示委譲**（§1 の失敗ケースがまさにこれ）でも
+保持規則が親の文脈に入る。従来は deny 文（`reader-call-contract`）か SKILL.md の
+description しか経路が無く、明示委譲では前者が存在しない。
+
+### 10.3 費用と検証
+
+追加は起動 1 回あたり約 60 トークン。実機再測定は**していない**（課金なし）。
+予防の効果は実機でしか測れないので、効いたかどうかはまだ主張しない。
+
+登録は 5 か所: `hooks.json`、`judge.py` の `TS_HOOKS` と `TS_HOOK_NAMES`
+（`PostToolUse:Agent` / `:Task` / `:Agent|Task`）、`test_build_zip.py` の
+`HOOKS`、`build-zip.sh` の 3 リスト。
+
+テストは `evals/test_worker_launch.py` に 15 件。オフライン: `evals/run.sh`
+240 pass / 0 fail、`unittest discover -s evals` 256 OK、`-s evals/compare`
+432 OK、`judge.py --selftest` 全項目 pass。
