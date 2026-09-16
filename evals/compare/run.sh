@@ -84,7 +84,9 @@ setup_run() {
     (.cases | map(select(.suite != "X" or $suite == "X"))) as $usable |
     {planned:($usable | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
       and ($suite == "" or .suite == $suite))) | selected),
-     required:($usable | pairs),
+     # `required` is what a complete suite means, so it never follows the
+     # selection: the shelf is out of it whether or not this run named it.
+     required:(.cases | map(select(.suite != "X")) | pairs),
      unknown_slots:($sl | map(select(. as $p | $declared | index($p) | not)))}' \
     "$CMP/cases.json" >"$MANIFEST" || return 1
   if ! jq -e '.unknown_slots | length == 0' "$MANIFEST" >/dev/null; then

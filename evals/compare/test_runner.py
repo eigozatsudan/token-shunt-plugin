@@ -659,6 +659,28 @@ jq -c '[.planned[].case] | unique' "$MANIFEST"
                          summary.get("errors", []))
         self.assertFalse(summary["release_eligible"])
 
+    def test_naming_the_shelf_does_not_shrink_the_mandatory_suite(self):
+        # `required` is what a complete suite means; it must not follow the
+        # selection. Making it do so made every SUITE=X run report
+        # "manifest required pairs differ from mandatory suite".
+        self.add_experiment_case()
+        result = self.shell("""
+ONLY=''; SUITE=X; setup_run || exit 1
+jq -c '[.required[].case] | index("turn-probe")' "$MANIFEST"
+jq -c '[.required[].case] | index("auto-small-files")' "$MANIFEST"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        index_of_shelf, index_of_ordinary = result.stdout.split()
+        self.assertEqual("null", index_of_shelf)
+        self.assertNotEqual("null", index_of_ordinary)
+
+    def test_an_experiment_run_aggregates_without_a_suite_error(self):
+        self.add_experiment_case()
+        self.run_with_cli_double(only="turn-probe", SUITE="X",
+                                 SLOTS="turn-probe/auto")
+        summary = json.loads((self.compare / "last-run.json").read_text())
+        self.assertEqual([], summary.get("errors", []))
+
     def test_a_case_without_turns_makes_one_call(self):
         self.run_with_cli_double(SLOTS="auto-small-files/auto")
         log = (Path(self.temp.name) / "calls.log").read_text()
