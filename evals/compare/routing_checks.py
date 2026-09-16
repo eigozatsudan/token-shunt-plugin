@@ -155,6 +155,13 @@ def reader_contract_denial(tr, call):
         r'Read must start at offset=\d+ with a positive limit\.',
         # Transcripts predating the ceiling wording keep the bare sentence.
         r'Retry at offset=\d+ with limit=\d+ \(floor half\)( or less)?\.',
+        # The declared-path refusal. Without it a Read the hook stopped was
+        # read as a Read that happened, so an invocation that reached outside
+        # and was refused failed for child_extra_read exactly like one that
+        # read through (reviews/scope-control-2026-09-16.md section 5).
+        r'Read only the paths this invocation was given: [^\n]+\. This path '
+        r'came from another invocation; report partial and let the caller ask '
+        r'for it in a new one\.',
     )
     return reason if any(re.fullmatch('token-shunt: ' + p, reason) for p in patterns) else None
 
