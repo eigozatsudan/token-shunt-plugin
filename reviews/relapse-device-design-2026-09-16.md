@@ -106,3 +106,55 @@ H1 が当たっていた場合、`block_reason` の
 **「最後の 1 通に入れろ」に変えるべき**かもしれない。
 これは製品文面の変更であり、S1（誤 block）や修復率に影響しうるので、
 **別の事前登録と別の測定**にする。今回の装置はその測定にもそのまま使える。
+
+## 8. 段階 0 の実施（2026-09-16、課金なし）
+
+`evals/compare/relapse_probe.py`（新規、テスト 13 件）。
+
+### 8.1 何をするか
+
+- `rows(path)` / `split_turn(rows)` — セッションの assistant 行から
+  **最後の 1 通を「締め」**、それ以前を「すでに言ったこと」に分ける。
+  `isSidechain`（ワーカーの発話）は親の発話ではないので除く。
+  1 プロンプト 1 ターンという評価 run の形に依存する分割であり、
+  **複数ターンのセッションには使わない**とコメントに明記した。
+- `score_session(path)` — 判定そのものは製品の
+  `sendback_retention.check_relapse` を使う。**計器とフックが「再発」の
+  定義で食い違わないため**である。加えて締めだけの `check_line_retention` を
+  取り、`final_retained`（E2 の主要項目）を返す。
+- `session_for(transcript)` — 評価用トランスクリプトの init から
+  `session_id` を引き、`~/.claude/projects/*/<id>.jsonl` を探す
+  （`retention_probe` と同じ経路）。
+- `relapse_blocks(log)` — 製品の試行ログから `outcome=blocked` かつ
+  `relapse=true` を**セッション別に数える**。E4（予算超過）は
+  「2 件目が見えること」が要件なので、真偽ではなく件数で持つ。
+- `score_dir(run_dir)` — 枠ごとに集計。`case.mode` の綴りを持たない
+  起動プローブは飛ばす（`retention_probe` で直した欠陥と同じもの）。
+
+### 8.2 判定不能の扱い
+
+**使えるワーカー行が 1 本も無い run は `unmeasured`（`relapse=None`）**とする。
+ワーカーが `confirmed:` を返していない（violation）場合も、
+ファイルが消えて判定不能（undetermined）の場合も同じ扱いである。
+どちらも「親が言い直して落とす」余地が無い run であり、
+`relapse=False` に数えると**再発が起きなかった run として腕を有利に見せる**。
+
+「修復が landing していない」（言い直し自体が無い）は別で、これは
+判定できた上での**否定**なので `relapse=False`・status `undetermined` とする。
+
+### 8.3 テスト
+
+`evals/compare/test_relapse_probe.py` 13 件 —— 分割 4 件
+（締めの特定 / ワーカー発話の除外 / 1 通だけの turn / assistant テキストなし）、
+採点 6 件（再発 / 締めが行を保持 / 言い直しが無い / 1 通だけの回答 /
+ワーカー判定不能 / セッションが無い）、試行ログ 3 件
+（セッション別の件数 / **2 件目が見えること** / ログが無い）。
+
+観測された形（要約 → 言い直し → 短い締め）を合成セッションで組み、
+`relapse=true` / `final_retained=false` になることも確認した。
+
+オフライン: `unittest discover -s evals` 279 OK、`-s evals/compare` 488 OK、
+`judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。
+
+**段階 1 以降は課金するので、指示があるまで走らせない。**
+計器はここで凍結し、実験中は変更しない。
