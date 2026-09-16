@@ -102,3 +102,23 @@ verdict は両腕とも 3 枠すべて `isolation: direct=None` で fail する�
 - 短縮が出るのは `auto-explicit-multifile/haiku` に集中している。次に測るなら
   枠をそこに寄せたほうが同じ費用で基準率を稼げる（1 腕 6 run 全部をこの枠に
   すれば、今回と同じ $1.4 で 6 対 6 の比較になる）。
+
+## 7. 計器の修正（2026-09-16、実験後、課金なし）
+
+上の測定で見つかった計器の欠陥 2 件を、実験が終わってから直した。
+**上の数値は測定時のままで、書き換えていない。**
+
+1. **§5 の run 数**: `score_dir` が `_probe_iso` / `_probe_load` を run に
+   数えていた。`case.mode` の綴りを持たないトランスクリプトは枠に帰属できず、
+   この測定の単位ではないので飛ばす。§2 の表（枠ごと）は影響を受けない。
+2. **§1.1 の配送**: `reminder_delivered` が評価用トランスクリプトを見ていた。
+   attachment はそこに出ないので、常に False になる項目だった。init の
+   `session_id` から CLI セッション（`~/.claude/projects/*/<id>.jsonl`）を引き、
+   `hook_additional_context` の attachment に文言があるかを見る形に直した。
+   セッションが見つからないときは **False ではなく None（未測定）**を返し、
+   `score_dir` は `reminder_unmeasured` に数える。掃除で消えたセッションを
+   「配送されなかった」と読むのは、今回と逆向きの同じ誤りになる。
+
+実データで確認した。今回の treatment 2 周目の親セッション 3 本は True、
+同じ run のワーカーセッション 2 本と control の全セッションは False、
+存在しない id は None。テストは `test_retention_probe.py` に 13 件（+5）。

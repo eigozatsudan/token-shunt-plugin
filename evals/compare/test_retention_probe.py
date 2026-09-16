@@ -13,10 +13,11 @@ import unittest
 import retention_probe as rp
 
 
-def transcript(worker_text, final_text, hook_output=None):
+def transcript(worker_text, final_text, hook_output=None, session_id=None):
     """A minimal delegate-run stream-json transcript."""
     events = [
-        {"type": "system", "subtype": "init", "plugins": [{"name": "token-shunt"}]},
+        {"type": "system", "subtype": "init", "plugins": [{"name": "token-shunt"}],
+         "session_id": session_id},
         {"type": "assistant", "uuid": "u1", "parent_tool_use_id": None,
          "message": {"id": "m1", "content": [
              {"type": "tool_use", "id": "t1", "name": "Agent",
@@ -94,22 +95,52 @@ class ScoreTests(unittest.TestCase):
         path = self.write('f.jsonl', transcript(self.line, self.line))
         self.assertFalse(rp.score_transcript(path)['reminder_hook'])
 
-    def test_delivery_is_reported_apart_from_the_hook_answering(self):
-        # The hook returning a payload and the CLI putting it in the
-        # parent's context are two claims. The arm is only treated if the
-        # second one holds, so they are counted separately.
-        payload = json.dumps({'hookSpecificOutput': {
-            'hookEventName': 'PostToolUse',
-            'additionalContext': 'token-shunt: this worker returns ...'}})
-        events = transcript(self.line, self.line, hook_output=payload)
-        got = rp.score_transcript(self.write('g.jsonl', events))
-        self.assertFalse(got['reminder_delivered'])
-        events.insert(3, {"type": "user", "parent_tool_use_id": None,
-                          "message": {"content": [
-                              {"type": "text",
-                               "text": "token-shunt: this worker returns ..."}]}})
-        got = rp.score_transcript(self.write('h.jsonl', events))
-        self.assertTrue(got['reminder_delivered'])
+    PAYLOAD = json.dumps({'hookSpecificOutput': {
+        'hookEventName': 'PostToolUse',
+        'additionalContext': 'token-shunt: this worker returns ...'}})
+
+    def session(self, session_id, delivered):
+        """A CLI session file the way the projects directory holds it."""
+        directory = self.root / 'sessions' / '-some-cwd'
+        directory.mkdir(parents=True, exist_ok=True)
+        rows = [{'type': 'user', 'sessionId': session_id, 'message': {}}]
+        if delivered:
+            rows.append({'type': 'attachment', 'sessionId': session_id,
+                         'attachment': {'type': 'hook_additional_context',
+                                        'content': ['token-shunt: this worker '
+                                                    'returns ...']}})
+        (directory / (session_id + '.jsonl')).write_text(
+            '\n'.join(json.dumps(r) for r in rows))
+        return self.root / 'sessions'
+
+    def test_delivery_is_read_from_the_session_not_the_eval_transcript(self):
+        # The eval transcript is stream-json from stdout and carries no
+        # attachments, so looking for the text there reported 0 for a
+        # reminder that had in fact been delivered
+        # (reviews/launch-reminder-effect-2026-09-16.md section 1.1).
+        events = transcript(self.line, self.line, hook_output=self.PAYLOAD,
+                            session_id='s1')
+        path = self.write('g.jsonl', events)
+        got = rp.score_transcript(path, sessions=self.session('s1', True))
+        self.assertTrue(got['reminder_hook'])
+        self.assertIs(got['reminder_delivered'], True)
+        got = rp.score_transcript(path, sessions=self.session('s1', False))
+        self.assertIs(got['reminder_delivered'], False)
+
+    def test_delivery_is_unmeasured_when_the_session_is_not_there(self):
+        # Absent evidence is not evidence of absence: a run whose session
+        # file was cleaned up must not be counted as "not delivered".
+        events = transcript(self.line, self.line, hook_output=self.PAYLOAD,
+                            session_id='s2')
+        got = rp.score_transcript(self.write('i.jsonl', events),
+                                  sessions=self.root / 'no-sessions-here')
+        self.assertIsNone(got['reminder_delivered'])
+
+    def test_a_transcript_naming_no_session_leaves_delivery_unmeasured(self):
+        events = transcript(self.line, self.line, hook_output=self.PAYLOAD)
+        got = rp.score_transcript(self.write('j.jsonl', events),
+                                  sessions=self.session('s3', True))
+        self.assertIsNone(got['reminder_delivered'])
 
 
 class ScoreDirTests(unittest.TestCase):
@@ -133,6 +164,45 @@ class ScoreDirTests(unittest.TestCase):
         self.assertEqual(got['cost'], 0.2)
         self.assertEqual(got['slots']['compare-explicit-multifile/haiku'][0]['status'],
                          'violation')
+
+    def test_an_unmeasured_delivery_is_not_counted_as_delivered(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / 'transcripts').mkdir()
+        (root / 'transcripts' / 'c.haiku.jsonl').write_text('\n'.join(
+            json.dumps(e) for e in transcript('no items', 'done')))
+        got = rp.score_dir(root, sessions=root / 'absent')
+        self.assertEqual(got['reminder_delivered'], 0)
+        self.assertEqual(got['reminder_unmeasured'], 1)
+
+    def test_a_runner_probe_is_not_one_of_the_runs(self):
+        # `_probe_iso` and `_probe_load` are the runner's own start-up
+        # checks, not cases. Counting them inflated `runs` and
+        # `undetermined` in the launch-reminder effect record
+        # (reviews/launch-reminder-effect-2026-09-16.md section 5).
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / 'transcripts').mkdir()
+        for name in ('_probe_iso.jsonl', '_probe_load.jsonl'):
+            (root / 'transcripts' / name).write_text('\n'.join(
+                json.dumps(e) for e in transcript('no items', 'done')))
+        got = rp.score_dir(root)
+        self.assertEqual(got['runs'], 0)
+        self.assertEqual(got['undetermined'], 0)
+        self.assertEqual(got['slots'], {})
+
+    def test_a_name_that_states_no_mode_is_not_a_run(self):
+        # A transcript whose stem carries no `case.mode` split cannot be
+        # attributed to a slot, so it is not a unit of this measurement.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / 'transcripts').mkdir()
+        (root / 'transcripts' / 'stray.jsonl').write_text('\n'.join(
+            json.dumps(e) for e in transcript('no items', 'done')))
+        self.assertEqual(rp.score_dir(root)['runs'], 0)
 
     def test_a_trial_log_beside_a_transcript_is_not_a_run(self):
         tmp = tempfile.TemporaryDirectory()
