@@ -51,10 +51,11 @@ class ProbeFixture(unittest.TestCase):
         self.subagents = os.path.join(self.dir, 'sess', 'subagents')
         os.makedirs(self.subagents)
 
-    def worker(self, prompt, *rows, agent=AGENT, kind='token-shunt:bulk-reader'):
+    def worker(self, prompt, *rows, agent=AGENT, kind='token-shunt:bulk-reader',
+               stamp='2026-09-16T10:00:00Z'):
         path = os.path.join(self.subagents, 'agent-%s.jsonl' % agent)
         with open(path, 'w', encoding='utf-8') as fh:
-            fh.write(json.dumps({'type': 'user', 'message': {
+            fh.write(json.dumps({'type': 'user', 'timestamp': stamp, 'message': {
                 'role': 'user', 'content': prompt}}) + '\n')
             for row in rows:
                 fh.write(json.dumps(row) + '\n')
@@ -88,6 +89,68 @@ class DeclaredTests(ProbeFixture):
     def test_agreement_is_the_ordinary_case(self):
         path = self.worker('Read %s and %s.' % (self.beta, self.alpha))
         self.assertFalse(sp.score_invocation(path)['declared_disagrees'])
+
+
+class ProseTests(ProbeFixture):
+    """Stage 1 found the extraction reading prose as paths (design section 8.3)."""
+
+    def test_a_slash_inside_a_word_is_not_a_path(self):
+        # The real launch prompt says "the exact definition/value of TOKEN",
+        # which the first version sliced into "/value" and called declared.
+        path = self.worker('Report the definition/value of TOKEN and the '
+                           'source paths/symbols that connect it.\n\n'
+                           'Paths:\n%s (40 bytes)\n' % self.beta)
+        self.assertEqual([self.beta], sp.score_invocation(path)['declared'])
+
+    def test_a_path_in_brackets_is_still_a_path(self):
+        path = self.worker('Compare (%s) with `%s`.' % (self.beta, self.alpha))
+        self.assertEqual({self.alpha, self.beta},
+                         set(sp.score_invocation(path)['declared']))
+
+    def test_a_bare_word_with_no_slash_is_not_a_path(self):
+        path = self.worker('Read beta.py only.')
+        self.assertEqual([], sp.score_invocation(path)['declared'])
+
+
+class OpportunityTests(ProbeFixture):
+    """A re-read is only possible where an earlier path was left out."""
+
+    def test_the_first_invocation_is_never_an_opportunity(self):
+        self.worker('Read %s.' % self.alpha, agent='w1')
+        got = sp.score_session(self.session)
+        self.assertFalse(got['invocations'][0]['opportunity'])
+        self.assertEqual(0, got['opportunities'])
+
+    def test_a_later_invocation_that_drops_an_earlier_path_is_one(self):
+        self.worker('Read %s.' % self.alpha, agent='w1')
+        self.worker('Read %s.' % self.beta, agent='w2')
+        got = sp.score_session(self.session)
+        self.assertEqual([False, True],
+                         [i['opportunity'] for i in got['invocations']])
+        self.assertEqual(1, got['opportunities'])
+
+    def test_a_later_invocation_that_keeps_them_all_is_not_one(self):
+        # The parent handed the earlier path over again, so nothing the
+        # worker could read here would be out of scope.
+        self.worker('Read %s.' % self.alpha, agent='w1')
+        self.worker('Read %s and %s.' % (self.alpha, self.beta), agent='w2')
+        got = sp.score_session(self.session)
+        self.assertEqual(0, got['opportunities'])
+
+    def test_order_comes_from_the_timestamps_not_the_agent_id(self):
+        self.worker('Read %s.' % self.beta, agent='zzz', stamp='2026-09-16T10:00:00Z')
+        self.worker('Read %s.' % self.alpha, agent='aaa', stamp='2026-09-16T09:00:00Z')
+        got = sp.score_session(self.session)
+        self.assertEqual(['aaa', 'zzz'], [i['agent_id'] for i in got['invocations']])
+
+    def test_the_attempt_is_counted_against_the_opportunities(self):
+        self.worker('Read %s.' % self.alpha, agent='w1')
+        self.worker('Read %s.' % self.beta, tool_use(self.alpha, 't1'),
+                    tool_result('t1'), agent='w2')
+        got = sp.score_session(self.session)
+        self.assertEqual(1, got['opportunities'])
+        self.assertEqual(1, got['attempted'])
+        self.assertEqual(1, got['succeeded'])
 
 
 class AttemptTests(ProbeFixture):
