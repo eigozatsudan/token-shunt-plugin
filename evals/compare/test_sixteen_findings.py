@@ -151,6 +151,76 @@ class UniversalWorkerTests(unittest.TestCase):
             verdict, ok = self.evaluate([self.call, write, reply, self.final])
             self.assertFalse(verdict['checks'][check])
 
+    def test_resuming_a_worker_is_a_contract_violation(self):
+        # The design forbids resume: a follow-up is a fresh launch with the
+        # same paths (spec sections 12 and 26, "resume 0" in the A contract).
+        # compare-bulk-facts/auto at 9346d19 resumed a turn-limited worker and
+        # failed as child_status instead, because the report came back under
+        # the SendMessage id (reviews/a-suite-failures-9346d19-2026-09-16.md
+        # section 3).
+        note = {'type': 'system', 'subtype': 'task_notification',
+                'tool_use_id': 'worker', 'task_id': 'a99', 'status': 'completed',
+                'summary': 'stopped at its turn limit'}
+        send = {'type': 'assistant', 'message': {'content': [{
+            'type': 'tool_use', 'id': 'resume', 'name': 'SendMessage',
+            'input': {'to': 'a99', 'message': 'continue'}}]}}
+        verdict, ok = self.evaluate([self.call, self.reply, note, send, self.final])
+        self.assertFalse(ok)
+        self.assertFalse(verdict['checks']['resume'])
+        self.assertTrue(any('a99' in reason for reason in verdict['reasons']))
+
+    def test_a_message_to_something_other_than_a_worker_is_not_a_resume(self):
+        note = {'type': 'system', 'subtype': 'task_notification',
+                'tool_use_id': 'worker', 'task_id': 'a99', 'status': 'completed',
+                'summary': 'done'}
+        send = {'type': 'assistant', 'message': {'content': [{
+            'type': 'tool_use', 'id': 'msg', 'name': 'SendMessage',
+            'input': {'to': 'some-teammate', 'message': 'hello'}}]}}
+        verdict, ok = self.evaluate([self.call, self.reply, note, send, self.final])
+        self.assertTrue(ok, verdict['reasons'])
+        self.assertTrue(verdict['checks']['resume'])
+
+    def test_a_worker_id_from_the_launch_metadata_is_also_protected(self):
+        reply = copy.deepcopy(self.reply)
+        reply['tool_use_result'] = {'agentId': 'a77', 'isAsync': True}
+        reply['message']['content'][0]['content'] = (
+            'Async agent launched successfully.')
+        done = {'type': 'system', 'subtype': 'task_notification',
+                'tool_use_id': 'worker', 'task_id': 'a77', 'status': 'completed',
+                'summary': 'status: partial\nstop_reason: budget_exhausted'}
+        send = {'type': 'assistant', 'message': {'content': [{
+            'type': 'tool_use', 'id': 'resume', 'name': 'SendMessage',
+            'input': {'to': 'a77', 'message': 'continue'}}]}}
+        verdict, ok = self.evaluate([self.call, reply, done, send, self.final])
+        self.assertFalse(ok)
+        self.assertFalse(verdict['checks']['resume'])
+
+    def test_writer_line_count_is_judged_by_meaning_not_phrasing(self):
+        # code-writer.md asks for "the written path, its line count, and 3-5
+        # bullets" and pins no wording. A writer that headed the number
+        # "Line count: 5" failed writer-verification-levels/auto at 9346d19
+        # on the regex alone (reviews/a-suite-failures-9346d19-2026-09-16.md
+        # section 5).
+        self.writer()
+        write = {'type': 'assistant', 'parent_tool_use_id': 'worker',
+            'message': {'content': [{'type': 'tool_use', 'id': 'write', 'name': 'Write',
+                'input': {'file_path': '/repo/out.py', 'content': 'x'}}]}}
+        bullets = '\n- Generated file\n- Used reference\n- Verification pending'
+        tail = '\nstatus: complete\nstop_reason: complete'
+        reply = copy.deepcopy(self.reply)
+        for count in ('7 lines', 'Line count: 7', 'lines: 7', '7行', 'Lines: 7'):
+            reply['message']['content'][0]['content'] = (
+                '/repo/out.py\n' + count + bullets + tail)
+            verdict, ok = self.evaluate([self.call, write, reply, self.final])
+            self.assertTrue(ok, (count, verdict['reasons']))
+        # A reply with no count at all still fails, and so does a bare number
+        # that names nothing.
+        for missing in ('', '7'):
+            reply['message']['content'][0]['content'] = (
+                '/repo/out.py\n' + missing + bullets + tail)
+            verdict, ok = self.evaluate([self.call, write, reply, self.final])
+            self.assertFalse(verdict['checks']['child_format'], missing)
+
     def test_suite_a_model_mismatch_and_missing_evidence_without_opt_in(self):
         self.spec['suite'] = 'A'
         for requested, resolved, check in (('sonnet', 'claude-haiku', 'requested_model'),

@@ -108,3 +108,30 @@ gold は `sha256:0a1b2c3d4e5f` + `6`×40。ワーカーの戻りは末尾の `6`
 
 いずれも課金不要。1 と 2 は製品ではなく判定器の変更なので、
 実機の再測定なしに正しさを確認できる。
+
+## 7. 実施（2026-09-16、課金なし）
+
+§6 の 1 と 2 をテスト先行で入れた。3 と 4 は未着手。
+
+- **1（偽陽性）**: `judge.py` の行数検査を `Line count: N` / `lines: N` /
+  `Lines: N` も認める形に広げた。数字だけ（`7`）は従来どおり不合格。
+  テストは `test_sixteen_findings.py::
+  test_writer_line_count_is_judged_by_meaning_not_phrasing`。
+- **2（resume）**: 親が worker の agent id 宛に `SendMessage` を出したら
+  `resume` で落とす。id は起動結果の `agentId` と、その起動に紐づく
+  `task_notification` の `task_id` の両方から集める。worker 以外への
+  `SendMessage` は落とさない。テスト 3 件を同ファイルに追加。
+
+保存済み 77 トランスクリプトを新しい判定器で全件再判定し、旧 verdict と比較した。
+
+| 差分 | 件数 | 内容 |
+|---|---|---|
+| fail → pass | 2 | `writer-verification-levels/auto`（上記 1）、`auto-routing-boundary-known-range-deny/auto`（`8750b6b` で既出） |
+| 理由が増えた | 3 | `compare-bulk-facts/auto`、`auto-bulk-facts/auto`、`auto-bulk-facts/sonnet` に `resume` が付いた（いずれも元から fail） |
+| pass → fail | **0** | |
+
+オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals/compare`
+412 OK、`judge.py --selftest` 全項目 pass。
+
+A スイートの実質失敗は、この 2 件の判定器修正を織り込むと 16/23 → **17/23**。
+残る 6 件の内訳は §1–§4 のとおりで、製品側の修正はまだ何もしていない。

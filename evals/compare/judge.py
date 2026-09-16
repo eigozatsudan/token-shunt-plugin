@@ -1509,6 +1509,30 @@ def judge(transcript_path, spec, ctx):
     if db_paths:
         v["checks"].setdefault("deny_bypass", True)
 
+    # Resume is forbidden: a follow-up is a fresh launch with the same paths
+    # (design sections 12 and 26; the A contract expects "resume 0"). The
+    # worker's own id is what a resume addresses, so collect every id these
+    # launches are known by and fail a parent message sent to one.
+    if parent_agents:
+        worker_ids = set()
+        for u in parent_agents:
+            r = tr.result_of(u["id"])
+            metadata = (r or {}).get("tool_use_result")
+            if isinstance(metadata, dict) and metadata.get("agentId"):
+                worker_ids.add(metadata["agentId"])
+            for event in tr.events:
+                if (event.get("type") == "system"
+                        and event.get("subtype") == "task_notification"
+                        and event.get("tool_use_id") == u["id"]
+                        and event.get("task_id")):
+                    worker_ids.add(event["task_id"])
+        for u in tr.parent_tool_uses("SendMessage"):
+            target = u["input"].get("to")
+            if isinstance(target, str) and target in worker_ids:
+                fail("resume", "parent resumed worker %s instead of launching again"
+                     % target)
+        v["checks"].setdefault("resume", True)
+
     # child->parent text contract
     cap = exp.get("child_msg_max")
     plugin_workers = any(tr.agent_type_of(u) in {"token-shunt:bulk-reader", "token-shunt:code-writer"}
@@ -1557,8 +1581,14 @@ def judge(transcript_path, spec, ctx):
                 writes = [c for c in tr.child_tool_uses(u['id']) if c['name'] == 'Write']
                 paths = [c['input'].get('file_path', '') for c in writes]
                 bullets = re.findall(r'(?m)^\s*[-*+]\s+\S', txt)
+                # The contract asks for a line count and pins no wording
+                # (plugin/agents/code-writer.md), so "Line count: 5" counts
+                # as much as "5 lines". A bare number naming nothing does not.
+                counted = re.search(r'\b\d+\s+lines?\b|\d+\s*行'
+                                    r'|\blines?\s*(?:count)?\s*[:=]\s*\d+'
+                                    r'|\bline\s*count\s*[:=]\s*\d+', txt, re.I)
                 if writes and (not all(path and path in txt for path in paths)
-                               or not re.search(r'\b\d+\s+lines?\b|\d+\s*行', txt)
+                               or not counted
                                or not 3 <= len(bullets) <= 5):
                     fail('child_format', 'writer return requires written paths, line count and 3-5 bullets')
             if no_body:
