@@ -7,7 +7,9 @@ here, because that is exactly where file coverage and line retention stop
 agreeing.
 """
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 # The hook ships with the plugin, so the tests reach into
@@ -271,6 +273,59 @@ class RunAllTests(unittest.TestCase):
         self.assertEqual(r['line_retention']['status'], rc.VIOLATION)
         self.assertEqual(sorted(r['line_retention']['dropped']),
                          sorted([item(A, 'second'), item(B, 'third')]))
+
+
+class RelapseTests(unittest.TestCase):
+    """A parent that restates the lines and then finishes without them.
+
+    Observed once in 30 runs (reviews/sendback-rescue-2026-09-16.md section 3):
+    the send-back was answered in full, and the turn then ended on a shorter
+    message that dropped the lines again. The second Stop carries
+    stop_hook_active, so nothing looked at it.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.src = os.path.join(self.dir, 'user.rb')
+        with open(self.src, 'w', encoding='utf-8') as fh:
+            fh.write('class User\n')
+        self.line = 'confirmed: %s — class User' % self.src
+        self.child = [self.line]
+
+    def test_restated_then_finished_without_them(self):
+        got = rc.check_relapse(self.child, 'Here:\n' + self.line,
+                               'In short, the user model sends the email.')
+        self.assertEqual(rc.VIOLATION, got['status'])
+        self.assertEqual([self.line], got['lost'])
+
+    def test_a_final_answer_that_still_carries_them_is_ok(self):
+        got = rc.check_relapse(self.child, 'Here:\n' + self.line,
+                               'Summary.\n' + self.line)
+        self.assertEqual(rc.OK, got['status'])
+
+    def test_a_repair_that_never_landed_is_undetermined(self):
+        # The earlier text does not hold the lines either, so this is a
+        # failed repair, not a relapse. Blocking it again is the loop
+        # stop_hook_active exists to stop.
+        got = rc.check_relapse(self.child, 'Still just a summary.',
+                               'Another summary.')
+        self.assertEqual(rc.UNDETERMINED, got['status'])
+
+    def test_no_earlier_text_is_undetermined(self):
+        self.assertEqual(rc.UNDETERMINED,
+                         rc.check_relapse(self.child, None, 'Summary.')['status'])
+        self.assertEqual(rc.UNDETERMINED,
+                         rc.check_relapse(self.child, 'x', None)['status'])
+
+    def test_an_unjudgeable_worker_is_undetermined(self):
+        self.assertEqual(rc.UNDETERMINED,
+                         rc.check_relapse(['status: complete'], 'x', 'y')['status'])
+
+    def test_a_line_whose_file_is_gone_is_undetermined(self):
+        os.remove(self.src)
+        got = rc.check_relapse(self.child, 'Here:\n' + self.line, 'Summary.')
+        self.assertEqual(rc.UNDETERMINED, got['status'])
 
 
 if __name__ == '__main__':

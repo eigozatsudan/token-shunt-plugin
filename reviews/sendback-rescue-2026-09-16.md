@@ -101,3 +101,80 @@ Fisher 両側 p = 1.0。完全に救えても p = 0.49 にしかならない）�
   リマインダ（16/18 → 2/18）と送り戻し（block したら 13/13 で修復）は
   別々の経路で同じ損失に効いており、今回はどちらが上かを比べていない。
 - 枝 `exp/no-launch-reminder-2`（`9d4671e`）は実験専用。main には入れない。
+
+## 6. 実装（2026-09-16、§5 の死角）
+
+§3 の 15 回目 —— 送り戻しに全行で答えたあと、親が短い締めをもう一度出し、
+最終結果からは行が消えた —— を塞いだ。
+
+### 6.1 何を見るか（1 問だけ）
+
+`stop_hook_active` の下で**回答を判定し直さない**。見るのは 1 問だけである:
+
+> **その turn ですでに行を言い直したのに、締めの 1 通でまた落としたか。**
+
+`sendback_retention.check_relapse(child_texts, recovered, final)`:
+
+- `recovered` = セッション行にある**この turn の親のテキスト**。Stop 時点では
+  turn を終える 1 通はまだセッションに入っていない（`sendback_session`
+  `final_answer_from_rows` の注記）ので、これは「締めの前に言ったこと」である。
+- `final` = Stop 入力の `last_assistant_message`（＝締めの 1 通）。
+- `recovered` の line_retention が **ok**、かつ `final` が **violation** のときだけ
+  violation。落ちた行を返す。
+- `recovered` も violation なら **undetermined**。それは「直っていない修復」であって
+  再発ではない。そこで block するのは `stop_hook_active` が止めている
+  ループそのものなので、しない。
+
+### 6.2 どう塞ぐか（1 セッション 1 回だけ）
+
+`sendback_stop.decide_relapse()` が `stop_hook_active` の分岐を受け持つ。
+block できるのは上の violation のときだけで、しかも**1 セッションにつき 1 回**。
+予算は `$TMPDIR/token-shunt-sendback-$UID/<sha256(session_id)>.json` に持つ
+（reader の state と同じ置き方・同じ権限確認）。
+
+**state が使えなければ予算は無い＝ block しない。** session_id が無い、
+一時ディレクトリが他人のもの、書けない —— いずれも抑止のままである。
+無制限の再 block こそがこのフックが始めてはいけないループなので、
+「分からなければ止めない」ではなく**「分からなければ塞がない」**を選んだ。
+
+文面は「言い直したのに短い回答で終わった。**最後の 1 通が回答なので**、
+その中に行を逐語で入れろ」。最初の block（`block_reason`）とは別の文言である。
+
+### 6.3 仕様の変更点（明記）
+
+`reviews/sendback-trial-spec-2026-09-15.md` §6 は
+「`stop_hook_active` が真なら **transcript を読まずに**成功を返す」と書いていた。
+**この 1 行を変えた。** 今は読む。読んだ結果として block しうるのも、
+再発の 1 形だけである。
+
+変わらないもの: 抑止を「CLI の上限到達」とは決して記録しない（§4.4）。
+`reblock_suppressed` の記録は残り、理由文字列に relapse の判定結果が付く。
+
+### 6.4 テスト
+
+- `evals/compare/test_retention_checks.py` に `RelapseTests` 6 件
+  （言い直して落とした / 最後まで残した / 修復が landing していない /
+  比較材料が無い / ワーカー側が判定不能 / ファイルが消えた）。
+- `evals/compare/test_sendback_hook.py` に `RelapseTests` 8 件
+  （1 回だけ block する / block 記録が自分の checks を持つ〔S1 の数え方を壊さない〕/
+  2 回目は抑止 / 行を残した締めは抑止 / 修復失敗は抑止 /
+  `last_assistant_message` が無ければ抑止 / session_id が無ければ抑止 /
+  スイッチ off は従来どおり）。
+- 既存の `test_stop_hook_active_records_suppression_not_a_cap` は、
+  「transcript を読まない」という主張を落として書き換えた。
+  **意図して変えた挙動なので、テストも意図して変えたと記録する。**
+  「上限とは記録しない」の主張はそのまま残してある。
+
+オフライン: `unittest discover -s evals` 279 OK、`-s evals/compare` 475 OK、
+`judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。
+
+### 6.5 未実施
+
+実機では確認していない。再発は 30 run に 1 件の頻度なので、
+**この修正が効くことを実機で見るのは安くない**（同じ枠で 1 件出すのに
+$5 前後、複数件なら十数ドル）。
+リマインダを外した腕（block が毎回出る構成）なら再発も作りやすいが、
+それは「再発を高頻度で作る装置」を別に設計するということであり、
+本記録では設計していない。課金測定は指示があるまで走らせない。
+
+`token-shunt.zip` は再生成していない（指示があるときだけ）。

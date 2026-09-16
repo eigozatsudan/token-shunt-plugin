@@ -17,10 +17,12 @@ counts that section 4.1 uses as evidence of resumption. The record is what
 the trial reads afterwards; the hook itself concludes nothing about why a
 parent did or did not resume.
 """
+import hashlib
 import json
 import os
 import re
 import sys
+import tempfile
 
 import sendback_retention as rc
 import sendback_session as se
@@ -53,6 +55,11 @@ BLOCKED = 'blocked'
 NO_BLOCK = 'no_block'
 SUPPRESSED = 'reblock_suppressed'
 EARLY = 'early_stop'
+
+# One relapse block per session, ever. The budget is what keeps this from
+# becoming the loop `stop_hook_active` prevents: the parent can be told
+# once that it closed on a shorter answer, and never a second time.
+RELAPSE_BUDGET = 1
 
 # Statuses the CLI reports for work that has not finished. A stop while one
 # of these is outstanding is a pause, not the end of the answer.
@@ -329,6 +336,104 @@ def block_reason(lost):
     return '\n'.join([head] + list(lost))
 
 
+def relapse_state_path(session_id):
+    """The private file holding this session's relapse budget, or None."""
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    # TMPDIR is read per call, not through tempfile's cached value: the
+    # budget must follow the environment the hook actually runs in.
+    root = os.path.join(os.environ.get('TMPDIR') or tempfile.gettempdir(),
+                        'token-shunt-sendback-%d' % os.getuid())
+    try:
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        info = os.stat(root)
+        if os.path.islink(root) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            return None
+    except OSError:
+        return None
+    return os.path.join(root, hashlib.sha256(session_id.encode()).hexdigest() + '.json')
+
+
+def take_relapse_budget(session_id):
+    """Spend one relapse block for this session, or refuse.
+
+    No usable state means no budget: an unbounded relapse block is the loop
+    this hook must not start, so a session that cannot be tracked is left
+    suppressed.
+    """
+    path = relapse_state_path(session_id)
+    if not path:
+        return False
+    try:
+        with open(path, 'a+', encoding='utf-8') as fh:
+            fh.seek(0)
+            raw = fh.read()
+            try:
+                state = json.loads(raw) if raw else {}
+            except ValueError:
+                state = {}
+            spent = state.get('relapse_blocks')
+            spent = spent if isinstance(spent, int) and spent >= 0 else 0
+            if spent >= RELAPSE_BUDGET:
+                return False
+            state['relapse_blocks'] = spent + 1
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(state))
+        return True
+    except OSError:
+        return False
+
+
+def relapse_reason(lost):
+    head = ('token-shunt: you restated these lines and then ended the turn '
+            'on a shorter answer that drops them again. The last message is '
+            'the answer, so put the lines in it, each on its own line, '
+            'verbatim:')
+    return '\n'.join([head] + list(lost))
+
+
+def decide_relapse(event, rec):
+    """The single question a suppressed Stop still asks.
+
+    Not a re-judging of the answer: the only thing that can block here is a
+    turn that already carried the lines and then closed without them
+    (reviews/sendback-rescue-2026-09-16.md section 3). Everything else --
+    a failed repair, an answer that kept the lines, anything undetermined --
+    stays suppressed, which is what it was before this check existed.
+    """
+    rec.update(outcome=SUPPRESSED, reason='stop_hook_active')
+    path = event.get('transcript_path')
+    if not path or not os.path.isfile(path):
+        return rec, {}
+    cap = max_bytes()
+    try:
+        rows = se.read_jsonl(path, cap)
+        got = se.check_inputs(path, rows=rows, max_bytes=cap)
+    except se.TooLarge as exc:
+        rec.update(reason='stop_hook_active; session too large', size=exc.size)
+        return rec, {}
+    final, source = final_from_event(event, rows)
+    if got['child_texts'] is None or final is None or source != 'last_assistant_message':
+        # Without the message that ends the turn there is no relapse to see:
+        # the session rows hold the earlier text only.
+        return rec, {}
+    relapse = rc.check_relapse(got['child_texts'], got['final'], final)
+    rec['relapse_status'] = relapse['status']
+    if relapse['status'] != rc.VIOLATION:
+        rec.update(reason='stop_hook_active; relapse %s' % relapse['status'])
+        return rec, {}
+    if not take_relapse_budget(event.get('session_id')):
+        rec.update(reason='stop_hook_active; relapse block already spent')
+        return rec, {}
+    rec['checks'] = {k: v['status'] for k, v in
+                     rc.run_all(got['child_texts'], final).items()}
+    rec.update(outcome=BLOCKED, reason=relapse['reason'], relapse=True,
+               lost_lines=len(relapse['lost']),
+               baseline=parent_progress(rows))
+    return rec, {'decision': 'block', 'reason': relapse_reason(relapse['lost'])}
+
+
 def decide(event):
     """The hook's whole decision, as a record. No I/O."""
     rec = {'event': event.get('hook_event_name'),
@@ -350,9 +455,10 @@ def decide(event):
     if rec['stop_hook_active']:
         # The documented contract: return success while this is true. That
         # is the hook declining to re-block -- NOT an observation that the
-        # CLI hit its cap (spec section 4.4).
-        rec.update(outcome=SUPPRESSED, reason='stop_hook_active')
-        return rec, {}
+        # CLI hit its cap (spec section 4.4). The one exception is a turn
+        # that restated the lines and then closed without them, which
+        # decide_relapse judges and blocks at most once per session.
+        return decide_relapse(event, rec)
     waiting = in_flight_workers(event)
     if waiting:
         # Not a no_block verdict on the parent: there is no finished answer

@@ -318,6 +318,34 @@ def check_line_retention(child_texts, final, exists=os.path.exists):
             'dropped': dropped, 'unjudged': unknown}
 
 
+def check_relapse(child_texts, recovered, final, exists=os.path.exists):
+    """Did the parent restate the lines and then finish without them?
+
+    `recovered` is what the parent already said in this turn (the session
+    rows, which at Stop time do not yet hold the message ending it) and
+    `final` is that ending message. A violation here is narrower than a
+    plain retention violation: the parent demonstrably had the lines and
+    then closed on an answer that drops them.
+
+    A turn whose earlier text does not hold the lines either is a repair
+    that never landed, not a relapse. It is undetermined, because blocking
+    it again is the loop that `stop_hook_active` exists to stop.
+    """
+    if not recovered or not final:
+        return {'status': UNDETERMINED, 'reason': 'nothing to compare',
+                'lost': []}
+    before = check_line_retention(child_texts, recovered, exists)
+    if before['status'] != OK:
+        return {'status': UNDETERMINED,
+                'reason': 'the lines were not restated (%s)' % before['status'],
+                'lost': []}
+    after = check_line_retention(child_texts, final, exists)
+    if after['status'] != VIOLATION:
+        return {'status': OK, 'reason': '', 'lost': []}
+    return {'status': VIOLATION, 'reason': after['reason'],
+            'lost': after['demoted'] + after['altered'] + after['dropped']}
+
+
 def run_all(child_texts, final, exists=os.path.exists):
     return {'child_items': check_child_items(child_texts, exists),
             'file_coverage': check_file_coverage(child_texts, final, exists),

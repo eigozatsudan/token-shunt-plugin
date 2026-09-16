@@ -9,7 +9,9 @@ transcript lines carried as auxiliary information only.
 import io
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 # The hook ships with the plugin, so the tests reach into
@@ -99,15 +101,15 @@ class DecisionTests(HookFixture):
         self.assertIn('final answer', rec['reason'])
 
     def test_stop_hook_active_records_suppression_not_a_cap(self):
+        # Suppression stays the hook's own decision and is never recorded
+        # as the CLI's cap. The transcript is now read once, for the single
+        # relapse question below; a turn that never restated the lines is
+        # still suppressed.
         self.session_with('Summary.')
         rec, out = sh.decide(self.event(stop_hook_active=True))
         self.assertEqual(rec['outcome'], sh.SUPPRESSED)
-        self.assertEqual(rec['reason'], 'stop_hook_active')
         self.assertNotIn('cap', json.dumps(rec))
         self.assertEqual(out, {})
-        # The transcript is not even consulted: this is the hook's own
-        # decision, not an observation of the CLI.
-        self.assertNotIn('checks', rec)
 
 
 class ResumptionTests(HookFixture):
@@ -597,6 +599,98 @@ class WorkerTests(HookFixture):
         self.addCleanup(setattr, sh.se, 'read_jsonl', real)
         sh.decide(self.worker_event('No citations here.'))
         self.assertEqual(reads, [])
+
+
+class RelapseTests(HookFixture):
+    """The one thing a suppressed Stop still looks at.
+
+    A parent answered the send-back in full and then ended the turn on a
+    shorter message that dropped the lines again (observed once in 30 runs,
+    reviews/sendback-rescue-2026-09-16.md section 3). That second Stop
+    carries stop_hook_active. Everything else about suppression is
+    unchanged: no general re-judging, and at most one such block per
+    session, so the loop stop_hook_active prevents cannot start here.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.state)
+        old = os.environ.get('TMPDIR')
+        os.environ['TMPDIR'] = self.state
+        self.addCleanup(lambda: os.environ.__setitem__('TMPDIR', old)
+                        if old is not None else os.environ.pop('TMPDIR', None))
+
+    def restated(self, closing):
+        """A session whose earlier text holds the lines, ending on `closing`."""
+        self.answer = closing
+        rows = [ts.prompt(), ts.assistant(ts.tool_use()), ts.tool_result(),
+                ts.note(result=self.line),
+                ts.assistant(ts.text('Summary.')),
+                ts.assistant(ts.text('Restating:\n' + self.line))]
+        return self.write(rows, worker=self.line)
+
+    def test_a_shorter_closing_message_is_sent_back_once(self):
+        self.restated('In short: the user model sends the email.')
+        rec, out = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertTrue(rec['relapse'])
+        self.assertIn(self.line, out['reason'])
+        self.assertEqual(out['decision'], 'block')
+
+    def test_the_block_records_the_violation_it_acted_on(self):
+        # S1 counts a block whose own checks are not a violation as a false
+        # block; this one carries the final answer's verdict, as the
+        # ordinary path does.
+        self.restated('In short: the user model sends the email.')
+        rec, _ = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(rec['checks']['line_retention'], 'violation')
+
+    def test_only_one_relapse_block_per_session(self):
+        self.restated('In short: the user model sends the email.')
+        first, _ = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(first['outcome'], sh.BLOCKED)
+        again, out = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(again['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_a_closing_message_that_keeps_the_lines_is_suppressed(self):
+        self.restated('Done.\n' + self.line)
+        rec, out = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(rec['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_a_repair_that_never_landed_is_suppressed(self):
+        # The parent never restated the lines, so this is a failed repair.
+        # Blocking it again is exactly the loop stop_hook_active stops.
+        self.session_with('Still a summary.')
+        rec, out = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(rec['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_without_the_stop_input_answer_nothing_is_judged(self):
+        self.restated('In short: a summary.')
+        event = self.event(stop_hook_active=True)
+        event.pop('last_assistant_message')
+        rec, out = sh.decide(event)
+        self.assertEqual(rec['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_without_a_session_id_nothing_is_blocked(self):
+        # The one-block budget is kept per session; with no session there is
+        # no budget to spend, and an unbounded block is the loop.
+        self.restated('In short: a summary.')
+        rec, out = sh.decide(self.event(stop_hook_active=True, session_id=''))
+        self.assertEqual(rec['outcome'], sh.SUPPRESSED)
+        self.assertEqual(out, {})
+
+    def test_the_switch_still_turns_it_off(self):
+        self.restated('In short: a summary.')
+        os.environ[sh.SWITCH_ENV] = 'off'
+        self.addCleanup(os.environ.pop, sh.SWITCH_ENV, None)
+        rec, out = sh.decide(self.event(stop_hook_active=True))
+        self.assertEqual(rec['outcome'], sh.DISABLED)
+        self.assertEqual(out, {})
 
 
 if __name__ == '__main__':
