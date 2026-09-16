@@ -1454,6 +1454,158 @@
       ],
       "isolation": "delegate_lt_direct_and_fixture",
       "note": "The counterpart to redmine-visible-scope, which a parent can answer from a targeted slice: it read offset 175 and took nine percent of the file (reviews/redmine-effect-aborted-2026-09-17.md section 2). Here the answer, roles_for_workflow, is defined at line 2166 of 2170, so a slice cannot reach it. Measuring both is what keeps this from being a search for a task that flatters the product."
+    },
+    {
+      "id": "redmine-last-journal",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/models/journal.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/models/journal.rb"
+      ],
+      "prompt_direct": "In {FIX}/redmine/app/models/journal.rb, answer: journal.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/models/journal.rb only --question \"journal.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/redmine/app/models/journal.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/models/journal.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "select_journal_visible_user"
+      ],
+      "note": "Dose point for the cost hypothesis (reviews/redmine-dose-design-2026-09-17.md): 12803 bytes, answer at the end of the file. Same forcing question as redmine-last-method with a different amount to read, so what varies is how much the parent must ingest, not what it is asked to do."
+    },
+    {
+      "id": "redmine-last-user",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/models/user.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/models/user.rb"
+      ],
+      "prompt_direct": "In {FIX}/redmine/app/models/user.rb, answer: user.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/models/user.rb only --question \"user.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/redmine/app/models/user.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/models/user.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "deliver_security_notification"
+      ],
+      "note": "Dose point for the cost hypothesis (reviews/redmine-dose-design-2026-09-17.md): 35747 bytes, answer at the end of the file. Same forcing question as redmine-last-method with a different amount to read, so what varies is how much the parent must ingest, not what it is asked to do."
+    },
+    {
+      "id": "redmine-last-query",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/models/query.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/models/query.rb"
+      ],
+      "prompt_direct": "In {FIX}/redmine/app/models/query.rb, answer: query.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/models/query.rb only --question \"query.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/redmine/app/models/query.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/models/query.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "joins_for_order_statement"
+      ],
+      "note": "Dose point for the cost hypothesis (reviews/redmine-dose-design-2026-09-17.md): 54439 bytes, answer at the end of the file. Same forcing question as redmine-last-method with a different amount to read, so what varies is how much the parent must ingest, not what it is asked to do."
+    },
+    {
+      "id": "redmine-last-helper",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "prompt_direct": "In {FIX}/redmine/app/helpers/application_helper.rb, answer: application_helper.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/helpers/application_helper.rb only --question \"application_helper.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "autocomplete_data_sources"
+      ],
+      "note": "Dose point for the cost hypothesis (reviews/redmine-dose-design-2026-09-17.md): 70137 bytes, answer at the end of the file. Same forcing question as redmine-last-method with a different amount to read, so what varies is how much the parent must ingest, not what it is asked to do."
     }
   ]
 }
