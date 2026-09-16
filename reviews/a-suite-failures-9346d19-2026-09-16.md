@@ -135,3 +135,35 @@ gold は `sha256:0a1b2c3d4e5f` + `6`×40。ワーカーの戻りは末尾の `6`
 
 A スイートの実質失敗は、この 2 件の判定器修正を織り込むと 16/23 → **17/23**。
 残る 6 件の内訳は §1–§4 のとおりで、製品側の修正はまだ何もしていない。
+
+## 8. 実装（2026-09-16、3）
+
+§6 の 3 を入れた。4 は記録のみのままで着手しない。
+
+`gold_confirmed` の失敗理由が gold 名の羅列だけで、§1 の 3 つの別原因を
+同じ文言に畳んでいた。ワーカーの戻り本文を見て、欠けた gold ごとに
+出所を付ける `gold_confirmed_source()` を足した。判定そのものは変えて
+いない（pass/fail は従来どおり `gold_confirmed_ok()` が決める）。引用抽出は
+`item_citations()` に切り出して両者で共有する。
+
+| 出所 | 条件 | 意味 |
+|---|---|---|
+| `parent dropped the worker's path` | ワーカーの confirmed 項に gold と一致する絶対パスがある | 親の短縮 |
+| `worker cited no matching absolute path` | ワーカーは confirmed したが一致する絶対パスがない | ワーカーの相対パス |
+| `worker never confirmed it` | ワーカーの confirmed に gold が無い | ワーカーの網羅不足 |
+| `no worker return` | 戻り本文が無い | 委譲が成立していない |
+
+テストは `test_sixteen_findings.py` に 2 件（4 分類の単体、理由文に載ることの
+結合）。
+
+保存済み 77 トランスクリプトを再判定した結果、`gold_confirmed` の pass/fail は
+1 件も動かず、理由文だけが次のとおりになった。§1 の推定 3 通りと一致する。
+
+| ケース | 新しい理由 |
+|---|---|
+| compare-explicit-multifile/haiku | 3 件とも `parent dropped the worker's path` |
+| compare-explicit-multifile/sonnet | 3 件とも `worker cited no matching absolute path` |
+| compare-explicit-multifile/auto | `after_create (worker never confirmed it)` |
+
+オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals/compare`
+414 OK、`judge.py --selftest` 全項目 pass。

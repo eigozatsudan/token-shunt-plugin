@@ -151,6 +151,41 @@ class UniversalWorkerTests(unittest.TestCase):
             verdict, ok = self.evaluate([self.call, write, reply, self.final])
             self.assertFalse(verdict['checks'][check])
 
+    def test_gold_confirmed_names_where_the_line_was_lost(self):
+        # The same gold_confirmed failure covered three different causes at
+        # 9346d19: the parent abbreviating the worker's absolute paths
+        # (haiku), the worker citing relative paths (sonnet), and the worker
+        # leaving a gold in prose (auto). The reason has to say which
+        # (reviews/a-suite-failures-9346d19-2026-09-16.md section 1).
+        spec = {'gold_paths': {'SECRET': ['/repo/source.py']}}
+        parent_kept = 'confirmed: /repo/source.py — SECRET here'
+        cases = (
+            ([parent_kept], 'parent'),
+            (['confirmed: source.py — SECRET here'], 'worker cited'),
+            (['The flow mentions SECRET in passing.'], 'worker never confirmed'),
+            ([], 'no worker return'),
+        )
+        for worker_texts, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertIn(expected, judge.gold_confirmed_source(
+                    'SECRET', worker_texts, spec))
+
+    def test_gold_confirmed_reason_carries_the_provenance(self):
+        self.spec['gold'] = ['SECRET']
+        self.spec['gold_paths'] = {'SECRET': ['/repo/source.py']}
+        self.spec['expect']['delegate']['gold_confirmed'] = True
+        reply = copy.deepcopy(self.reply)
+        reply['message']['content'][0]['content'] = (
+            'confirmed: /repo/source.py — SECRET here'
+            '\nstatus: complete\nstop_reason: complete')
+        final = {'type': 'result',
+                 'result': 'confirmed: source.py — SECRET here'}
+        verdict, ok = self.evaluate([self.call, reply, final])
+        self.assertFalse(ok)
+        self.assertFalse(verdict['checks']['gold_confirmed'])
+        reason = next(r for r in verdict['reasons'] if 'gold_confirmed' in r)
+        self.assertIn("parent dropped the worker's path", reason)
+
     def test_resuming_a_worker_is_a_contract_violation(self):
         # The design forbids resume: a follow-up is a fresh launch with the
         # same paths (spec sections 12 and 26, "resume 0" in the A contract).

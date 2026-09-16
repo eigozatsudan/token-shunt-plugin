@@ -653,24 +653,53 @@ def gold_path_needles(gold, spec):
                              for fp in candidates if resolve_fixture_path(fp, spec)))
 
 
+def item_citations(item):
+    """The absolute paths an answer item offers as its evidence."""
+    citations = re.findall(r"(?<![\w./-])(/[^\s`\"'<>]+)", item)
+    citations.extend(re.findall(r"[`\"'](/[^`\"']+)[`\"']", item))
+    leading = re.match(r"\s*(/.*?)\s+[—–]\s+", item)
+    if leading:
+        citations.append(leading[1])
+    return {norm_path(re.sub(r":\d+(?::\d+)?$", "", p.rstrip('.,;:)')))
+            for p in citations}
+
+
 def gold_confirmed_ok(final, golds, spec):
     """A gold must have an absolute source citation in the same confirmed item."""
     missing = []
     for gold in golds:
         expected = set(gold_path_needles(gold, spec))
         for item in confirmed_items(final):
-            citations = re.findall(r"(?<![\w./-])(/[^\s`\"'<>]+)", item)
-            citations.extend(re.findall(r"[`\"'](/[^`\"']+)[`\"']", item))
-            leading = re.match(r"\s*(/.*?)\s+[—–]\s+", item)
-            if leading:
-                citations.append(leading[1])
-            paths = {norm_path(re.sub(r":\d+(?::\d+)?$", "", p.rstrip('.,;:)')))
-                     for p in citations}
-            if gold in item and paths & expected:
+            if gold in item and item_citations(item) & expected:
                 break
         else:
             missing.append(gold)
     return missing
+
+
+def gold_confirmed_source(gold, worker_texts, spec):
+    """Say where a missing gold was lost: the parent, the worker, or neither.
+
+    One failure name covered three different causes at 9346d19 - the parent
+    abbreviating the worker's absolute paths, the worker citing relative ones,
+    and the worker leaving the gold in prose
+    (reviews/a-suite-failures-9346d19-2026-09-16.md section 1). The reason
+    text has to distinguish them, because only the first is a parent defect.
+    """
+    if not worker_texts:
+        return "no worker return"
+    expected = set(gold_path_needles(gold, spec))
+    named = False
+    for text in worker_texts:
+        for item in confirmed_items(text):
+            if gold not in item:
+                continue
+            named = True
+            if item_citations(item) & expected:
+                return "parent dropped the worker's path"
+    if named:
+        return "worker cited no matching absolute path"
+    return "worker never confirmed it"
 
 
 def artifact_has_level(final, artifact, want):
@@ -1264,8 +1293,16 @@ def judge(transcript_path, spec, ctx):
     if exp.get("gold_confirmed") and gold and not unsupported:
         missing_c = gold_confirmed_ok(final, gold, spec)
         if missing_c:
+            # Name the stage that lost each line: a parent that abbreviated a
+            # cited path is a different defect from a worker that never
+            # confirmed it, and the bare list hid that distinction.
+            worker_texts = [(tr.child_return_of(u) or {}).get("text", "")
+                            for u in parent_agents]
+            worker_texts = [t for t in worker_texts if t]
             fail("gold_confirmed",
-                 "gold not in confirmed: + matching path: %s" % ", ".join(missing_c))
+                 "gold not in confirmed: + matching path: %s"
+                 % ", ".join("%s (%s)" % (g, gold_confirmed_source(
+                     g, worker_texts, spec)) for g in missing_c))
         else:
             passed("gold_confirmed")
 
