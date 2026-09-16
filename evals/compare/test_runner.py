@@ -627,9 +627,12 @@ jq -c '[.planned[].case] | unique' "$MANIFEST"
         self.assertEqual(result.returncode, 0, result.stderr)
         planned = json.loads(result.stdout)
         self.assertIn("turn-probe", planned)
-        # Naming the shelf plans the shelf and nothing else.
+        # Naming the shelf plans the shelf and nothing else. A shelf case
+        # that reads a corpus this machine does not have is excluded on its
+        # own terms (ExternalCorpusTests), so it is not expected here.
         catalog = json.loads((self.compare / "cases.json").read_text())
-        shelf = {c["id"] for c in catalog["cases"] if c.get("suite") == "X"}
+        shelf = {c["id"] for c in catalog["cases"]
+                 if c.get("suite") == "X" and "external_root" not in c}
         self.assertEqual(shelf, set(planned))
 
     def add_experiment_case(self, **extra):
@@ -690,3 +693,160 @@ jq -c '[.required[].case] | index("auto-small-files")' "$MANIFEST"
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExternalCorpusTests(unittest.TestCase):
+    """A case may read a corpus this repo does not ship.
+
+    Redmine is GPL-2.0 and 21MB; vendoring it into fixtures/ would put it in
+    the distributed zip and make its licence this plugin's problem
+    (reviews/redmine-subject-design-2026-09-16.md section 3). So the corpus
+    stays an external checkout named by an environment variable, and the
+    case is skipped rather than failed when it is not there.
+    """
+
+    setUp = RunnerIsolationTests.setUp
+    shell = RunnerIsolationTests.shell
+
+    def corpus(self):
+        root = Path(self.temp.name) / "corpus"
+        (root / "app" / "models").mkdir(parents=True)
+        (root / "app" / "models" / "issue.rb").write_text("class Issue\nend\n")
+        (root / "lib").mkdir()
+        (root / "lib" / "access_control.rb").write_text("module AccessControl\nend\n")
+        (root / "secret.txt").write_text("not declared\n")
+        return root
+
+    def test_the_corpus_is_available_only_when_the_variable_points_at_it(self):
+        root = self.corpus()
+        result = self.shell('''
+unset RM_ROOT
+external_ready RM_ROOT && exit 1
+RM_ROOT=/nonexistent-corpus external_ready RM_ROOT && exit 2
+RM_ROOT=$2 external_ready RM_ROOT || exit 3
+exit 0
+''', str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_only_the_declared_files_are_staged(self):
+        root = self.corpus()
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+gen_fixtures || exit 2
+export RM_ROOT=$2
+stage_external RM_ROOT redmine app/models/issue.rb lib/access_control.rb || exit 3
+[[ -f $FIX/redmine/app/models/issue.rb ]] || exit 4
+[[ -f $FIX/redmine/lib/access_control.rb ]] || exit 5
+# Copying the whole tree would put undeclared files in front of the model.
+[[ ! -e $FIX/redmine/secret.txt ]] || exit 6
+''', str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_missing_declared_file_is_an_error_not_a_silent_gap(self):
+        root = self.corpus()
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+gen_fixtures || exit 2
+export RM_ROOT=$2
+stage_external RM_ROOT redmine app/models/issue.rb app/models/gone.rb && exit 3
+exit 0
+''', str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_case_cannot_reach_outside_the_corpus_it_declared(self):
+        root = self.corpus()
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+gen_fixtures || exit 2
+export RM_ROOT=$2
+stage_external RM_ROOT redmine ../../etc/passwd && exit 3
+stage_external RM_ROOT redmine /etc/passwd && exit 4
+stage_external RM_ROOT ../escape app/models/issue.rb && exit 5
+exit 0
+''', str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_staging_without_the_variable_fails(self):
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+gen_fixtures || exit 2
+unset RM_ROOT
+stage_external RM_ROOT redmine app/models/issue.rb && exit 3
+exit 0
+''')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_mode_reset_clears_the_staged_corpus(self):
+        # gen_fixtures owns $TMP and wipes it between modes, so staging has
+        # to happen after it, not once at startup.
+        root = self.corpus()
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+gen_fixtures || exit 2
+export RM_ROOT=$2
+stage_external RM_ROOT redmine app/models/issue.rb || exit 3
+gen_fixtures || exit 4
+[[ ! -e $FIX/redmine/app/models/issue.rb ]] || exit 5
+stage_external RM_ROOT redmine app/models/issue.rb || exit 6
+[[ -f $FIX/redmine/app/models/issue.rb ]] || exit 7
+''', str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+    def test_an_absent_corpus_leaves_the_case_out_of_the_plan(self):
+        # A planned pair with no verdict makes the whole run incomplete, so
+        # skipping in the case loop is not enough: it must never be planned.
+        result = self.shell("""
+ONLY=''; SUITE=X; MODES=''; SLOTS=''
+unset REDMINE_ROOT
+setup_run || exit 1
+jq -e '[.planned[] | select(.case == "redmine-visible-scope")] | length == 0' \
+  "$MANIFEST" >/dev/null || exit 2
+""")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_present_corpus_puts_the_case_back_in_the_plan(self):
+        root = self.corpus()
+        result = self.shell("""
+ONLY=''; SUITE=X; MODES=''; SLOTS=''
+export REDMINE_ROOT=$2
+setup_run || exit 1
+jq -e '[.planned[] | select(.case == "redmine-visible-scope")] | length == 1' \
+  "$MANIFEST" >/dev/null || exit 2
+""", str(root))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_absent_corpus_never_enters_the_required_suite(self):
+        result = self.shell("""
+ONLY=''; SUITE=''; MODES=''; SLOTS=''
+unset REDMINE_ROOT
+setup_run || exit 1
+jq -e '[.required[] | select(.case == "redmine-visible-scope")] | length == 0' \
+  "$MANIFEST" >/dev/null || exit 2
+""")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class ExternalCaseTests(unittest.TestCase):
+    """The Redmine case as cases.json declares it."""
+
+    def setUp(self):
+        self.cases = json.loads((Path(__file__).parent / "cases.json").read_text())
+        self.case = next((c for c in self.cases["cases"]
+                          if c["id"] == "redmine-visible-scope"), None)
+        self.assertIsNotNone(self.case, "redmine-visible-scope is not declared")
+
+    def test_it_is_shelved_as_an_experiment(self):
+        # An external corpus cannot gate a release: it is absent on any
+        # machine that did not clone it.
+        self.assertEqual("X", self.case["suite"])
+
+    def test_every_fixture_lives_under_the_declared_prefix(self):
+        prefix = self.case["external_prefix"]
+        self.assertTrue(self.case["fixtures"])
+        for path in self.case["fixtures"]:
+            self.assertTrue(path.startswith(prefix + "/"), path)
+            self.assertNotIn("..", path)
+
+    def test_it_names_the_variable_that_locates_the_corpus(self):
+        self.assertEqual("REDMINE_ROOT", self.case["external_root"])

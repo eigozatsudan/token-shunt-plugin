@@ -68,8 +68,17 @@ setup_run() {
   SNAP=$RUN_ROOT/snap
   MANIFEST=$RUN_ROOT/manifest.json
   mkdir -p "$VRD" "$SPD" "$TRD" "$SNAP"
+  # A case whose corpus is not on this machine must not be planned: a planned
+  # pair with no verdict makes the run incomplete, so skipping it later is
+  # too late.
+  local absent
+  absent=$(jq -r '.cases[] | select(has("external_root"))
+                  | .id + "\t" + .external_root' "$CMP/cases.json" \
+    | while IFS=$'\t' read -r cid env; do
+        external_ready "$env" || printf '%s\n' "$cid"
+      done | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
   jq --arg only "$ONLY" --arg suite "$SUITE" --arg modes "$MODES" \
-     --arg slots "$SLOTS" '
+     --arg slots "$SLOTS" --argjson absent "$absent" '
     ($only | split(",") | map(select(length > 0))) as $ids |
     ($modes | split(",") | map(select(length > 0))) as $ms |
     ($slots | split(",") | map(select(length > 0))) as $sl |
@@ -83,7 +92,8 @@ setup_run() {
     # out of `required` so an ordinary run is still complete without it.
     (.cases | map(select(.suite != "X" or $suite == "X"))) as $usable |
     {planned:($usable | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
-      and ($suite == "" or .suite == $suite))) | selected),
+      and ($suite == "" or .suite == $suite)
+      and (.id as $i | $absent | index($i) | not))) | selected),
      # `required` is what a complete suite means, so it never follows the
      # selection: the shelf is out of it whether or not this run named it.
      required:(.cases | map(select(.suite != "X")) | pairs),
@@ -102,6 +112,38 @@ setup_run() {
 fresh_cwd() {
   rm -rf "$CWD0"
   mkdir -p "$CWD0"
+}
+
+# ---------- corpora this repo does not ship ----------
+# A case may need real source that cannot live in fixtures/: Redmine is
+# GPL-2.0 and 21MB, and fixtures/ goes into the distributed zip
+# (reviews/redmine-subject-design-2026-09-16.md section 3). Such a case names
+# an environment variable pointing at a checkout, and is skipped -- not
+# failed -- on a machine that does not have one.
+external_ready() { # env-var name -> 0 when the corpus is there
+  local name=$1 root
+  [[ -n $name ]] || return 1
+  root=${!name-}
+  [[ -n $root && -d $root ]]
+}
+
+stage_external() { # env-var name, prefix under $FIX, relative paths...
+  local name=$1 prefix=$2 root rel dest
+  shift 2
+  external_ready "$name" || return 1
+  root=${!name-}
+  # The prefix is a single directory under $FIX, never a way out of it.
+  [[ -n $prefix && $prefix != /* && $prefix != */* && $prefix != *..* ]] || return 1
+  [[ $# -gt 0 ]] || return 1
+  for rel in "$@"; do
+    # A case reads the corpus it declared, and nothing above it.
+    [[ -n $rel && $rel != /* && $rel != *..* ]] || return 1
+    # A declared file that is absent is a broken case, not an empty read.
+    [[ -f $root/$rel ]] || return 1
+    dest=$FIX/$prefix/$rel
+    mkdir -p "$(dirname "$dest")" || return 1
+    cp -p "$root/$rel" "$dest" || return 1
+  done
 }
 
 gen_fixtures() {
@@ -633,6 +675,12 @@ while IFS= read -r case; do
   [[ -n $SUITE && $suite != "$SUITE" ]] && continue
   # Experiments are billed only when their suite is named (see setup_run).
   [[ -z $SUITE && $suite == X ]] && continue
+  EXT=$(jq -r '.external_root // empty' <<<"$case")
+  EXT_PREFIX=$(jq -r '.external_prefix // empty' <<<"$case")
+  if [[ -n $EXT ]] && ! external_ready "$EXT"; then
+    say "SKIP $id: $EXT does not point at a corpus directory"
+    continue
+  fi
   READ_MAX_OUTPUT_TOKENS=$(jq -er '.read_max_output_tokens // 25000 |
     select(type == "number" and . > 0 and . == floor)' <<<"$case") || exit 1
   for mode in $(jq -r '.modes[]' <<<"$case"); do
@@ -671,6 +719,12 @@ while IFS= read -r case; do
       '.fixture_root = $root | .tool_cwd = $cwd | .read_max_output_tokens = $read_cap' <<<"$spec")
     # Restore fixtures before loading gold, which prior modes may have edited.
     gen_fixtures || exit 1
+    if [[ -n $EXT ]]; then
+      # gen_fixtures owns $TMP and wipes it, so the corpus is staged per mode.
+      mapfile -t EXT_REL < <(jq -r --arg p "$EXT_PREFIX" \
+        '.fixtures[] | select(startswith($p + "/")) | ltrimstr($p + "/")' <<<"$case")
+      stage_external "$EXT" "$EXT_PREFIX" "${EXT_REL[@]}" || exit 1
+    fi
     gf=$(jq -r '.gold_file // empty' <<<"$spec")
     if jq -e 'has("gold_file")' <<<"$spec" >/dev/null; then
       if ! jq -e '.gold_file | type == "string" and length > 0' <<<"$spec" >/dev/null \

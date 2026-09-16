@@ -1370,6 +1370,36 @@
         }
       },
       "note": "Experiment only (suite X, billed by slot). Follow-up turns of one session: the parent holds no file bodies, so each turn forces a fresh worker whose declared set is narrowed. That narrowing is the opportunity the scope measurement counts (reviews/scope-followup-design-2026-09-16.md). Turns 2 and 3 ask about earlier findings; neither asks for a file to be read."
+    },
+    {
+      "id": "redmine-visible-scope",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/models/issue.rb",
+        "redmine/app/models/issue_status.rb"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/models/issue.rb and {FIX}/redmine/app/models/issue_status.rb only --question \"Issue#visible? が :view_issues の可否をどう判定するか。allowed_to? が実際に何を見て真偽を返すかまで述べよ\". allowed_to? is defined in a file that was not listed; the worker must report that part partial/unconfirmed rather than read other files. Report the worker's answer.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/models/issue.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "partial",
+        "unconfirmed"
+      ],
+      "note": "Real subject, not a generated fixture: issue.rb is 2170 lines / ~20.7k tokens, the band where one Read swallows a whole file into the parent, and the synthetic reader fixture is three times smaller (reviews/redmine-subject-design-2026-09-16.md). The corpus is GPL-2.0 and stays outside this repo, so the case is skipped unless REDMINE_ROOT points at a checkout. Issue#visible? calls User#allowed_to?, which lives in app/models/user.rb and is deliberately not listed."
     }
   ]
 }
