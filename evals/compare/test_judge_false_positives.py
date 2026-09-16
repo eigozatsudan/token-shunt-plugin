@@ -1,5 +1,8 @@
 """Regression coverage for transcript-confirmed evaluator false positives."""
 import copy
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
 import judge
@@ -35,6 +38,84 @@ class MetadataTests(unittest.TestCase):
 
     def test_unknown_explicit_path_is_still_counted(self):
         self.assertIn('/unexpected.rb', _paths('/tmp/a.rb /unexpected.rb'))
+
+
+class DeniedBashIsNotRecoveryTests(unittest.TestCase):
+    """deny_bypass must bind Bash recovery to a successful parent result.
+
+    Read already ignores is_error results; Bash did not. A denied
+    `sed`/`cat` of the target therefore counted as body recovery
+    (reviews/ab-live-9346d19-2026-09-16.md).
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = str(Path(self.tmp.name) / 'bulk_facts.py')
+        self.spec = {'id': 'denied-bash-not-recovery',
+                     'tool_cwd': self.tmp.name,
+                     'expect': {'delegate': {
+                         'agent_type': 'token-shunt:bulk-reader',
+                         'deny_route': {'path': self.path, 'range': True}}}}
+        self.sed = ("wc -l {0}; sed -n '1,400p' {0} | wc -c".format(self.path))
+
+    def events(self, bash_result='error'):
+        def use(uid, name, inp):
+            return {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': uid, 'name': name, 'input': inp}]}}
+        def result(uid, text, error=False):
+            return {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': uid,
+                 'resolvedModel': 'claude-haiku', 'content': text,
+                 'is_error': error}]}}
+        deny = ("Bash 'sed' on a large file exceeds token-shunt thresholds "
+                "(bytes=65669/65536).")
+        ev = [
+            {'type': 'system', 'subtype': 'init',
+             'plugins': [{'name': 'token-shunt'}]},
+            use('m', 'Bash', {'command': 'wc -c %s' % self.path}),
+            result('m', '65669 %s' % self.path),
+            use('s', 'Bash', {'command': self.sed}),
+        ]
+        if bash_result == 'error':
+            ev.append(result('s', deny, True))
+        elif bash_result == 'success':
+            ev.append(result('s', '12000'))
+        ev += [
+            use('a', 'Agent', {'subagent_type': 'token-shunt:bulk-reader',
+                               'model': 'haiku', 'prompt': self.path}),
+            result('a', 'status: complete\nstop_reason: complete'),
+            {'type': 'result', 'result': 'done',
+             'usage': {'input_tokens': 10, 'cache_read_input_tokens': 0,
+                       'cache_creation_input_tokens': 0, 'output_tokens': 5}},
+        ]
+        return ev
+
+    def evaluate(self, bash_result='error'):
+        trace = Path(self.tmp.name) / 'transcript.jsonl'
+        trace.write_text('\n'.join(json.dumps(e) for e in self.events(bash_result)))
+        return judge.judge(str(trace), self.spec, {'mode': 'auto'})
+
+    def test_command_classifier_still_treats_sed_as_recovery(self):
+        self.assertTrue(judge.bash_recovers_body(
+            {'input': {'command': self.sed}}, self.path))
+
+    def test_denied_sed_is_not_deny_bypass(self):
+        verdict, ok = self.evaluate('error')
+        self.assertTrue(verdict['checks']['deny_route'], verdict['reasons'])
+        self.assertTrue(verdict['checks']['deny_bypass'], verdict['reasons'])
+        self.assertTrue(ok, verdict['reasons'])
+
+    def test_unanswered_sed_is_not_deny_bypass(self):
+        verdict, _ = self.evaluate('missing')
+        self.assertTrue(verdict['checks']['deny_route'], verdict['reasons'])
+        self.assertTrue(verdict['checks']['deny_bypass'], verdict['reasons'])
+
+    def test_successful_sed_is_still_deny_bypass(self):
+        verdict, ok = self.evaluate('success')
+        self.assertTrue(verdict['checks']['deny_route'], verdict['reasons'])
+        self.assertFalse(verdict['checks']['deny_bypass'])
+        self.assertFalse(ok)
 
 
 class TrailerTests(unittest.TestCase):

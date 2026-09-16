@@ -1499,7 +1499,12 @@ def judge(transcript_path, spec, ctx):
                 elif matches:
                     fail("deny_bypass", "parent Read succeeded on denied path %s" % p)
         for u in tr.parent_tool_uses("Bash"):
-            if bash_recovers_body(dict(u, cwd=spec.get("tool_cwd")), p):
+            # Command text is not recovery. A denied or unanswered Bash
+            # told the parent nothing — same binding as the Read branch
+            # above and deny_route's told_the_size().
+            r = tr.result_of(u["id"])
+            if (r and not r["is_error"]
+                    and bash_recovers_body(dict(u, cwd=spec.get("tool_cwd")), p)):
                 fail("deny_bypass", "parent Bash recovered body of %s" % p)
     if db_paths:
         v["checks"].setdefault("deny_bypass", True)
@@ -1987,6 +1992,28 @@ def selftest():
                                     "deny_bypass": {"path": path}}}}
     run("deny_bypass-flag-limit350", evs, spec, "delegate", False,
         require_reason="deny_bypass")
+
+    # Denied body-shaped Bash is not recovery: the command never ran.
+    sed = "wc -l %s; sed -n '1,400p' %s | wc -c" % (path, path)
+    evs = [
+        ev_init(),
+        ev_asst("mm", [{"type": "tool_use", "id": "m", "name": "Bash",
+                        "input": {"command": "wc -c %s" % path}}]),
+        ev_tool_result("m", "65669 %s" % path),
+        ev_asst("ms", [{"type": "tool_use", "id": "s", "name": "Bash",
+                        "input": {"command": sed}}]),
+        ev_tool_result("s", "Bash 'sed' on a large file exceeds token-shunt thresholds "
+                       "(bytes=65669/65536).", is_error=True),
+        ev_asst("ma", [{"type": "tool_use", "id": "a1", "name": "Agent",
+                        "input": {"model": "haiku", "subagent_type": "token-shunt:bulk-reader",
+                                  "prompt": path}}]),
+        ev_tool_result("a1", "short\nstatus: complete\nstop_reason: complete"),
+        ev_result("ok", usage=usage_ok),
+    ]
+    spec = {"id": "selftest-deny-bypass-denied-bash",
+            "expect": {"delegate": {"agent_type": "token-shunt:bulk-reader",
+                                    "deny_route": {"path": path, "range": True}}}}
+    run("deny_bypass-denied-sed-pass", evs, spec, "delegate", True)
 
     # parent tokens: null usage → fail; zeros after a real usage object → pass
     def token_evs(usage, text="ok"):
