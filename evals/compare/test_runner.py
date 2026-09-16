@@ -391,6 +391,98 @@ cat "$TRD/read-cap"
         calls = (Path(self.temp.name) / "calls.log").read_text().splitlines()
         self.assertNotIn("case", calls)
 
+    def _claude_prints_trial_log(self):
+        return '''
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+if [[ -n ${SENDBACK_TRIAL_LOG+x} ]]; then printf 'set:%s' "$SENDBACK_TRIAL_LOG"; else printf unset; fi
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH"
+'''
+
+    def test_sendback_trial_log_stays_unset_on_the_baseline(self):
+        # The compare suite measures skills, not the send-back
+        # (registration decision 3.4). A caller-exported log path must
+        # not leak into that baseline
+        # (reviews/sendback-fixed-n-probe-design-2026-09-16.md section 7).
+        result = self.shell(self._claude_prints_trial_log() + '''
+export SENDBACK_TRIAL_LOG=/tmp/should-not-leak
+SENDBACK=off
+run_claude prompt "$TRD/base"
+cat "$TRD/base"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'unset')
+
+    def test_sendback_on_writes_a_per_run_trial_log_path(self):
+        result = self.shell(self._claude_prints_trial_log() + '''
+SENDBACK=on
+run_claude prompt "$TRD/on.jsonl"
+cat "$TRD/on.jsonl"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith('set:'), result.stdout)
+        self.assertTrue(result.stdout.endswith('on.jsonl.sendback.jsonl'),
+                        result.stdout)
+
+    def test_modes_restricts_planned_pairs_and_unset_keeps_every_mode(self):
+        result = self.shell('''
+ONLY=auto-small-files; SUITE=B; setup_run || exit 1
+jq -c .planned "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        planned = json.loads(result.stdout)
+        self.assertEqual([p['mode'] for p in planned],
+                         ['direct', 'haiku', 'sonnet', 'auto'])
+        result = self.shell('''
+ONLY=auto-small-files; SUITE=B; MODES=haiku,auto; setup_run || exit 1
+jq -c .planned "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        planned = json.loads(result.stdout)
+        self.assertEqual([p['mode'] for p in planned], ['haiku', 'auto'])
+
+
+
+    def test_slots_select_exact_case_mode_pairs(self):
+        # The probe's eight slots are case/mode pairs, and ONLY x MODES is a
+        # cross product: it cannot name them without billing the modes the
+        # design excluded
+        # (reviews/sendback-fixed-n-probe-design-2026-09-16.md section 4).
+        result = self.shell('''
+ONLY=''; SLOTS=auto-small-files/haiku,auto-bulk-facts/sonnet; setup_run || exit 1
+jq -c '.planned | map(.case + "/" + .mode)' "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Order follows the catalogue, not the SLOTS list: auto-bulk-facts
+        # is declared first and is named second above.
+        self.assertEqual(json.loads(result.stdout),
+                         ['auto-bulk-facts/sonnet', 'auto-small-files/haiku'])
+
+    def test_a_slot_naming_no_declared_pair_stops_the_run(self):
+        # A typo must not quietly bill a smaller set than the one the
+        # pre-registered design fixed.
+        for bad in ('auto-small-files/opus', 'no-such-case/auto',
+                    'auto-small-files'):
+            with self.subTest(bad=bad):
+                result = self.shell(
+                    "ONLY=''; SLOTS=%s; setup_run && echo PLANNED" % bad)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn('PLANNED', result.stdout)
+                self.assertIn(bad, result.stdout + result.stderr)
+
+    def test_unset_slots_plan_every_declared_pair(self):
+        result = self.shell('''
+ONLY=auto-small-files; setup_run || exit 1
+jq -c '.planned | map(.mode)' "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         ['direct', 'haiku', 'sonnet', 'auto'])
+
 
 if __name__ == "__main__":
     unittest.main()

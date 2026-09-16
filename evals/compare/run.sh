@@ -17,6 +17,17 @@ TIMEOUT=${TOKEN_SHUNT_CASE_TIMEOUT:-600}
 # previous run's failures). Empty = every case.
 ONLY=${1:-}
 SUITE=${SUITE:-}
+# Comma-separated mode list. Empty = every mode the case declares.
+# The send-back probe sets this so direct (no plugin) is not billed
+# (reviews/sendback-fixed-n-probe-design-2026-09-16.md section 7).
+MODES=${MODES:-}
+# Comma-separated `case/mode` pairs. Empty = whatever ONLY/SUITE/MODES pick.
+# The probe's slots are pairs, not a cross product: naming them with
+# ONLY x MODES would bill the modes the design left out
+# (reviews/sendback-fixed-n-probe-design-2026-09-16.md section 4). A pair
+# that matches no declared case/mode stops the run rather than quietly
+# billing a smaller set than the pre-registered one.
+SLOTS=${SLOTS:-}
 
 say() { printf '%s\n' "$*"; }
 record() { # id ok detail
@@ -57,14 +68,28 @@ setup_run() {
   SNAP=$RUN_ROOT/snap
   MANIFEST=$RUN_ROOT/manifest.json
   mkdir -p "$VRD" "$SPD" "$TRD" "$SNAP"
-  jq --arg only "$ONLY" --arg suite "$SUITE" '
+  jq --arg only "$ONLY" --arg suite "$SUITE" --arg modes "$MODES" \
+     --arg slots "$SLOTS" '
     ($only | split(",") | map(select(length > 0))) as $ids |
+    ($modes | split(",") | map(select(length > 0))) as $ms |
+    ($slots | split(",") | map(select(length > 0))) as $sl |
     def pairs: [.[] | .id as $id | .modes[] | {case:$id,mode:.}];
+    def selected: [.[] | .id as $id | .modes[]
+      | select(($ms | length) == 0 or (. as $m | $ms | index($m)))
+      | {case:$id,mode:.}
+      | select(($sl | length) == 0 or ((.case + "/" + .mode) as $p | $sl | index($p)))];
+    (.cases | pairs | map(.case + "/" + .mode)) as $declared |
     {planned:(.cases | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
-      and ($suite == "" or .suite == $suite))) | pairs),
-     required:(.cases | pairs)}' "$CMP/cases.json" >"$MANIFEST" || return 1
+      and ($suite == "" or .suite == $suite))) | selected),
+     required:(.cases | pairs),
+     unknown_slots:($sl | map(select(. as $p | $declared | index($p) | not)))}' \
+    "$CMP/cases.json" >"$MANIFEST" || return 1
+  if ! jq -e '.unknown_slots | length == 0' "$MANIFEST" >/dev/null; then
+    say "FAIL: no declared case/mode for slot: $(jq -r '.unknown_slots | join(", ")' "$MANIFEST")"
+    return 1
+  fi
   if ! jq -e '.planned | length > 0' "$MANIFEST" >/dev/null; then
-    say "FAIL: no cases match case='$ONLY' suite='$SUITE'"
+    say "FAIL: no cases match case='$ONLY' suite='$SUITE' modes='$MODES' slots='$SLOTS'"
     return 1
   fi
 }
@@ -291,6 +316,13 @@ run_claude() { # prompt transcript extra-args...
     # The baseline measures the skills, not the send-back: off unless a run
     # is deliberately measuring the hook itself (registration decision 3.4).
     export TOKEN_SHUNT_SENDBACK=${SENDBACK:-off}
+    # The trial log is opt-in: the baseline must not write one, even if the
+    # caller exported a path. SENDBACK=on pins it next to this transcript.
+    if [[ ${SENDBACK:-off} == on ]]; then
+      export SENDBACK_TRIAL_LOG=$out.sendback.jsonl
+    else
+      unset SENDBACK_TRIAL_LOG
+    fi
     # Pin the native Read limit across modes; callers' settings must not alter
     # an isolation baseline. The 70KB single-line cases need a readable line.
     export CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS=${READ_MAX_OUTPUT_TOKENS:-25000}
@@ -544,6 +576,8 @@ while IFS= read -r case; do
   READ_MAX_OUTPUT_TOKENS=$(jq -er '.read_max_output_tokens // 25000 |
     select(type == "number" and . > 0 and . == floor)' <<<"$case") || exit 1
   for mode in $(jq -r '.modes[]' <<<"$case"); do
+    [[ -n $MODES && ,$MODES, != *,$mode,* ]] && continue
+    [[ -n $SLOTS && ,$SLOTS, != *,$id/$mode,* ]] && continue
     CASE_N=$((CASE_N+1))
     # build prompt
     if [[ $mode == direct ]]; then
