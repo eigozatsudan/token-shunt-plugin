@@ -532,6 +532,17 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('the parent copies bullets', body.lower())
         self.assertIn('one bullet per step', body.lower())
 
+    def test_agent_declares_the_length_of_an_opaque_value(self):
+        # A 64-hex digest came back three characters short at 9346d19 and
+        # the parent copied it faithfully; nothing offline could tell the
+        # wrong digest from a right one
+        # (reviews/a-suite-failures-9346d19-2026-09-16.md section 2). A
+        # declared character count makes the short copy wrong on its own
+        # terms, which check-final-answer now sends back.
+        body = self.AGENT.read_text(encoding='utf-8')
+        self.assertIn('(64 chars)', body)
+        self.assertIn('in one piece', body)
+
     def test_description_names_the_triggers_the_deny_cannot_carry(self):
         # A rule that only applies when NO deny fires is unreachable unless
         # the description names it: the body is loaded only once the parent

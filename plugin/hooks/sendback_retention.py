@@ -129,6 +129,66 @@ def classify_path(path, exists=os.path.exists):
     return OK if exists(path) else UNDETERMINED
 
 
+# `(64 chars)` / `(12 characters)`: the worker stating how long the value
+# it is about to copy is. Only a character count qualifies -- a line count
+# says nothing about the copy.
+_DECLARED = re.compile(r"\((\d{1,4})\s*(?:chars?|characters)\)", re.I)
+# A literal the worker copied: one unbroken run with no spaces. Quotes,
+# backticks and trailing sentence punctuation are stripped before counting.
+_LITERAL = re.compile(r"[^\s`\"']{4,}")
+
+
+def _literals(text):
+    """Every run the declaration could be counting.
+
+    A value often arrives labelled: `sha256:<64 hex>`. The worker may
+    count the digest or the whole token, and both readings are honest, so
+    the suffix after each colon counts as a candidate too. Being generous
+    here keeps the check on its one job -- catching a copy that is short
+    by its own account -- rather than arguing about what was counted.
+    """
+    for raw in _LITERAL.findall(text):
+        value = raw.strip('.,;:()[]')
+        yield value
+        while ':' in value:
+            value = value.split(':', 1)[1]
+            yield value
+
+
+def check_declared_lengths(text):
+    """Is every value as long as the report says it is?
+
+    Offline, nothing can tell a correct digest from a wrong one: the file
+    may be gone and the fact may be a summary. What can be judged is the
+    worker's own arithmetic. A value the report calls 64 characters long
+    and writes 61 characters of is wrong without reference to anything
+    else, and that is the shape the transcription failure took
+    (reviews/a-suite-failures-9346d19-2026-09-16.md section 2).
+
+    UNDETERMINED when no length is declared: this check reads only what
+    the worker asserted, so a report in the older form gets no opinion.
+    """
+    mismatched = []
+    declared = 0
+    for line in confirmed_lines(text or ''):
+        for match in _DECLARED.finditer(line):
+            declared += 1
+            want = int(match.group(1))
+            tail = line[match.end():]
+            if any(len(value) == want for value in _literals(tail)):
+                continue
+            mismatched.append((line, want))
+    if not declared:
+        return {'status': UNDETERMINED, 'reason': 'no declared length',
+                'mismatched': []}
+    if mismatched:
+        return {'status': VIOLATION, 'mismatched': mismatched,
+                'reason': '; '.join(
+                    'no %d-character value after the declaration in: %s'
+                    % (want, line) for line, want in mismatched)}
+    return {'status': OK, 'reason': '', 'mismatched': []}
+
+
 def check_child_items(child_texts, exists=os.path.exists):
     """Did the workers hand the parent anything it could retain?"""
     if child_texts is None:

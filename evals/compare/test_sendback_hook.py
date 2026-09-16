@@ -464,6 +464,33 @@ class WorkerTests(HookFixture):
         self.assertIn('user.rb', out['reason'])
         self.assertEqual(rec['unusable'], 1)
 
+    def test_a_value_shorter_than_its_own_declaration_is_sent_back(self):
+        # The worker declares how long the value is and then copies it
+        # short: wrong on its own terms, with no reference to the file
+        # (reviews/a-suite-failures-9346d19-2026-09-16.md section 2).
+        rec, out = sh.decide(self.worker_event(
+            '%s\nconfirmed: %s — payload_sha (64 chars): sha256:%s'
+            % (self.line, self.src, '6' * 61)))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertEqual(rec['checks']['declared_lengths'], 'violation')
+        self.assertIn('64', out['reason'])
+        self.assertIn('character', out['reason'])
+
+    def test_a_value_matching_its_declaration_is_left_alone(self):
+        rec, out = sh.decide(self.worker_event(
+            '%s\nconfirmed: %s — payload_sha (64 chars): sha256:%s'
+            % (self.line, self.src, '6' * 64)))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['declared_lengths'], 'ok')
+        self.assertEqual(out, {})
+
+    def test_a_report_declaring_no_length_is_judged_as_before(self):
+        # The check only reads what the worker asserted, so reports in the
+        # older form keep the block rate the fixed-N probe measured.
+        rec, out = sh.decide(self.worker_event(self.line))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['declared_lengths'], 'undetermined')
+
     def test_a_contracted_report_is_left_alone(self):
         rec, out = sh.decide(self.worker_event(self.line))
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)

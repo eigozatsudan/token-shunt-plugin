@@ -275,3 +275,58 @@ class RunAllTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DeclaredLengthTests(unittest.TestCase):
+    """A worker that states a value's length has checked its own copy.
+
+    The sonnet run at 9346d19 returned a 64-hex digest with three
+    characters missing (reviews/a-suite-failures-9346d19-2026-09-16.md
+    section 2). Nothing offline can tell a correct digest from a wrong
+    one -- but a digest the report itself calls 64 characters long, which
+    is 61 characters long, is wrong on its own terms.
+    """
+
+    def test_a_declaration_that_matches_the_value_passes(self):
+        got = rc.check_declared_lengths(
+            'confirmed: /srv/one.json — payload_sha (64 chars): '
+            'sha256:' + '6' * 64)
+        self.assertEqual(got['status'], rc.OK)
+        self.assertEqual(got['mismatched'], [])
+
+    def test_a_short_copy_of_a_declared_value_is_a_violation(self):
+        got = rc.check_declared_lengths(
+            'confirmed: /srv/one.json — payload_sha (64 chars): '
+            'sha256:' + '6' * 61)
+        self.assertEqual(got['status'], rc.VIOLATION)
+        self.assertEqual(len(got['mismatched']), 1)
+        self.assertIn('64', got['reason'])
+
+    def test_a_report_that_declares_nothing_is_undetermined(self):
+        # No opinion: this check only reads what the worker asserted, so a
+        # report using the older form must not be sent back by it.
+        got = rc.check_declared_lengths(
+            'confirmed: /srv/one.json — payload_sha: sha256:' + '6' * 61)
+        self.assertEqual(got['status'], rc.UNDETERMINED)
+
+    def test_the_word_characters_is_the_same_declaration(self):
+        self.assertEqual(rc.check_declared_lengths(
+            'confirmed: /p — token (10 characters): abcdefghij')['status'],
+            rc.OK)
+
+    def test_a_declaration_counts_the_value_not_the_whole_line(self):
+        # The line is far longer than 10; only the literal is measured.
+        self.assertEqual(rc.check_declared_lengths(
+            'confirmed: /srv/data.json — api_key (10 chars): `abcdefghij`'
+        )['status'], rc.OK)
+
+    def test_a_line_count_is_not_a_value_declaration(self):
+        # `40 lines` is not a character count and must not be matched.
+        self.assertEqual(rc.check_declared_lengths(
+            'confirmed: /p — the file is 40 lines long')['status'],
+            rc.UNDETERMINED)
+
+    def test_an_unconfirmed_line_is_not_judged(self):
+        self.assertEqual(rc.check_declared_lengths(
+            'unconfirmed: /p — payload_sha (64 chars): unread')['status'],
+            rc.UNDETERMINED)

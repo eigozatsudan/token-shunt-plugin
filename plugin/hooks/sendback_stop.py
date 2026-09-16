@@ -270,8 +270,10 @@ def decide_worker(event):
                    reason='worker turn failed before it reported')
         return rec, {}
     check = rc.check_child_items([said])
+    lengths = rc.check_declared_lengths(said)
     demoted = rc.unconfirmed_lines(said)
-    rec['checks'] = {'child_items': check['status']}
+    rec['checks'] = {'child_items': check['status'],
+                     'declared_lengths': lengths['status']}
     rec['items'] = len(check['items'])
     rec['unconfirmed'] = len(demoted)
     claims = [l for l in check['items'] if not rc.vacuous_item(l)]
@@ -294,11 +296,26 @@ def decide_worker(event):
                    reason='worker reported only unconfirmed items')
         return rec, {}
     if check['status'] != rc.VIOLATION:
+        if lengths['status'] == rc.VIOLATION:
+            # The worker stated the length and then copied the value short.
+            # Nothing outside the report is consulted, so this cannot fire
+            # on a report written in the older form.
+            rec.update(outcome=BLOCKED, reason=lengths['reason'])
+            return rec, {'decision': 'block',
+                         'reason': length_block_reason(lengths)}
         rec.update(outcome=NO_BLOCK, reason='worker items %s' % check['status'])
         return rec, {}
     rec.update(outcome=BLOCKED, reason=check['reason'],
                unusable=len(check['unusable']))
     return rec, {'decision': 'block', 'reason': worker_block_reason(check)}
+
+
+def length_block_reason(lengths):
+    head = ('token-shunt: a value is shorter than the length your own '
+            'report gives it. Re-read that range and copy the value again '
+            'in one piece, then restate the line with a character count '
+            'that matches what you wrote:')
+    return '\n'.join([head] + [line for line, _ in lengths['mismatched']])
 
 
 def block_reason(lost):

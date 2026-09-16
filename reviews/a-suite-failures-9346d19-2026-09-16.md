@@ -330,3 +330,52 @@ test_agent_forbids_a_fact_that_lives_only_in_prose`。
 
 オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals`
 258 OK、`judge.py --selftest` 全項目 pass。
+
+## 13. 実装（2026-09-16、§2 の製品側）
+
+§2 は「gold は `sha256:0a1b2c3d4e5f` + `6`×40。ワーカーの戻りは末尾の `6` が
+3 個少ない。親は 1 文字も変えずに写している」。純粋な転記誤りで、
+`limit` も分割も関係しない。
+
+**オフラインでは、正しいダイジェストと間違ったダイジェストを区別できない。**
+ファイルは消えているかもしれず、事実は要約かもしれない。判定できるのは
+ワーカー自身の申告との突き合わせだけである。そこで、申告を作らせてから
+突き合わせる形にした。
+
+### 13.1 契約（申告を作る）
+
+`plugin/agents/bulk-reader.md` に追加:
+
+> 不透明な値（ハッシュ、トークン、UUID、base64 など文字自体に意味の無い値）は
+> **一続きで写し、文字数を添えて報告する**:
+> `confirmed: <absolute path> — payload_sha (64 chars): sha256:<value>`。
+> 期待値ではなく**書いたものを数える**。数え間違いと写し落としは同じ誤りとして
+> 実行時に送り戻されるので、送る前に数え直す。
+
+### 13.2 実行時（申告と突き合わせる）
+
+`sendback_retention.check_declared_lengths()` — `(64 chars)` /
+`(12 characters)` の申告があり、その後ろに申告どおりの長さの literal が
+無ければ violation。`sha256:<64 hex>` のようにラベル付きの値は、
+コロンより後ろの部分も候補として数える（どちらを数えたかで争わないため）。
+**申告が無ければ undetermined**。
+
+SubagentStop でこれを見る。`child_items` が ok でも、申告と写しが食い違えば
+送り戻す。文面は「自分の報告が与えた長さより値が短い。その範囲を読み直して
+一続きで写し、文字数が合う形で行を言い直せ」。
+
+### 13.3 発火率について
+
+この検査は**報告の外を一切参照しない**。旧来の形（文字数を書かない報告）には
+undetermined を返すだけなので、固定 N プローブが測った block 率
+（S1 誤 block 0 件）は動かない。増えるのは「文字数を書いたのに合っていない
+報告」だけで、それは定義上その報告自身が間違っている。
+
+§11.1 の混在パス問題を測定なしに動かさなかったのと違い、ここは
+**旧来の入力に対する挙動が変わらない**ので事前登録なしで入れた。
+
+テストは `test_retention_checks.py` に 7 件（`DeclaredLengthTests`）、
+`test_sendback_hook.py` に 3 件、`test_reader_call_contract.py` に 1 件。
+
+オフライン: `unittest discover -s evals` 259 OK、`-s evals/compare` 455 OK、
+`judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。

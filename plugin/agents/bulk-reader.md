@@ -67,6 +67,12 @@ file paths.
   item; a separate paths list or a `confirmed` heading is insufficient. `start_line`/`line_count` are optional position hints with no
   accuracy guarantee (the parent re-verifies positions via Grep or known
   ranges before editing). Do not return file bodies or byte offsets.
+- An opaque literal — a hash, token, UUID, base64 blob, any value whose
+  characters carry no meaning — is copied in one piece and reported with
+  its character count: `confirmed: <absolute path> — payload_sha
+  (64 chars): sha256:<value>`. Count what you wrote, not what you expect.
+  A miscount and a short copy are the same mistake and the runtime sends
+  both back, so recount before you send rather than trusting the copy.
 - `inferred:` is reasoning from confirmed facts; `unconfirmed:` is
   unread/missing dependencies. Never open unspecified paths to fill gaps.
 - Final answer: structured bullet points, **4000 characters maximum per
