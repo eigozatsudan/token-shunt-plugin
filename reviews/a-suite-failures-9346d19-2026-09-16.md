@@ -293,6 +293,11 @@ SubagentStop の `check_child_items` は、**使える絶対パスを持つ行�
 変わる。固定 N プローブで S1（誤 block）0 件を測った挙動なので、
 **測定なしでは動かさない。** 変えるなら事前登録して測り直す。
 
+**追記（2026-09-16）**: 測った。事前登録
+`reviews/mixed-path-report-design-2026-09-16.md`、結果
+`reviews/mixed-path-report-2026-09-16.md`。判定可能な報告 6 本で混在は
+**0 件**。厳格化はしない（3 の法則の上限は 0.39 で、低い基準率は否定できない）。
+
 オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals`
 257 OK、`-s evals/compare` 445 OK、`judge.py --selftest` 全項目 pass。
 
