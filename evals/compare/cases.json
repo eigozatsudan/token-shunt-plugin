@@ -1388,7 +1388,8 @@
         "delegate": {
           "agent_type": "token-shunt:bulk-reader",
           "child_reads_once": [
-            "{FIX}/redmine/app/models/issue.rb"
+            "{FIX}/redmine/app/models/issue.rb",
+            "{FIX}/redmine/app/models/issue_status.rb"
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,

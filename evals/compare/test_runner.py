@@ -850,3 +850,38 @@ class ExternalCaseTests(unittest.TestCase):
 
     def test_it_names_the_variable_that_locates_the_corpus(self):
         self.assertEqual("REDMINE_ROOT", self.case["external_root"])
+
+
+class CaseInvariantTests(unittest.TestCase):
+    """A path the prompt hands to the worker must be a path it may read.
+
+    routing_checks builds the allowed set from the expect block alone, so a
+    path named in the prompt but missing there is reported as a read outside
+    the invocation -- the worker is blamed for obeying the instruction it was
+    given. Both Redmine smoke runs failed this way
+    (reviews/redmine-smoke-2026-09-17.md).
+    """
+
+    def setUp(self):
+        self.cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+
+    def test_every_fixture_path_in_a_prompt_is_readable_by_the_worker(self):
+        import re
+        checked = 0
+        for case in self.cases:
+            expect = (case.get("expect") or {}).get("delegate") or {}
+            if "child_reads_once" not in expect:
+                continue
+            checked += 1
+            allowed = set(expect.get("child_reads_once", []))
+            allowed |= set(expect.get("required_paths", []))
+            allowed |= set(expect.get("single_invocation_paths", []))
+            for batch in expect.get("batch_invocation", []):
+                allowed |= set(batch)
+            named = {p.rstrip(".,") for p in re.findall(
+                r"\{FIX\}/[A-Za-z0-9_./\-]+", case.get("prompt_delegate") or "")}
+            self.assertEqual(set(), named - allowed,
+                             "%s: prompt hands over paths the expect block "
+                             "does not allow" % case["id"])
+        self.assertGreater(checked, 1)
