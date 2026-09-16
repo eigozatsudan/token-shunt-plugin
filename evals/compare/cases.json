@@ -1409,10 +1409,51 @@
       },
       "gold_any": [
         "partial",
-        "unconfirmed"
+        "unconfirmed",
+        "未確認",
+        "部分"
       ],
       "isolation": "delegate_lt_direct_and_fixture",
       "note": "Real subject, not a generated fixture: issue.rb is 2170 lines / ~20.7k tokens, the band where one Read swallows a whole file into the parent, and the synthetic reader fixture is three times smaller (reviews/redmine-subject-design-2026-09-16.md). The corpus is GPL-2.0 and stays outside this repo, so the case is skipped unless REDMINE_ROOT points at a checkout. Issue#visible? calls User#allowed_to?, which lives in app/models/user.rb and is deliberately not listed."
+    },
+    {
+      "id": "redmine-last-method",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/models/issue.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/models/issue.rb"
+      ],
+      "prompt_direct": "In {FIX}/redmine/app/models/issue.rb, answer: issue.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/models/issue.rb only --question \"issue.rb の中で最後に定義されているメソッドの名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/redmine/app/models/issue.rb"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/models/issue.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "roles_for_workflow"
+      ],
+      "isolation": "delegate_lt_direct_and_fixture",
+      "note": "The counterpart to redmine-visible-scope, which a parent can answer from a targeted slice: it read offset 175 and took nine percent of the file (reviews/redmine-effect-aborted-2026-09-17.md section 2). Here the answer, roles_for_workflow, is defined at line 2166 of 2170, so a slice cannot reach it. Measuring both is what keeps this from being a search for a task that flatters the product."
     }
   ]
 }
