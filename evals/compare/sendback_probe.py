@@ -68,8 +68,10 @@ def score_run(records, verdict=None, session_rows=None,
     is what the hook counted its baseline over. The eval transcript is
     stream-json from stdout and holds a different set of rows, so it cannot
     be compared against that baseline. With no session in hand S3 is left
-    unmeasured rather than scored 0: "no discard observed" would otherwise
-    be a safety claim with nothing behind it.
+    unmeasured rather than scored 0: "nothing failed to resume" would
+    otherwise be a safety claim with nothing behind it. S3 is not the
+    discard path -- a transcript cannot tell the two apart
+    (reviews/sendback-trial-spec-2026-09-15.md section 5).
     """
     verdict = verdict or {}
     s3_unmeasured = 0

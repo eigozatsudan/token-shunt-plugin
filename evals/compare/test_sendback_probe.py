@@ -98,8 +98,8 @@ class ScoreRunTests(unittest.TestCase):
 
     def test_an_unreadable_session_leaves_s3_unmeasured_not_zero(self):
         # The hook's baseline is counted from the CLI session file. With no
-        # session to compare it against, "no discard observed" would be a
-        # safety claim nothing supports.
+        # session to compare it against, "nothing failed to resume" would
+        # be a safety claim nothing supports.
         records = [{'event': 'Stop', 'outcome': 'blocked',
                     'checks': {'line_retention': 'violation'},
                     'baseline': {'assistant_replies': 2, 'tool_calls': 1,
