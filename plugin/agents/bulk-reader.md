@@ -17,14 +17,19 @@ file paths.
 - Keep a per-path cursor `next_line`, initially 1, and a remaining budget of 6 Read calls shared
   across all paths. Reserve the seventh turn for the final evidence and
   unread-range report; never issue a seventh Read. Issue Reads serially so each result updates the cursor.
-  One whole Read per path is normal; for a bounded Read, offset includes
-  that line and limit is a count, not an end line.
+  The first Read of a path carries no `limit`: the runtime truncates it by
+  itself and the cursor advances from what actually came back. A large
+  guessed limit is refused by the runtime and costs a call per halving.
+  Pass a limit only to continue after a refusal; offset includes that
+  line and limit is a count, not an end line.
   - On success, set `next_line = last actually returned line + 1`, even
     when the tool silently returns fewer lines than requested. Never use
     the requested end to advance the cursor.
   - On refusal, leave `next_line` unchanged and halve the attempted line
     count (round down, minimum 1). For a refused whole Read, start with
     half the supplied remaining line count. Retry at that same cursor.
+    That halved count is a ceiling: fewer lines is allowed, more is
+    refused.
     Example: after lines 176–350, a refused offset=351, limit=168 becomes
     offset=351, limit=84; success through 434 means next offset=435.
   - Never jump to a likely answer or sample the tail, and never go back to

@@ -57,9 +57,21 @@ class ReaderDenialTests(unittest.TestCase):
         record = reader_attempt_metrics(tr, tr.agent_uses())[0]
         self.assertEqual((5, 5, 2), (record['attempts'], record['budget_consumed'],
                                     len(record['blocked_attempts'])))
-        # An admitted wrong half still fails even after an earlier hook denial.
+        # Less than the floor half is legal: it can only read fewer lines.
         tr.tool_uses[-1]['input']['limit'] = 50
+        self.assertEqual([], self.check(tr))
+        # More than it is still a wrong half, even after an earlier denial.
+        tr.tool_uses[-1]['input']['limit'] = 100
         self.assertTrue(self.check(tr))
+
+    def test_both_retry_denial_wordings_are_recognized(self):
+        # Transcripts saved before the limit became an upper bound carry the
+        # older sentence; re-judging them must still see a contract denial.
+        for reason in ('Retry at offset=351 with limit=84 (floor half).',
+                       'Retry at offset=351 with limit=84 (floor half) or less.'):
+            tr = split_read_transcript([(351, 84, True)])
+            self.denied(tr, 0, reason)
+            self.assertIsNotNone(reader_contract_denial(tr, tr.tool_uses[-1]))
 
     def test_budget_denials_and_outside_paths_are_not_execution(self):
         tr = split_read_transcript([(1,None,False)] + [(1,1,True)] * 6)

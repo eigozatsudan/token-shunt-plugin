@@ -493,6 +493,18 @@ class SkillDocumentTests(unittest.TestCase):
                      'unreadable_line'):
             self.assertIn(kept, body)
 
+    def test_agent_tells_the_worker_to_open_a_path_without_a_limit(self):
+        # A first Read carrying a large explicit limit is rejected by the
+        # runtime token cap, and the hook then walks the worker down the
+        # halving ladder one paid call at a time. In the 9346d19 A/B, 19
+        # invocations that opened with no limit never exhausted the budget
+        # (3.3 calls on average), while 7 that opened above limit=250 spent
+        # 5.7 and ran out three times
+        # (reviews/reader-read-budget-2026-09-16.md §3). The runtime
+        # truncates a plain Read by itself, so no limit is cheaper and safe.
+        body = self.AGENT.read_text(encoding='utf-8')
+        self.assertIn('first Read of a path carries no `limit`', body)
+
     def test_description_names_the_triggers_the_deny_cannot_carry(self):
         # A rule that only applies when NO deny fires is unreachable unless
         # the description names it: the body is loaded only once the parent

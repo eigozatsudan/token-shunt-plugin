@@ -153,7 +153,8 @@ def reader_contract_denial(tr, call):
         r'At most three paths per invocation\.',
         r'No further Read is supported for this path; report its unread range partial\.',
         r'Read must start at offset=\d+ with a positive limit\.',
-        r'Retry at offset=\d+ with limit=\d+ \(floor half\)\.',
+        # Transcripts predating the ceiling wording keep the bare sentence.
+        r'Retry at offset=\d+ with limit=\d+ \(floor half\)( or less)?\.',
     )
     return reason if any(re.fullmatch('token-shunt: ' + p, reason) for p in patterns) else None
 
@@ -236,9 +237,11 @@ def check_reader_reads(tr, exp, agents):
                                    '%s: Read continued after limit=1 refusal' % path))
                 if retry_limit is not None:
                     count = span[1] - span[0] + 1 if span[1] is not None else None
-                    if count != retry_limit:
+                    # The hook treats the floor half as a ceiling, so a smaller
+                    # retry is contract-abiding; unbounded (None) is not.
+                    if count is None or count > retry_limit:
                         errors.append(('child_reads_once',
-                                       '%s: refused range must retry with limit %s, got %s'
+                                       '%s: refused range must retry with limit %s or less, got %s'
                                        % (path, retry_limit, count)))
                 if not result:
                     errors.append(('child_reads_once', 'Read result missing: %s' % path))

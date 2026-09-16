@@ -79,8 +79,13 @@ def transition(state, event):
         if (type(offset) is not int or offset != cursor['next']
                 or (limit is not None and (type(limit) is not int or limit < 1))):
             return 'Read must start at offset=%s with a positive limit.' % cursor['next']
-        if 'retry' in cursor and limit != cursor['retry']:
-            return 'Retry at offset=%s with limit=%s (floor half).' % (cursor['next'], cursor['retry'])
+        # The retry limit is a ceiling, not an exact value. Asking for fewer
+        # lines can only read less of the file, and refusing it would spend a
+        # call the worker needs: three invocations in the 9346d19 A/B ran out
+        # of budget that way. An unbounded Read is not "fewer".
+        if 'retry' in cursor and (limit is None or limit > cursor['retry']):
+            return ('Retry at offset=%s with limit=%s (floor half) or less.'
+                    % (cursor['next'], cursor['retry']))
         state['pending'] = {'id': call, 'path': path, 'offset': offset, 'limit': limit,
                             'started_at': time.time()}
         return None

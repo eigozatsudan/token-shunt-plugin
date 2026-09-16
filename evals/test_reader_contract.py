@@ -53,6 +53,33 @@ class ReaderContractTests(unittest.TestCase):
         self.assertIsNotNone(self.pre(id='overlap', offset=129))
         self.assertIsNone(self.pre(id='next', offset=130))
 
+    def test_a_limit_below_the_floor_half_is_allowed(self):
+        # Asking for less than the mandated retry never pulls more body, and
+        # refusing it costs the worker a call it cannot spare (the live
+        # 9346d19 A/B lost three invocations this way). Only asking for more
+        # is a protocol error.
+        self.pre(); self.failure()
+        self.assertIsNone(self.pre(id='smaller', limit=50))
+        self.post(id='smaller', count=50)
+        self.assertEqual(51, self.state['paths']['/a']['next'])
+        self.assertNotIn('retry', self.state['paths']['/a'])
+
+    def test_a_smaller_limit_that_fails_halves_from_the_attempt(self):
+        self.pre(); self.failure()
+        self.assertIsNone(self.pre(id='smaller', limit=50))
+        self.failure(id='smaller')
+        self.assertEqual(25, self.state['paths']['/a']['retry'])
+        self.assertIsNotNone(self.pre(id='over', limit=26))
+        self.assertIsNone(self.pre(id='under', limit=25))
+
+    def test_an_unbounded_read_after_a_refusal_is_still_refused(self):
+        # None is not a small limit: it is the whole remaining file, which is
+        # what failed in the first place.
+        self.pre(); self.failure()
+        message = self.pre(id='whole', limit=None)
+        self.assertIsNotNone(message)
+        self.assertIn('limit=129', message)
+
     def test_pending_read_cannot_be_cleared_by_denied_call(self):
         self.pre()
         self.assertIsNotNone(self.pre(id='parallel', path='/b'))

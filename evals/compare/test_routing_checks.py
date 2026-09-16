@@ -282,8 +282,9 @@ class SplitReadTests(unittest.TestCase):
         self.assertEqual([], self.check([(101,101,True),(101,50,True),(101,25,False)]))
         self.assertEqual([], self.check([(None,None,True),(1,100,False),
                                         (101,101,True),(101,50,False)]))
-        for retry in [(102,50,False), (101,100,False), (101,49,False),
-                      (101,None,False)]:
+        # The floor half is a ceiling: fewer lines at the same cursor is fine.
+        self.assertEqual([], self.check([(101,100,True), (101,49,False)]))
+        for retry in [(102,50,False), (101,100,False), (101,None,False)]:
             self.assertTrue(self.check([(101,100,True), retry]))
 
     def test_refused_jump_is_checked_even_when_next_success_is_consecutive(self):
