@@ -86,7 +86,7 @@ def judge(event):
     def run(state):
         reason = gb.decide(event, state)
         if reason:
-            state['denials'] = state.get('denials', 0) + 1
+            gb.note_denial(event, state)
         return reason
     reason = with_state(event, run)
     if reason:

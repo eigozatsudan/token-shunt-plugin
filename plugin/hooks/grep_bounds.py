@@ -58,7 +58,43 @@ CODE_WRITER = 'token-shunt:code-writer'
 
 
 def new_state():
-    return {'measured': {}, 'denials': 0}
+    return {'measured': {}, 'denials': {}}
+
+
+def _denials(state):
+    """The per-path refusal counts, keyed like `measured`.
+
+    A scope-wide integer is what older sessions hold. It cannot say which
+    path earned it, so it is not carried: capping a path that was never
+    refused is the defect this replaced
+    (reviews/deny-cap-evidence-2026-09-16.md section 4).
+    """
+    counts = state.get('denials')
+    return counts if isinstance(counts, dict) else {}
+
+
+def note_denial(event, state, stat=os.stat, isfile=os.path.isfile):
+    """Count one refusal against the path the message named."""
+    key = denial_key(event, stat, isfile)
+    if key is None:
+        return
+    counts = _denials(state)
+    counts[key] = counts.get(key, 0) + 1
+    state['denials'] = counts
+
+
+def denial_key(event, stat=os.stat, isfile=os.path.isfile):
+    """File identity of the Grep target, or None when there is not one."""
+    inp = event.get('tool_input')
+    if not isinstance(inp, dict):
+        return None
+    path = target_file(inp, isfile)
+    if path is None:
+        return None
+    try:
+        return _key(stat(path))
+    except OSError:
+        return None
 
 
 def _key(st):
@@ -254,7 +290,11 @@ def decide(event, state, stat=os.stat, isfile=os.path.isfile):
     if size <= BUDGET:
         return None                       # the small-task edit path (§11.6)
     writer = event.get('agent_type') == CODE_WRITER
-    if state.get('denials', 0) >= DENY_CAP:
+    try:
+        refused = _denials(state).get(_key(stat(path)), 0)
+    except OSError:
+        refused = 0
+    if refused >= DENY_CAP:
         if writer:
             return ('this search has been refused %d times. Stop searching '
                     '%s: use output_mode="files_with_matches", or Read the '

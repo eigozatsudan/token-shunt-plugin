@@ -37,6 +37,11 @@ class TargetTests(unittest.TestCase):
     def decide(self, event, state=None):
         return gb.decide(event, state if state is not None else gb.new_state())
 
+    def refuse(self, state, path, times):
+        """Record refusals the way the executable does, per path."""
+        for _ in range(times):
+            gb.note_denial(grep_event(path), state)
+
     def test_an_unmeasured_over_budget_file_is_refused(self):
         reason = self.decide(grep_event(self.big, head_limit=5))
         self.assertIn('size has not been checked', reason)
@@ -138,9 +143,34 @@ class MeasuredStateTests(TargetTests):
 
     def test_refusals_stop_at_the_cap(self):
         state = gb.new_state()
-        state['denials'] = gb.DENY_CAP
+        self.refuse(state, self.big, gb.DENY_CAP)
         reason = self.decide(grep_event(self.big), state)
         self.assertIn('report partial', reason)
+
+    def test_the_cap_counts_the_path_it_names(self):
+        # The message names one path. Counting every path in the scope
+        # together tells a file refused once that it was refused six times
+        # (reviews/deny-cap-evidence-2026-09-16.md section 4).
+        state = gb.new_state()
+        other = os.path.join(self.dir, 'other.txt')
+        with open(other, 'w') as fh:
+            fh.write('x' * (gb.BUDGET + 1))
+        self.refuse(state, other, gb.DENY_CAP)
+        reason = self.decide(grep_event(self.big), state)
+        self.assertIsNotNone(reason)
+        self.assertNotIn('refused', reason)
+        self.assertIn('refused %d times' % gb.DENY_CAP,
+                      self.decide(grep_event(other), state))
+
+    def test_a_scope_wide_count_from_an_older_session_is_not_carried(self):
+        # State written before the counter was per path holds an int. It
+        # cannot say which path earned it, so it starts the run over rather
+        # than capping a path that was never refused.
+        state = gb.new_state()
+        state['denials'] = gb.DENY_CAP
+        reason = self.decide(grep_event(self.big), state)
+        self.assertIsNotNone(reason)
+        self.assertNotIn('refused', reason)
 
 
 class CodeWriterTests(TargetTests):
@@ -159,14 +189,14 @@ class CodeWriterTests(TargetTests):
 
     def test_the_cap_does_not_send_the_writer_to_bulk_reader(self):
         state = gb.new_state()
-        state['denials'] = gb.DENY_CAP
+        self.refuse(state, self.big, gb.DENY_CAP)
         reason = self.decide(self.writer_event(), state)
         self.assertNotIn('bulk-reader', reason)
         self.assertIn('files_with_matches', reason)
 
     def test_the_parent_is_still_sent_to_bulk_reader(self):
         state = gb.new_state()
-        state['denials'] = gb.DENY_CAP
+        self.refuse(state, self.big, gb.DENY_CAP)
         self.assertIn('bulk-reader', self.decide(grep_event(self.big), state))
 
     def test_the_writer_is_not_told_to_run_a_command_it_cannot_run(self):
@@ -307,8 +337,9 @@ class HookProcessTests(unittest.TestCase):
     def test_each_refusal_is_counted_until_the_cap(self):
         """The counter lives in the executable, not in `decide()`.
 
-        The cap tests set `state['denials']` themselves, so the increment
-        that gets there could be deleted without turning any of them red.
+        The cap tests record refusals through `note_denial` themselves, so
+        the call that gets there could be deleted without turning any of
+        them red. This one drives the hook end to end instead.
         """
         for _ in range(gb.DENY_CAP):
             denied = self.run_hook(
