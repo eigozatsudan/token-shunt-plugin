@@ -811,10 +811,14 @@ jq -e '[.planned[] | select(.case == "redmine-visible-scope")] | length == 0' \
 ONLY=''; SUITE=X; MODES=''; SLOTS=''
 export REDMINE_ROOT=$2
 setup_run || exit 1
-jq -e '[.planned[] | select(.case == "redmine-visible-scope")] | length == 1' \
-  "$MANIFEST" >/dev/null || exit 2
+jq -c '[.planned[] | select(.case == "redmine-visible-scope") | .mode] | sort' \
+  "$MANIFEST"
 """, str(root))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        catalog = json.loads((self.compare / "cases.json").read_text())
+        case, = [c for c in catalog["cases"] if c["id"] == "redmine-visible-scope"]
+        # Every mode the case declares, and no other.
+        self.assertEqual(sorted(case["modes"]), json.loads(result.stdout))
 
     def test_an_absent_corpus_never_enters_the_required_suite(self):
         result = self.shell("""
@@ -885,3 +889,33 @@ class CaseInvariantTests(unittest.TestCase):
                              "%s: prompt hands over paths the expect block "
                              "does not allow" % case["id"])
         self.assertGreater(checked, 1)
+
+    def test_every_fixture_path_in_a_direct_prompt_is_one_the_parent_may_read(self):
+        # Same failure on the other side: a direct prompt naming a path that
+        # expect.direct.parent_reads omits blames the parent for obeying.
+        import re
+        checked = 0
+        for case in self.cases:
+            expect = (case.get("expect") or {}).get("direct") or {}
+            if "parent_reads" not in expect:
+                continue
+            checked += 1
+            allowed = set(expect["parent_reads"])
+            named = {p.rstrip(".,") for p in re.findall(
+                r"\{FIX\}/[A-Za-z0-9_./\-]+", case.get("prompt_direct") or "")}
+            self.assertEqual(set(), named - allowed,
+                             "%s: direct prompt names paths parent_reads omits"
+                             % case["id"])
+        self.assertGreater(checked, 1)
+
+    def test_an_isolation_case_declares_the_bytes_it_is_compared_against(self):
+        for case in self.cases:
+            iso = case.get("isolation")
+            if iso not in ("delegate_lt_direct_and_fixture", "delegate_lt_fixture"):
+                continue
+            self.assertTrue(case.get("fixture_bytes"),
+                            "%s: %s needs fixture_bytes" % (case["id"], iso))
+            if iso == "delegate_lt_direct_and_fixture":
+                self.assertIn("direct", case["modes"],
+                              "%s: compared against direct without running it"
+                              % case["id"])
