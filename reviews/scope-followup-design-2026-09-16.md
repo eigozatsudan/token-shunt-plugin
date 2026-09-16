@@ -138,3 +138,75 @@ control の datum は段階 1 の 1/1（機会 → 試行 → 成立）を使う
 「拒否のあるビルドでは、M 件の試行が 1 件も通らなかった」だけで、
 再読が減ったのか、そもそも起きなかったのかは分けられない。
 $7 に収めるならこちらになる。**どちらを選ぶかは費用が出てから決める。**
+
+## 9. 段階 0 の実施（2026-09-16、課金なし）
+
+### 9.1 ランナー
+
+- `run_claude` を `_claude_call` に分け、**`run_claude_resume`** を足した。
+  `--resume <session_id>` を付け、**`fresh_cwd` を呼ばない**。
+  ターンの間に cwd や fixture を消せば、追問が指している木そのものが消える。
+- `session_id_of` — 1 ターン目の `init` イベントから取る。
+  **取れなければ追問を諦めて `return 0`。** 1 ターン目の verdict は既に出ているので、
+  追問を失うことで verdict まで失うのは割に合わない。
+- `case_turns` — `prompt_turns` に `{FIX}` などを差し込んで JSON 配列で返す。
+- `run_followups` — 添字で回す（プロンプトに改行が入りうるので `read` では割れる）。
+  出力は `<transcript>.turn2.jsonl`、`.turn3.jsonl`。
+- 呼ぶ位置は **verdict と disk_check の後、`restore_fixtures` の前**。
+  judge は 1 ケース 1 トランスクリプトなので、**追問は判定しない**（設計 §5.1）。
+
+### 9.2 suite X という棚（設計に無かった追加）
+
+追問ケースを `cases.json` に置くと、**既定の実行に混ざって勝手に課金される。**
+設計にはこの穴が書いてなかったので、棚を作った。
+
+- `suite: "X"` のケースは `planned` にも `required` にも入らない。
+  **`SUITE=X` かスロット指定で名指ししたときだけ走る。**
+- `judge.py` 側も直した。`--aggregate` は `required` を `cases.json` 全件と
+  突き合わせていたので、X を外した瞬間に**通常の run すべてが
+  「suite が不完全」で落ちた**（テスト 4 件で気づいた）。
+  `declared`（認識できる集合）と `mandatory`（リリース判定の集合）に分け、
+  **X を計画しても未知のケース扱いにはならないが、release_eligible にもならない。**
+
+### 9.3 ケース
+
+`reader-followup-scope`（suite X、`reader-batch-ambiguous` を土台に 3 ターン）。
+
+1. 現行の設問（4 パス、前 3 本 + 後 1 本）。
+2. 「beta.py について報告した TOKEN の値は、alpha.py について報告した値と同じか。
+   根拠を示せ」
+3. 「その参照を持っていたのは user.rb と notifiable.rb のどちらか」
+
+**どちらの追問にも「読め」は無く、パスも書いていない**（素のファイル名だけ）。
+何を子に渡すかは親の判断のままである（§3 の線）。
+
+### 9.4 テスト
+
+`evals/compare/test_runner.py` に 14 件追加 ——
+`session_id_of` 2、`case_turns` 2、`--resume` が付く / cwd を消さない 2、
+追問ごとに別トランスクリプト 1、session id が無ければ落とさず飛ばす 1、
+ループが宣言どおり回す 1、追問なしのケースは 1 回だけ呼ぶ 1、
+suite X が既定で計画されない / 名指しで計画される 2、
+実験ケースがあっても通常 run が集計できる 1、実験 run はリリース対象外 1。
+
+`FollowUpTurnTests` は `RunnerIsolationTests` を継承せず `setUp` だけ借りている
+（継承すると isolation の 26 件を二重に走らせる）。
+
+### 9.5 suite X が壊したもの（記録）
+
+`required` から X を外したことで、**判定側と検査側の両方が落ちた**。
+どちらも「cases.json 全件 = 必須集合」を前提にしていたためである。
+
+- `judge.py --aggregate`: 全件と突き合わせていたので、通常の run が
+  「suite が不完全」になった（`test_runner` 4 件で検出）。
+  `declared`（認識できる）と `mandatory`（リリース判定の対象）に分けた。
+- `test_aggregate.AggregateTests.setUp` ほか 3 モジュール: `required` を
+  全件から組み立てていた（8 件が落ちた）。X を除くように直した。
+- **決めたこと**: 全件 + 実験を 1 run で回した場合は
+  **release_eligible にしない**。実験は同じ run の fixture とプローブを共有するので、
+  それはリリースを判定する run とは別物である。
+  偶然そうなるのではなく**意図であると分かるようテストを足した**
+  （`test_the_full_suite_plus_an_experiment_is_not_release_eligible`）。
+
+オフライン: `unittest discover -s evals` 279 OK、`-s evals/compare` **525 OK**（+23）、
+`judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。

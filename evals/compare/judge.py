@@ -19,6 +19,9 @@ from flow_checks import edit_flow_errors, position_grep_errors, verification_err
 COMPARE_DIR = os.path.dirname(os.path.abspath(__file__))
 FIXTURES_DIR = os.environ.get("TOKEN_SHUNT_EVAL_FIXTURES", os.path.join(COMPARE_DIR, "fixtures"))
 
+# Cases on this shelf are experiments: billed only when named, and outside
+# the suite a release is judged on (reviews/scope-followup-design-2026-09-16.md).
+EXPERIMENT_SUITE = "X"
 READ_TOOLS = {"Read"}
 BODY_TOOLS = {"cat", "head", "tail", "less", "more"}
 TS_HOOKS = ("check-file-size", "check-bash-read", "check-jq", "check-agent-model",
@@ -2237,11 +2240,16 @@ def aggregate(verdict_dir, spec_dir, fix_dir, out_path, manifest_path=None):
     if not planned:
         errors.append("empty run plan")
     catalog = read_json(os.path.join(os.path.dirname(__file__), "cases.json"))
-    mandatory = {(c["id"], m) for c in catalog.get("cases", []) for m in c["modes"]}
+    # Suite X is the shelf for experiments: declared in cases.json, billed
+    # only when named, and never part of the suite a release is judged on.
+    # It stays recognizable so planning one is not an error.
+    declared = {(c["id"], m) for c in catalog.get("cases", []) for m in c["modes"]}
+    mandatory = {(c["id"], m) for c in catalog.get("cases", [])
+                 for m in c["modes"] if c.get("suite") != EXPERIMENT_SUITE}
     required = pairs(manifest.get("required", []))
     if required != mandatory:
         errors.append("manifest required pairs differ from mandatory suite")
-    if not planned <= mandatory:
+    if not planned <= declared:
         errors.append("unrecognized planned case/mode")
 
     def numeric(value):

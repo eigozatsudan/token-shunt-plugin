@@ -17,8 +17,11 @@ class AggregateTests(unittest.TestCase):
         for d in ('v', 's', 'f'):
             (self.root / d).mkdir()
         self.catalog = json.loads(Path(judge.__file__).with_name('cases.json').read_text())['cases']
+        # Suite X is the shelf for experiments: declared, but never part of
+        # the suite a release is judged on (judge.EXPERIMENT_SUITE).
         self.manifest = {'planned': [], 'required': [
-            {'case': c['id'], 'mode': m} for c in self.catalog for m in c['modes']]}
+            {'case': c['id'], 'mode': m} for c in self.catalog
+            for m in c['modes'] if c.get('suite') != judge.EXPERIMENT_SUITE]}
 
     def put(self, name, obj):
         (self.root / name).write_text(json.dumps(obj))
@@ -56,8 +59,12 @@ class AggregateTests(unittest.TestCase):
         self.assertTrue(out['selected_run_valid'])
         self.assertFalse(out['release_eligible'])
 
+    def mandatory_specs(self):
+        return [c for c in self.catalog
+                if c.get('suite') != judge.EXPERIMENT_SUITE]
+
     def test_full_mandatory_success_is_release_eligible(self):
-        for spec in self.catalog:
+        for spec in self.mandatory_specs():
             self.add(spec['id'], tuple(spec['modes']))
             for mode in spec['modes']:
                 stem = spec['id'] + '.' + mode
@@ -71,6 +78,30 @@ class AggregateTests(unittest.TestCase):
         status, out = self.run_aggregate()
         self.assertEqual(status, 0, out['errors'])
         self.assertTrue(out['release_eligible'])
+
+    def test_the_full_suite_plus_an_experiment_is_not_release_eligible(self):
+        # A release run is exactly the mandatory suite. An experiment shares
+        # the run's fixtures and probes, so a run carrying one is a different
+        # run -- recognized and valid, but not what a release is judged on.
+        shelf = [c for c in self.catalog
+                 if c.get('suite') == judge.EXPERIMENT_SUITE]
+        if not shelf:
+            self.skipTest('no experiment case declared')
+        for spec in self.mandatory_specs() + shelf:
+            self.add(spec['id'], tuple(spec['modes']))
+            for mode in spec['modes']:
+                stem = spec['id'] + '.' + mode
+                if spec.get('disk_check'):
+                    self.put('v/' + stem + '.disk.json', {'disk_ok': True})
+                if spec.get('isolation') == 'writer_body_absent':
+                    p = self.root/'v'/(stem + '.json')
+                    v = json.loads(p.read_text())
+                    v['checks']['writer_body_absent'] = True
+                    p.write_text(json.dumps(v))
+        status, out = self.run_aggregate()
+        self.assertEqual(status, 0, out['errors'])
+        self.assertTrue(out['selected_run_valid'])
+        self.assertFalse(out['release_eligible'])
 
     def test_empty_and_missing_manifest_fail(self):
         self.assertEqual(self.run_aggregate()[0], 1)

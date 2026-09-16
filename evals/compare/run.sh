@@ -79,9 +79,12 @@ setup_run() {
       | {case:$id,mode:.}
       | select(($sl | length) == 0 or ((.case + "/" + .mode) as $p | $sl | index($p)))];
     (.cases | pairs | map(.case + "/" + .mode)) as $declared |
-    {planned:(.cases | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
+    # Suite X is the shelf for experiments: billed only when named, and kept
+    # out of `required` so an ordinary run is still complete without it.
+    (.cases | map(select(.suite != "X" or $suite == "X"))) as $usable |
+    {planned:($usable | map(select((($ids | length) == 0 or (.id as $i | $ids | index($i)))
       and ($suite == "" or .suite == $suite))) | selected),
-     required:(.cases | pairs),
+     required:($usable | pairs),
      unknown_slots:($sl | map(select(. as $p | $declared | index($p) | not)))}' \
     "$CMP/cases.json" >"$MANIFEST" || return 1
   if ! jq -e '.unknown_slots | length == 0' "$MANIFEST" >/dev/null; then
@@ -306,6 +309,20 @@ CLAUDE_COMMON=(-p --output-format stream-json --verbose --include-hook-events
 run_claude() { # prompt transcript extra-args...
   local prompt=$1 out=$2; shift 2
   fresh_cwd
+  _claude_call "$prompt" "$out" "$@"
+}
+
+# A follow-up turn of a session that is already running. The cwd is NOT
+# reset and the fixtures are NOT regenerated: this is the same conversation
+# continuing against the same tree, and wiping either would delete what the
+# question is about.
+run_claude_resume() { # prompt transcript session-id extra-args...
+  local prompt=$1 out=$2 sid=$3; shift 3
+  _claude_call "$prompt" "$out" --resume "$sid" "$@"
+}
+
+_claude_call() { # prompt transcript extra-args...
+  local prompt=$1 out=$2; shift 2
   (
     local name
     while IFS= read -r name; do
@@ -329,6 +346,45 @@ run_claude() { # prompt transcript extra-args...
     cd "$CWD0" && printf '%s' "$prompt" | timeout --kill-after=10s "$TIMEOUT" claude \
       "${CLAUDE_COMMON[@]}" --setting-sources "" --add-dir "$FIX" --add-dir "$TMP" "$@" \
       >"$out" 2>"$out.err")
+}
+
+# ---------- follow-up turns ----------
+# A case may declare prompt_turns: further user messages of the same session.
+# The parent holds no file bodies, so a follow-up question forces a fresh
+# worker whose declared set is narrowed, which is the opportunity the scope
+# measurement counts (reviews/scope-followup-design-2026-09-16.md section 2).
+# Only the user's turns are written here; what the parent hands the worker
+# stays the product's decision.
+session_id_of() { # transcript -> session id, empty if the run produced none
+  jq -r 'select(.type == "system" and .subtype == "init")
+         | .session_id // empty' "$1" 2>/dev/null | head -1
+}
+
+case_turns() { # case-json -> JSON array of follow-up prompts, substituted
+  jq -c --arg fix "$FIX" --arg tmp "$TMP" --arg cmp "$CMP" \
+    '[(.prompt_turns // [])[]
+      | gsub("\\{FIX\\}"; $fix)
+      | gsub("\\{TMP\\}"; $tmp)
+      | gsub("\\{JUDGE_DIR\\}"; $cmp)]' <<<"$1"
+}
+
+run_followups() { # first-transcript turns-json extra-args...
+  local first=$1 turns=$2; shift 2
+  local sid n total prompt
+  total=$(jq -r 'length' <<<"$turns" 2>/dev/null) || return 0
+  [[ -n $total && $total != 0 ]] || return 0
+  sid=$(session_id_of "$first")
+  if [[ -z $sid ]]; then
+    # The first turn still has its verdict; losing the follow-ups must not
+    # lose that too.
+    say "WARN no session id in $(basename "$first"); follow-up turns skipped"
+    return 0
+  fi
+  for ((n = 0; n < total; n++)); do
+    # Indexed rather than read in a loop: a prompt may contain newlines.
+    prompt=$(jq -r ".[$n]" <<<"$turns")
+    run_claude_resume "$prompt" "$first.turn$((n + 2)).jsonl" "$sid" "$@"
+  done
 }
 
 check_probe_run() { # transcript cli-exit-code -> ok or environment failure
@@ -573,6 +629,8 @@ while IFS= read -r case; do
   suite=$(jq -r .suite <<<"$case")
   [[ -n $ONLY ]] && [[ ,$ONLY, != *,$id,* ]] && continue
   [[ -n $SUITE && $suite != "$SUITE" ]] && continue
+  # Experiments are billed only when their suite is named (see setup_run).
+  [[ -z $SUITE && $suite == X ]] && continue
   READ_MAX_OUTPUT_TOKENS=$(jq -er '.read_max_output_tokens // 25000 |
     select(type == "number" and . > 0 and . == floor)' <<<"$case") || exit 1
   for mode in $(jq -r '.modes[]' <<<"$case"); do
@@ -677,6 +735,13 @@ while IFS= read -r case; do
           "$VRD/$id.$mode.json" >"$VRD/$id.$mode.json.tmp"
       fi
       mv "$VRD/$id.$mode.json.tmp" "$VRD/$id.$mode.json"
+    fi
+    # Follow-up turns run after the verdict: they are measured by the probe,
+    # not judged, and judge.py reads one transcript per case (design 5.1).
+    if [[ $mode == direct ]]; then
+      run_followups "$transcript" "$(case_turns "$case")"
+    else
+      run_followups "$transcript" "$(case_turns "$case")" --plugin-dir "$ROOT/plugin"
     fi
     restore_fixtures
   done

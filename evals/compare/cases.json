@@ -1319,6 +1319,57 @@
           "no_parent_edit": true
         }
       }
+    },
+    {
+      "id": "reader-followup-scope",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "fixtures": [
+        "gen/collide/alpha.py",
+        "rails/app/models/user.rb",
+        "rails/app/models/concerns/notifiable.rb",
+        "gen/collide/beta.py"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader --worker-model auto on these four explicit paths: {FIX}/gen/collide/alpha.py {FIX}/rails/app/models/user.rb {FIX}/rails/app/models/concerns/notifiable.rb {FIX}/gen/collide/beta.py. First Agent must carry the first three paths and a later Agent the fourth. Question: does the TOKEN defined in alpha.py refer to the TOKEN in beta.py? Same-name symbols alone do not establish a reference. Integrate only matching reference evidence. If ambiguous, either perform at most one boundary confirmation with both files in one fresh Agent, or report the relationship as unconfirmed and status: partial. Do not infer a reference from a matching name.",
+      "prompt_turns": [
+        "Is the TOKEN value you reported for beta.py the same value you reported for alpha.py? Give the evidence your answer rests on.",
+        "Which of user.rb and notifiable.rb held the reference you relied on?"
+      ],
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "agent_calls_min": 2,
+          "agent_calls_max": 4,
+          "batch_invocation": [
+            [
+              "{FIX}/gen/collide/alpha.py",
+              "{FIX}/rails/app/models/user.rb",
+              "{FIX}/rails/app/models/concerns/notifiable.rb"
+            ],
+            [
+              "{FIX}/gen/collide/beta.py"
+            ]
+          ],
+          "child_reads_once": [
+            "{FIX}/gen/collide/alpha.py",
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/gen/collide/beta.py"
+          ],
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "ambiguous_batch": {
+            "paths": [
+              "{FIX}/gen/collide/alpha.py",
+              "{FIX}/gen/collide/beta.py"
+            ]
+          },
+          "retry_policy": true
+        }
+      },
+      "note": "Experiment only (suite X, billed by slot). Follow-up turns of one session: the parent holds no file bodies, so each turn forces a fresh worker whose declared set is narrowed. That narrowing is the opportunity the scope measurement counts (reviews/scope-followup-design-2026-09-16.md). Turns 2 and 3 ask about earlier findings; neither asks for a file to be read."
     }
   ]
 }

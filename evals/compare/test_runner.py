@@ -154,7 +154,7 @@ cat "$MANIFEST"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no cases match", result.stdout)
 
-    def run_with_cli_double(self, **settings):
+    def run_with_cli_double(self, only="auto-small-files", **settings):
         # Exercise the shell loop, resolved specs, judge and aggregate together.
         # The double only emits a small-files transcript; no live model is used.
         bindir = Path(self.temp.name) / "bin"
@@ -168,7 +168,8 @@ prompt = sys.stdin.read()
 loaded = '--plugin-dir' in sys.argv
 probe = prompt == 'Reply with just OK'
 with open(os.environ['CALL_LOG'], 'a') as log:
-    log.write(('load' if loaded else 'isolation') if probe else 'case')
+    log.write(('load' if loaded else 'isolation') if probe
+              else ('case resume' if '--resume' in sys.argv else 'case'))
     log.write('\\n')
 failure = os.environ.get('PROBE_FAILURE') if probe and (
     os.environ.get('FAIL_PROBE') == ('load' if loaded else 'isolation')) else None
@@ -176,7 +177,7 @@ if not probe:
     failure = os.environ.get('CASE_FAILURE')
 if failure == 'empty':
     sys.exit(0)
-print(json.dumps({'type':'system','subtype':'init',
+print(json.dumps({'type':'system','subtype':'init','session_id':'sess-double',
     'plugins':([{'name':'token-shunt'}] if loaded or failure == 'loaded-direct' else [])
         + ([{'name':'superpowers'}] if failure == 'dormant-plugin' else []),
     'agents':['token-shunt:bulk-reader','token-shunt:code-writer'] if loaded else []}))
@@ -213,7 +214,7 @@ sys.exit(17 if failure == 'nonzero' else 0)
 ''')
         cli.chmod(0o755)
         result = subprocess.run(
-            ["bash", str(self.compare / "run.sh"), "auto-small-files"],
+            ["bash", str(self.compare / "run.sh"), only],
             text=True, capture_output=True,
             env={**os.environ, "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
                  "SUITE": "", "CALL_LOG": str(Path(self.temp.name) / "calls.log"),
@@ -489,6 +490,180 @@ jq -c '.planned | map(.mode)' "$MANIFEST"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout),
                          ['direct', 'haiku', 'sonnet', 'auto'])
+
+
+class FollowUpTurnTests(unittest.TestCase):
+    """Several user turns in one session.
+
+    The parent holds no file bodies, so a follow-up question forces a fresh
+    worker whose declared set is narrowed -- the opportunity the scope
+    measurement counts (reviews/scope-followup-design-2026-09-16.md). A turn
+    must continue the session rather than start one, and must not reset the
+    tree the question is about.
+    """
+
+    # Borrowed, not inherited: subclassing would re-run the isolation suite.
+    setUp = RunnerIsolationTests.setUp
+    shell = RunnerIsolationTests.shell
+    run_with_cli_double = RunnerIsolationTests.run_with_cli_double
+
+    def transcript(self, *rows):
+        path = Path(self.temp.name) / "t.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        return str(path)
+
+    def test_the_session_id_comes_from_the_init_event(self):
+        path = self.transcript({"type": "system", "subtype": "init",
+                                "session_id": "abc-123"},
+                               {"type": "result", "session_id": "later"})
+        result = self.shell('session_id_of "$2"', path)
+        self.assertEqual("abc-123", result.stdout.strip())
+
+    def test_a_transcript_without_an_init_event_has_no_session_id(self):
+        path = self.transcript({"type": "result", "subtype": "success"})
+        result = self.shell('session_id_of "$2"; echo "rc=$?"', path)
+        self.assertEqual("rc=0", result.stdout.strip())
+
+    def test_case_turns_substitutes_the_fixture_root(self):
+        case = json.dumps({"id": "x", "prompt_turns": [
+            "Compare {FIX}/gen/collide/beta.py with what you found.",
+            "Which of {FIX}/rails held it?"]})
+        result = self.shell('ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\ncase_turns "$2"',
+                            case)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        turns = json.loads(result.stdout)
+        self.assertEqual(2, len(turns))
+        self.assertNotIn("{FIX}", turns[0])
+        self.assertIn("/work/fixtures/gen/collide/beta.py", turns[0])
+
+    def test_a_case_with_no_turns_yields_an_empty_list(self):
+        result = self.shell('ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\ncase_turns "$2"',
+                            json.dumps({"id": "x"}))
+        self.assertEqual([], json.loads(result.stdout))
+
+    def test_a_follow_up_resumes_the_session(self):
+        result = self.shell(
+            'ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\n'
+            '_claude_call() { printf "%s\\n" "$@" >"$RUN_ROOT/args"; }\n'
+            'run_claude_resume "second question" "$RUN_ROOT/t2.jsonl" sid-9 '
+            '--plugin-dir /p\n'
+            'cat "$RUN_ROOT/args"\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = result.stdout.split("\n")
+        self.assertIn("--resume", args)
+        self.assertEqual("sid-9", args[args.index("--resume") + 1])
+        self.assertIn("--plugin-dir", args)
+
+    def test_a_follow_up_does_not_reset_the_working_directory(self):
+        # fresh_cwd wipes the cwd. Doing that mid-session would delete what
+        # the earlier turn left there.
+        result = self.shell(
+            'ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\n'
+            '_claude_call() { :; }\n'
+            'fresh_cwd\n'
+            'printf kept >"$CWD0/earlier"\n'
+            'run_claude_resume q "$RUN_ROOT/t2.jsonl" sid-9\n'
+            'cat "$CWD0/earlier"\n')
+        self.assertEqual("kept", result.stdout.strip(), result.stderr)
+
+    def test_each_follow_up_gets_its_own_transcript(self):
+        path = self.transcript({"type": "system", "subtype": "init",
+                                "session_id": "s1"})
+        result = self.shell(
+            'ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\n'
+            '_claude_call() { printf "%s" "$1" >"$2"; }\n'
+            'run_followups "$2" \'["first follow-up","second follow-up"]\'\n'
+            'cat "$2.turn2.jsonl"; echo\n'
+            'cat "$2.turn3.jsonl"\n', path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(["first follow-up", "second follow-up"],
+                         result.stdout.strip().split("\n"))
+
+    def test_a_missing_session_id_skips_the_turns_without_failing(self):
+        # A first turn that produced no init event still has a verdict;
+        # losing the follow-ups must not lose that too.
+        path = self.transcript({"type": "result", "subtype": "success"})
+        result = self.shell(
+            'ONLY=""; SUITE=""; setup_run >/dev/null || exit 1\n'
+            '_claude_call() { printf called >>"$RUN_ROOT/called"; }\n'
+            'run_followups "$2" \'["follow-up"]\'; echo "rc=$?"\n'
+            '[[ -e $RUN_ROOT/called ]] && echo CALLED || echo NOTCALLED\n',
+            path)
+        self.assertIn("rc=0", result.stdout)
+        self.assertIn("NOTCALLED", result.stdout)
+
+    def test_the_loop_runs_the_declared_turns(self):
+        cases = self.compare / "cases.json"
+        data = json.loads(cases.read_text())
+        base = [c for c in data["cases"] if c["id"] == "auto-small-files"][0]
+        data["cases"].append(dict(base, id="turn-probe", modes=["auto"],
+                                  prompt_turns=["and the second file?",
+                                                "and the third?"]))
+        cases.write_text(json.dumps(data))
+        self.run_with_cli_double(only="turn-probe", SLOTS="turn-probe/auto")
+        log = (Path(self.temp.name) / "calls.log").read_text().split("\n")
+        self.assertEqual(["case", "case resume", "case resume"],
+                         [c for c in log if c.startswith("case")])
+
+    def test_an_experiment_case_is_not_planned_by_default(self):
+        # A follow-up case exists to be billed deliberately, by slot. It must
+        # not enlarge the default run, and it must not make an ordinary run
+        # look incomplete by sitting in `required`.
+        self.add_experiment_case()
+        result = self.shell("""
+ONLY=''; SUITE=''; setup_run || exit 1
+jq -c '[.planned[].case] | index("turn-probe")' "$MANIFEST"
+jq -c '[.required[].case] | index("turn-probe")' "$MANIFEST"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(["null", "null"], result.stdout.split())
+
+    def test_an_experiment_case_is_planned_when_its_suite_is_named(self):
+        self.add_experiment_case()
+        result = self.shell("""
+ONLY=''; SUITE=X; setup_run || exit 1
+jq -c '[.planned[].case] | unique' "$MANIFEST"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        planned = json.loads(result.stdout)
+        self.assertIn("turn-probe", planned)
+        # Naming the shelf plans the shelf and nothing else.
+        catalog = json.loads((self.compare / "cases.json").read_text())
+        shelf = {c["id"] for c in catalog["cases"] if c.get("suite") == "X"}
+        self.assertEqual(shelf, set(planned))
+
+    def add_experiment_case(self, **extra):
+        cases = self.compare / "cases.json"
+        data = json.loads(cases.read_text())
+        base = [c for c in data["cases"] if c["id"] == "auto-small-files"][0]
+        data["cases"].append(dict(base, id="turn-probe", suite="X",
+                                  modes=["auto"], prompt_turns=["more?"],
+                                  **extra))
+        cases.write_text(json.dumps(data))
+
+    def test_an_ordinary_run_aggregates_with_an_experiment_case_present(self):
+        # The aggregate cross-checks the manifest against cases.json. An
+        # experiment sitting in the file must not make every ordinary run
+        # report an incomplete suite.
+        self.add_experiment_case()
+        self.run_with_cli_double()
+        summary = json.loads((self.compare / "last-run.json").read_text())
+        self.assertEqual([], summary.get("errors", []))
+        self.assertTrue(summary["selected_run_valid"])
+
+    def test_an_experiment_run_is_recognized_but_not_release_eligible(self):
+        self.add_experiment_case()
+        self.run_with_cli_double(only="turn-probe", SLOTS="turn-probe/auto")
+        summary = json.loads((self.compare / "last-run.json").read_text())
+        self.assertNotIn("unrecognized planned case/mode",
+                         summary.get("errors", []))
+        self.assertFalse(summary["release_eligible"])
+
+    def test_a_case_without_turns_makes_one_call(self):
+        self.run_with_cli_double(SLOTS="auto-small-files/auto")
+        log = (Path(self.temp.name) / "calls.log").read_text()
+        self.assertEqual(1, log.count("case"))
+        self.assertNotIn("resume", log)
 
 
 if __name__ == "__main__":
