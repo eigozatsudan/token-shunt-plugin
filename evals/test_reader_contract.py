@@ -265,5 +265,74 @@ class RuntimeHookTests(unittest.TestCase):
             self.assertEqual(1, state['paths'][str(source)]['retry'])
 
 
+class DeclaredScopeTests(unittest.TestCase):
+    """A Read outside the paths this invocation was given is refused.
+
+    The scope comes from the worker's own transcript (plugin/hooks/reader_scope.py);
+    these tests cover how check-reader-contract uses it, including the case it was
+    written for: a second invocation re-reading a path from the first.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.alpha = self.root / 'alpha.py'
+        self.beta = self.root / 'beta.py'
+        for source in (self.alpha, self.beta):
+            source.write_text('x = 1\n')
+        subagents = self.root / 'session' / 'subagents'
+        subagents.mkdir(parents=True)
+        self.transcript = subagents / 'agent-w1.jsonl'
+        self.state = {'calls': 0, 'paths': {}}
+
+    def declare(self, *paths):
+        self.transcript.write_text(json.dumps({'type': 'user', 'message': {
+            'role': 'user',
+            'content': 'Read %s and report.' % ' and '.join(str(p) for p in paths)}}))
+
+    def pre(self, path, id='r', offset=1, limit=100):
+        return hook.transition(self.state, {
+            'hook_event_name': 'PreToolUse', 'tool_use_id': id,
+            'session_id': 's1', 'agent_id': 'w1',
+            'agent_type': 'token-shunt:bulk-reader',
+            'transcript_path': str(self.root / 'session.jsonl'),
+            'tool_input': {'file_path': str(path), 'offset': offset, 'limit': limit}})
+
+    def test_a_declared_path_is_read(self):
+        self.declare(self.alpha, self.beta)
+        self.assertIsNone(self.pre(self.alpha))
+
+    def test_a_path_from_an_earlier_invocation_is_refused(self):
+        self.declare(self.beta)
+        reason = self.pre(self.alpha)
+        self.assertIn('another invocation', reason)
+        self.assertIn(str(self.beta), reason)
+
+    def test_the_refusal_still_spends_the_attempt(self):
+        # Refused attempts consume budget everywhere else in this hook; a
+        # worker that keeps guessing paths must still run out.
+        self.declare(self.beta)
+        self.pre(self.alpha)
+        self.assertEqual(1, self.state['calls'])
+
+    def test_a_refused_path_leaves_no_cursor_behind(self):
+        self.declare(self.beta)
+        self.pre(self.alpha)
+        self.assertEqual({}, self.state['paths'])
+
+    def test_the_scope_is_resolved_once_and_kept(self):
+        self.declare(self.alpha)
+        self.pre(self.alpha)
+        self.assertEqual([os.path.realpath(self.alpha)], self.state['scope'])
+        # A later invocation prompt cannot widen a scope already fixed.
+        self.declare(self.alpha, self.beta)
+        self.assertIsNotNone(self.pre(self.beta, id='second'))
+
+    def test_an_unreadable_transcript_refuses_nothing(self):
+        self.assertIsNone(self.pre(self.alpha))
+        self.assertEqual([], self.state['scope'])
+
+
 if __name__ == '__main__':
     unittest.main()

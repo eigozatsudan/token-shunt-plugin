@@ -16,6 +16,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import reader_scope
+
 
 PENDING_SECONDS = 300
 LOCK_WAIT_SECONDS = 0.25
@@ -70,6 +73,13 @@ def transition(state, event):
         if not isinstance(path, str) or not os.path.isabs(path):
             return 'Read requires an absolute file_path.'
         path = os.path.realpath(path)
+        # The invocation's own launch prompt is the only record of what it was
+        # asked to read; without it nothing is refused on identity grounds.
+        if 'scope' not in state:
+            state['scope'] = sorted(reader_scope.declared_paths(event))
+        outside = reader_scope.scope_reason(state['scope'], path)
+        if outside:
+            return outside
         if path not in state['paths'] and len(state['paths']) >= 3:
             return 'At most three paths per invocation.'
         cursor = state['paths'].setdefault(path, {'next': 1})

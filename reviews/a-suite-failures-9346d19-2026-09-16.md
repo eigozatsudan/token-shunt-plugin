@@ -384,3 +384,72 @@ undetermined を返すだけなので、固定 N プローブが測った block 
 
 オフライン: `unittest discover -s evals` 259 OK、`-s evals/compare` 455 OK、
 `judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。
+
+## 14. 実装（2026-09-16、§4 の製品側）
+
+§4 は「フックはパスの**本数**は数えるが、その起動で宣言されたパス集合を
+知らないので**同一性を見られない**。stdin に宣言パスが来ない以上フック側では
+塞げない」と結論していた。**この結論は撤回する。** 宣言集合は stdin には
+来ないが、stdin が指す先には来る。
+
+### 14.1 宣言集合の出どころ
+
+PreToolUse の stdin は `session_id` / `agent_id` / `transcript_path` を持つ
+（CLI 2.1.272 のバイナリで確認。`transcript_path` は**親セッション**の
+`.jsonl`）。ワーカー自身の記録はその隣、
+`<親 .jsonl から拡張子を落とした dir>/subagents/agent-<agent_id>.jsonl` にあり、
+**その先頭の user 行が起動プロンプトそのもの**である。親が宣言した絶対パスは
+そこに書かれている。実ファイルで配置と中身を確認した。
+
+`plugin/hooks/reader_scope.py`（新規）:
+
+- `scope_file(event)` — `transcript_path` が既にワーカーの記録ならそれを使い、
+  親セッションなら上記の `subagents/agent-<id>.jsonl` を導く。
+- `launch_prompt(event)` — 先頭 64 行までに現れる最初の user 行の本文。
+  **後続のターンは見ない**（ワーカー自身の Read 結果や引用でスコープが
+  広がってはならない）。
+- `declared_paths(event)` — その本文に現れる、**実在する**絶対パスの realpath 集合。
+- `scope_reason(scope, path)` — 集合外なら拒否理由、集合が空なら None。
+
+### 14.2 フック側
+
+`check-reader-contract.transition()` の PreToolUse で、絶対パス確認と realpath の
+直後、3 本制限より前に置いた。集合は**起動につき一度だけ**解決して
+state に `scope` として持つ（後から起動プロンプトが変わってもスコープは広がらない）。
+拒否文は「この起動が渡されたパスだけを読め。これは別の起動のパスだから、
+partial で返して呼び出し側に新しい起動で頼ませろ」。拒否も 1 回分の budget を
+食う（他の拒否と同じ扱い。パスを当てずっぽうに試す動きが無限にならない）。
+
+### 14.3 何も分からなければ何も拒否しない
+
+`worker_resume` と同じ規律である。記録が読めない、プロンプトに絶対パスが無い、
+書かれたパスが実在しない —— いずれも集合は空になり、**Read は通る**。
+§4 の 1 起動目のような「宣言 3 本 + 4 本目」は従来どおり本数制限が捕まえる。
+今回塞いだのは 2 起動目の「宣言 1 本、実際は前起動のパスを再読」だけである。
+
+**既知の偽拒否リスク（記録）**: 宣言が空白を含むパスや相対パスで書かれ、
+かつ同じプロンプトに実在する絶対パスが別に 1 本でもあると、その宣言は
+集合に入らず拒否される。本文を state に溜めれば減らせるが、state は
+メタデータだけという設計を崩すので採らない。契約（親は絶対パスを明示する）
+が守られている限り起きない形なので、リスクとして記録するにとどめる。
+
+### 14.4 テスト
+
+`evals/test_reader_scope.py` 14 件（新規、モジュール単体）、
+`evals/test_reader_contract.py` に `DeclaredScopeTests` 6 件
+（フックへの組み込み: 宣言パスは通る / 前起動のパスは拒否 /
+拒否も budget を食う / 拒否は cursor を残さない / 集合は一度だけ解決 /
+記録が読めなければ拒否しない）。
+
+オフライン: `unittest discover -s evals` 279 OK、`-s evals/compare` 461 OK、
+`judge.py --selftest` 全項目 pass、`evals/run.sh` 240 pass / 0 fail。
+
+### 14.5 未実施
+
+実機確認はしていない。これは**委譲するすべての run で新しい PreToolUse deny が
+増える**変更なので、安い確認（3 枠 × 2 周 ≈ $0.8）で「正規の Read が
+拒否されていない（S1 誤 block が増えていない）」を見る価値はある。
+課金するので指示があるまで走らせない。
+
+`token-shunt.zip` は `reader_scope.py` を含まないまま（再生成は指示があるとき
+だけ）。配布物を更新するときに一緒に入る。
