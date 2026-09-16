@@ -295,3 +295,38 @@ SubagentStop の `check_child_items` は、**使える絶対パスを持つ行�
 
 オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals`
 257 OK、`-s evals/compare` 445 OK、`judge.py --selftest` 全項目 pass。
+
+## 12. 実装（2026-09-16、§1 auto の製品側）
+
+§1 auto は「ワーカー（haiku）の confirmed 行は絶対パスだが 2 行しかなく、
+`after_create` は散文の手順 1 にしかない」。親は忠実に写しており、
+写す対象が最初から無かった。
+
+契約は「すべての要求事実は confirmed かさもなくば unconfirmed」と書いてあり、
+**ワーカーの読みではこれを満たしている**。事実は述べてあった。bullet に
+していなかっただけである。親が写すのは bullet なので、そこが抜けると
+事実は回答に届かない。この差を文面が言っていなかった。
+
+足した規則:
+
+> No fact may live only in prose. 親が写すのは bullet なので、文や番号付き
+> 手順にしか出てこない名前・コールバック・シンボル・値は回答に届かない。
+> 順序を問う質問なら順序は保ったまま **1 手順 1 bullet**、それぞれに絶対パスを
+> 付ける。送る前に、挙げた名前をすべて読み返して `confirmed:` /
+> `unconfirmed:` の bullet にも立っているか確かめる。
+
+テストは `test_reader_call_contract.py::
+test_agent_forbids_a_fact_that_lives_only_in_prose`。
+
+### 12.1 実行時の検査（入れない）
+
+網羅不足はフックでは検査できない。フックは gold を知らず、「質問が求めた
+事実」が何かを知らない。散文に事実が残っているかどうかを字面で当てにいくと、
+正しい報告を誤って送り戻す（S1 を増やす）。§4 と同じ理由で、
+**ここは文面の問題として閉じる。**
+
+`gold_confirmed` は評価側でこれを捕まえており、§8 の出所表示で
+`worker never confirmed it` として親側の短縮と区別できる。
+
+オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals`
+258 OK、`judge.py --selftest` 全項目 pass。

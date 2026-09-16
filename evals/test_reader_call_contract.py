@@ -519,6 +519,19 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('exactly as the caller supplied it', body)
         self.assertIn('basename', body)
 
+    def test_agent_forbids_a_fact_that_lives_only_in_prose(self):
+        # The auto run at 9346d19 returned two confirmed bullets and put
+        # the third fact (`after_create`) only in a numbered prose step.
+        # The parent copies bullets, so that fact never reached the answer
+        # (reviews/a-suite-failures-9346d19-2026-09-16.md section 1). The
+        # contract said "every requested fact is either confirmed with its
+        # path or explicitly unconfirmed", which the worker satisfied in
+        # its own reading: the fact WAS stated, just not as a bullet.
+        body = self.AGENT.read_text(encoding='utf-8')
+        self.assertIn('only in prose', body)
+        self.assertIn('the parent copies bullets', body.lower())
+        self.assertIn('one bullet per step', body.lower())
+
     def test_description_names_the_triggers_the_deny_cannot_carry(self):
         # A rule that only applies when NO deny fires is unreachable unless
         # the description names it: the body is loaded only once the parent

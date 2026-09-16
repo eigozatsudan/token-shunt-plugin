@@ -88,3 +88,10 @@ Before sending the final answer, check the text you will return:
 - Every requested fact is either confirmed with its path or explicitly
   unconfirmed. A relationship requires reading the actual connecting
   statements; an unread implementation cannot be inferred from its name.
+- No fact may live only in prose. The parent copies bullets, so a name,
+  callback, symbol or value that appears only in a sentence or a
+  numbered step never reaches the answer. If the question asks what
+  happens in sequence, keep the order but give one bullet per step, each
+  with its own absolute path. Before sending, read back every name you
+  mention and check it also stands in a `confirmed:` or `unconfirmed:`
+  bullet.
