@@ -162,6 +162,23 @@ class MeasuredStateTests(TargetTests):
         self.assertIn('refused %d times' % gb.DENY_CAP,
                       self.decide(grep_event(other), state))
 
+    def test_the_cap_does_not_refuse_a_search_that_now_conforms(self):
+        # The cap exists to stop hammering. A measured, bounded search is
+        # not hammering, and refusing it leaves delegating or giving up as
+        # the only way out (reviews/deny-cap-evidence-2026-09-16.md
+        # section 4, item 2).
+        state = self.measured_state()
+        self.refuse(state, self.big, gb.DENY_CAP)
+        self.assertIsNone(self.decide(grep_event(self.big, head_limit=5), state))
+
+    def test_the_cap_still_answers_a_search_that_does_not_conform(self):
+        state = self.measured_state()
+        self.refuse(state, self.big, gb.DENY_CAP)
+        for bad in ({}, {'head_limit': 999}, {'head_limit': 5, '-C': 3}):
+            with self.subTest(bad=bad):
+                reason = self.decide(grep_event(self.big, **bad), state)
+                self.assertIn('refused %d times' % gb.DENY_CAP, reason)
+
     def test_a_scope_wide_count_from_an_older_session_is_not_carried(self):
         # State written before the counter was per path holds an int. It
         # cannot say which path earned it, so it starts the run over rather

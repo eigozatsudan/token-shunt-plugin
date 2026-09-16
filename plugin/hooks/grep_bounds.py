@@ -290,11 +290,22 @@ def decide(event, state, stat=os.stat, isfile=os.path.isfile):
     if size <= BUDGET:
         return None                       # the small-task edit path (§11.6)
     writer = event.get('agent_type') == CODE_WRITER
-    try:
-        refused = _denials(state).get(_key(stat(path)), 0)
-    except OSError:
-        refused = 0
-    if refused >= DENY_CAP:
+
+    def capped():
+        """Whether this path has exhausted its refusals.
+
+        Asked only once the search has already been refused on its own
+        terms. The cap is there to stop hammering, and a measured,
+        bounded search is not hammering: refusing it would leave
+        delegating or giving up as the only way out
+        (reviews/deny-cap-evidence-2026-09-16.md section 4, item 2).
+        """
+        try:
+            return _denials(state).get(_key(stat(path)), 0) >= DENY_CAP
+        except OSError:
+            return False
+
+    def cap_reason():
         if writer:
             return ('this search has been refused %d times. Stop searching '
                     '%s: use output_mode="files_with_matches", or Read the '
@@ -303,7 +314,10 @@ def decide(event, state, stat=os.stat, isfile=os.path.isfile):
         return ('this search has been refused %d times. Stop searching %s '
                 'and report partial, or delegate it to '
                 '/token-shunt:bulk-reader.' % (DENY_CAP, path))
+
     if not is_measured(state, path, stat):
+        if capped():
+            return cap_reason()
         if writer:
             return ('%s is over the %d B budget and its size is not known '
                     'here. Use output_mode="files_with_matches" to locate '
@@ -314,5 +328,7 @@ def decide(event, state, stat=os.stat, isfile=os.path.isfile):
                 % (path, BUDGET, path))
     form = _form_error(inp)
     if form:
+        if capped():
+            return cap_reason()
         return '%s (%d B, over budget): %s' % (path, size, form)
     return None
