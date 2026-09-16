@@ -143,6 +143,70 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(got['reminder_delivered'])
 
 
+class ReportShapeTests(unittest.TestCase):
+    """How each worker report spells its paths, per report.
+
+    The instrument for the section 11.1 question: today a report is sent
+    back only when NO line carries a usable absolute path, so a mixed one
+    passes and its relative lines are demoted. Deciding whether to tighten
+    that needs the rate at which mixed reports actually occur.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.file = self.root / 'user.rb'
+        self.file.write_text('x = 1\n')
+
+    def write(self, worker_text):
+        path = self.root / 'compare-x.haiku.jsonl'
+        path.write_text('\n'.join(json.dumps(e) for e in
+                                  transcript(worker_text, 'done')))
+        return path
+
+    def test_every_line_absolute_is_the_contracted_shape(self):
+        got = rp.score_transcript(self.write(
+            'confirmed: %s — a\nconfirmed: %s — b' % (self.file, self.file)))
+        self.assertEqual(got['reports'], [{'usable': 2, 'unusable': 0,
+                                           'unknown': 0, 'shape': 'absolute'}])
+
+    def test_one_relative_line_among_absolute_ones_is_mixed(self):
+        got = rp.score_transcript(self.write(
+            'confirmed: %s — a\nconfirmed: user.rb — b' % self.file))
+        self.assertEqual(got['reports'][0]['shape'], 'mixed')
+        self.assertEqual(got['reports'][0]['unusable'], 1)
+
+    def test_every_line_relative_is_the_shape_the_hook_already_blocks(self):
+        got = rp.score_transcript(self.write(
+            'confirmed: user.rb — a\nconfirmed: notifiable.rb — b'))
+        self.assertEqual(got['reports'][0]['shape'], 'relative')
+
+    def test_a_vanished_file_is_not_counted_as_a_relative_path(self):
+        # An absolute path to a file that is gone is undetermined, not a
+        # contract violation; counting it as one would invent a base rate.
+        got = rp.score_transcript(self.write(
+            'confirmed: /gone/user.rb — a'))
+        self.assertEqual(got['reports'][0]['shape'], 'undetermined')
+        self.assertEqual(got['reports'][0]['unknown'], 1)
+
+    def test_a_report_with_no_confirmed_line_has_no_shape(self):
+        got = rp.score_transcript(self.write('prose only'))
+        self.assertEqual(got['reports'][0]['shape'], 'no items')
+
+    def test_shapes_are_summed_per_report_not_per_run(self):
+        tmp = self.root / 'run'
+        (tmp / 'transcripts').mkdir(parents=True)
+        (tmp / 'transcripts' / 'c.haiku.jsonl').write_text('\n'.join(
+            json.dumps(e) for e in transcript(
+                'confirmed: %s — a\nconfirmed: user.rb — b' % self.file,
+                'done')))
+        got = rp.score_dir(tmp, sessions=self.root / 'none')
+        self.assertEqual(got['shapes']['mixed'], 1)
+        self.assertEqual(got['shapes']['absolute'], 0)
+        self.assertEqual(got['reports'], 1)
+
+
 class ScoreDirTests(unittest.TestCase):
     def test_a_run_directory_is_summed_by_slot(self):
         tmp = tempfile.TemporaryDirectory()

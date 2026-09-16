@@ -83,6 +83,42 @@ def _delivered(tr, sessions=SESSIONS):
     return False
 
 
+SHAPES = ('absolute', 'mixed', 'relative', 'undetermined', 'no items')
+
+
+def report_shape(text):
+    """How one worker report spells the paths on its confirmed lines.
+
+    `absolute` every usable, `relative` none usable, `mixed` both -- the
+    shape section 11.1 turns on, because today only `relative` is sent
+    back and `mixed` passes with its relative lines demoted. A path to a
+    file that is gone is `undetermined`: the run's temp tree is deleted
+    afterwards, and reading that as a contract violation would invent a
+    base rate out of housekeeping.
+    """
+    usable = unusable = unknown = 0
+    for line in rc.confirmed_lines(text):
+        verdict = rc.classify_path(rc.citation(line))
+        if verdict == rc.OK:
+            usable += 1
+        elif verdict == rc.UNDETERMINED:
+            unknown += 1
+        else:
+            unusable += 1
+    if not (usable or unusable or unknown):
+        shape = 'no items'
+    elif usable and unusable:
+        shape = 'mixed'
+    elif unusable:
+        shape = 'relative'
+    elif usable:
+        shape = 'absolute'
+    else:
+        shape = 'undetermined'
+    return {'usable': usable, 'unusable': unusable, 'unknown': unknown,
+            'shape': shape}
+
+
 def score_transcript(path, sessions=SESSIONS):
     tr = judge.Transcript(judge.load_events(path))
     texts = _worker_texts(tr)
@@ -93,6 +129,7 @@ def score_transcript(path, sessions=SESSIONS):
                    + check.get('demoted', [])} - {None})
     return {'status': check['status'], 'reason': check.get('reason', ''),
             'lost': lost,
+            'reports': [report_shape(t) for t in texts],
             'abbreviated': check['status'] == rc.VIOLATION,
             'kept': len(check.get('kept', [])),
             'reminder_hook': answered,
@@ -106,6 +143,7 @@ def score_dir(run_dir, sessions=SESSIONS):
     totals = {'runs': 0, 'measured': 0, 'abbreviated': 0, 'undetermined': 0,
               'reminder_hook': 0, 'reminder_delivered': 0,
               'reminder_unmeasured': 0,
+              'reports': 0, 'shapes': {name: 0 for name in SHAPES},
               'cost': 0.0, 'slots': {}}
     if not os.path.isdir(transcripts):
         return totals
@@ -136,6 +174,9 @@ def score_dir(run_dir, sessions=SESSIONS):
             totals['measured'] += 1
         totals['abbreviated'] += 1 if got['abbreviated'] else 0
         totals['reminder_hook'] += 1 if got['reminder_hook'] else 0
+        for report in got['reports']:
+            totals['reports'] += 1
+            totals['shapes'][report['shape']] += 1
         if got['reminder_delivered'] is None:
             totals['reminder_unmeasured'] += 1
         elif got['reminder_delivered']:
