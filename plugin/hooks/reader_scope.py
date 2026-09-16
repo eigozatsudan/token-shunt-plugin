@@ -14,6 +14,13 @@ import json
 import os
 
 
+# Where the optional scope trial log goes. What this module resolved as the
+# declared set cannot be recovered after a run -- `declared_paths` requires the
+# files to exist and the eval deletes its fixture tree between modes -- so a
+# measurement that wants the product's own reading has to capture it here
+# (reviews/scope-prevention-stage1-2026-09-16.md section 7.2).
+LOG_ENV = 'SCOPE_TRIAL_LOG'
+
 MAX_LINES = 64          # The launch prompt is the first user row of the file.
 MAX_BYTES = 1 << 18
 _TRAILING = '.,;:!?)]}>"\'*'
@@ -99,3 +106,20 @@ def scope_reason(scope, path):
 
 def out_of_scope(event, path):
     return scope_reason(declared_paths(event), path)
+
+
+def log(rec, path=None):
+    """Append one record to the scope trial log, if one was asked for.
+
+    Opt-in and best effort. A hook that is deciding a Read must not fail, or
+    decide differently, because telemetry could not be written.
+    """
+    try:
+        path = path or os.environ.get(LOG_ENV)
+        if not path:
+            return
+        line = json.dumps(rec, ensure_ascii=False) + '\n'
+        with open(path, 'a', encoding='utf-8') as fh:
+            fh.write(line)
+    except Exception:
+        pass

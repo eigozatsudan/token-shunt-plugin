@@ -142,5 +142,48 @@ class OutOfScopeTests(ScopeFixture):
         self.assertIsNone(rs.out_of_scope(self.event(), str(link)))
 
 
+class TrialLogTests(unittest.TestCase):
+    """The product's own reading of the declared set, recorded while it runs.
+
+    It cannot be recovered afterwards: `declared_paths` requires the files to
+    exist, and the eval deletes its fixture tree between modes, so a post-hoc
+    scoring sees an empty set for every invocation
+    (reviews/scope-prevention-stage1-2026-09-16.md section 7.2). Opt-in, like
+    the send-back trial log, and never able to change a decision.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, 'scope.jsonl')
+
+    def read(self):
+        with open(self.path, encoding='utf-8') as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def test_a_record_is_one_json_line(self):
+        rs.log({'event': 'scope', 'scope': ['/a.py']}, self.path)
+        rs.log({'event': 'refused', 'path': '/b.py'}, self.path)
+        self.assertEqual(['scope', 'refused'], [r['event'] for r in self.read()])
+
+    def test_nothing_is_written_without_a_destination(self):
+        rs.log({'event': 'scope'}, None)
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_the_environment_names_the_destination(self):
+        os.environ[rs.LOG_ENV] = self.path
+        self.addCleanup(os.environ.pop, rs.LOG_ENV, None)
+        rs.log({'event': 'scope'})
+        self.assertEqual(1, len(self.read()))
+
+    def test_an_unwritable_destination_is_swallowed(self):
+        # Telemetry must never raise into a hook that is deciding a Read.
+        rs.log({'event': 'scope'}, os.path.join(self.tmp.name, 'no', 'such.jsonl'))
+
+    def test_a_record_that_cannot_be_serialized_is_swallowed(self):
+        rs.log({'event': 'scope', 'bad': object()}, self.path)
+        self.assertFalse(os.path.exists(self.path))
+
+
 if __name__ == '__main__':
     unittest.main()

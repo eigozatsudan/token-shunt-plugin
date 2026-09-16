@@ -321,6 +321,45 @@ class DeclaredScopeTests(unittest.TestCase):
         self.pre(self.alpha)
         self.assertEqual({}, self.state['paths'])
 
+    def test_the_resolved_scope_is_recorded_once_per_invocation(self):
+        # What the product read as the declared set cannot be recovered after
+        # the run: the files are gone by then (1(b)).
+        log = self.root / 'scope.jsonl'
+        os.environ['SCOPE_TRIAL_LOG'] = str(log)
+        self.addCleanup(os.environ.pop, 'SCOPE_TRIAL_LOG', None)
+        self.declare(self.alpha, self.beta)
+        self.pre(self.alpha)
+        self.pre(self.beta, id='second')
+        records = [json.loads(line) for line in log.read_text().splitlines() if line]
+        scopes = [r for r in records if r['event'] == 'scope']
+        self.assertEqual(1, len(scopes))
+        self.assertEqual(sorted(os.path.realpath(p) for p in (self.alpha, self.beta)),
+                         sorted(scopes[0]['scope']))
+        self.assertEqual(('s1', 'w1'), (scopes[0]['session_id'], scopes[0]['agent_id']))
+
+    def test_a_refusal_is_recorded_with_the_path(self):
+        log = self.root / 'scope.jsonl'
+        os.environ['SCOPE_TRIAL_LOG'] = str(log)
+        self.addCleanup(os.environ.pop, 'SCOPE_TRIAL_LOG', None)
+        self.declare(self.beta)
+        self.pre(self.alpha)
+        refused = [json.loads(line) for line in log.read_text().splitlines()
+                   if line and json.loads(line)['event'] == 'refused']
+        self.assertEqual(1, len(refused))
+        self.assertEqual(os.path.realpath(self.alpha), refused[0]['path'])
+
+    def test_nothing_is_recorded_without_the_environment(self):
+        os.environ.pop('SCOPE_TRIAL_LOG', None)
+        self.declare(self.beta)
+        self.pre(self.alpha)
+        self.assertEqual([], list(self.root.glob('*.jsonl')))
+
+    def test_a_failing_log_does_not_change_the_decision(self):
+        # The refusal is the product; the record is not.
+        with patch('reader_scope.log', side_effect=RuntimeError('disk full')):
+            self.declare(self.beta)
+            self.assertIn('another invocation', self.pre(self.alpha))
+
     def test_the_scope_is_resolved_once_and_kept(self):
         self.declare(self.alpha)
         self.pre(self.alpha)

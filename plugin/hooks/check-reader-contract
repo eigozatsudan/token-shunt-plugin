@@ -51,6 +51,20 @@ def lock_state(source):
             time.sleep(0.01)
 
 
+def record(event, kind, **fields):
+    """Note what the scope was, or what it refused, for a measurement later.
+
+    The refusal is the product; the record is not. Nothing here may raise,
+    and nothing here may change what this hook returns.
+    """
+    try:
+        reader_scope.log(dict(fields, event=kind,
+                              session_id=event.get('session_id'),
+                              agent_id=event.get('agent_id')))
+    except Exception:
+        pass
+
+
 def transition(state, event):
     kind = event['hook_event_name']
     inp = event.get('tool_input', {})
@@ -77,8 +91,10 @@ def transition(state, event):
         # asked to read; without it nothing is refused on identity grounds.
         if 'scope' not in state:
             state['scope'] = sorted(reader_scope.declared_paths(event))
+            record(event, 'scope', scope=state['scope'])
         outside = reader_scope.scope_reason(state['scope'], path)
         if outside:
+            record(event, 'refused', path=path, scope=state['scope'])
             return outside
         if path not in state['paths'] and len(state['paths']) >= 3:
             return 'At most three paths per invocation.'
