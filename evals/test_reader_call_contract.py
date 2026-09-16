@@ -505,6 +505,20 @@ class SkillDocumentTests(unittest.TestCase):
         body = self.AGENT.read_text(encoding='utf-8')
         self.assertIn('first Read of a path carries no `limit`', body)
 
+    def test_agent_requires_the_absolute_path_on_every_confirmed_item(self):
+        # The bullet spec said `confirmed: <path>`, while the unconfirmed
+        # one beside it said `<absolute path>`. A worker read that as
+        # permission to write a basename, and did: the sonnet run at
+        # 9346d19 returned `confirmed: user.rb — ...` for all three files
+        # (reviews/a-suite-failures-9346d19-2026-09-16.md section 1). The
+        # parent copied it faithfully and the run failed on paths nobody
+        # had lost. The path is also what the retention check matches on,
+        # so a relative one is unusable evidence.
+        body = self.AGENT.read_text(encoding='utf-8')
+        self.assertIn('`confirmed: <absolute path>', body)
+        self.assertIn('exactly as the caller supplied it', body)
+        self.assertIn('basename', body)
+
     def test_description_names_the_triggers_the_deny_cannot_carry(self):
         # A rule that only applies when NO deny fires is unreachable unless
         # the description names it: the body is loaded only once the parent

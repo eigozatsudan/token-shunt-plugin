@@ -257,3 +257,41 @@ description しか経路が無く、明示委譲では前者が存在しない�
 テストは `evals/test_worker_launch.py` に 15 件。オフライン: `evals/run.sh`
 240 pass / 0 fail、`unittest discover -s evals` 256 OK、`-s evals/compare`
 432 OK、`judge.py --selftest` 全項目 pass。
+
+## 11. 実装（2026-09-16、§1 sonnet の製品側）
+
+§1 sonnet は「ワーカーの戻り自体が `confirmed: user.rb — …` と相対パス」。
+親は忠実に写しており、親側の欠陥ではない。
+
+原因は**契約の文面そのもの**だった。`plugin/agents/bulk-reader.md` の
+確定項の綴りは `confirmed: <path> — …` で、**絶対パスと書いていない**。
+すぐ上の未確定項は `unconfirmed: <absolute path> — …` と書いてある。
+ワーカーが「確定項は basename でよい」と読む余地があり、実際そう読まれた。
+
+直したのは綴りと理由の 1 文:
+
+```
+confirmed: <absolute path> — <symbol>: <fact or requested scalar value>
+```
+
+に加えて「呼び出し側が渡した絶対パスをそのまま書く。basename・相対パス・
+短縮形は不可。親はこの行を逐語で写し、パスが事実とファイルを結ぶ唯一の
+手がかりなので、短縮すると証拠として使えなくなる」。
+
+テストは `test_reader_call_contract.py::
+test_agent_requires_the_absolute_path_on_every_confirmed_item`。
+
+### 11.1 実行時の検査（既存、変更しない）
+
+SubagentStop の `check_child_items` は、**使える絶対パスを持つ行が 1 本も無い**
+報告を violation として送り戻す。§1 sonnet は 3 行とも相対パスなので、
+送り戻しが入っていればこの経路で捕まる（比較評価は既定 off）。
+
+**混在（一部だけ相対）は素通りする。** 使える行が 1 本でもあれば ok になり、
+相対パスの行は親側の契約で `unconfirmed:` に落ちる。これは設計上の回復手順
+であって、ここを「1 行でも相対なら violation」に変えると送り戻しの発火率が
+変わる。固定 N プローブで S1（誤 block）0 件を測った挙動なので、
+**測定なしでは動かさない。** 変えるなら事前登録して測り直す。
+
+オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals`
+257 OK、`-s evals/compare` 445 OK、`judge.py --selftest` 全項目 pass。

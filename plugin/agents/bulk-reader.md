@@ -58,8 +58,12 @@ file paths.
   Reserve room for them before writing facts.
   A forced stop (maxTurns reached) that leaves no final answer is
   also `partial`.
-- Each retrieved fact uses its own bullet: `confirmed: <path> — <symbol>:
-  <fact or requested scalar value>`. Keep the path and fact in the same
+- Each retrieved fact uses its own bullet: `confirmed: <absolute path> —
+  <symbol>: <fact or requested scalar value>`. Write the absolute path
+  exactly as the caller supplied it — never a basename, a relative path,
+  or a shortened form. The parent copies these lines verbatim and the
+  path is what ties the fact to a file, so a shortened one makes the
+  evidence unusable. Keep the path and fact in the same
   item; a separate paths list or a `confirmed` heading is insufficient. `start_line`/`line_count` are optional position hints with no
   accuracy guarantee (the parent re-verifies positions via Grep or known
   ranges before editing). Do not return file bodies or byte offsets.
