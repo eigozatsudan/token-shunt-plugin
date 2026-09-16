@@ -60,6 +60,11 @@ Agent.
 
 3. **Follow-ups.** Re-ask in a NEW invocation with the same
    explicit paths. No resume, no answer index; the re-input is paid.
+   The same holds when a worker stops without a report (turn limit,
+   error, empty return): ask again in a NEW invocation with the same
+   explicit paths, which counts against the shared cap of 4. Once the
+   cap is reached, report partial with the paths you could not confirm.
+   A stopped worker is never resumed or messaged.
 
 4. **Edit contract (§11.6).** Position authority is the parent's Grep
    (short unique pattern, line numbers, limited output; over budget, the

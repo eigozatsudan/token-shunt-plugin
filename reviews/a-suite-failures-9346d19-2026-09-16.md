@@ -167,3 +167,40 @@ A スイートの実質失敗は、この 2 件の判定器修正を織り込む
 
 オフライン: `evals/run.sh` 240 pass / 0 fail、`unittest discover -s evals/compare`
 414 OK、`judge.py --selftest` 全項目 pass。
+
+## 9. 実装（2026-09-16、§3 の製品側）
+
+§3 は「未検査の契約違反が 77 ラン中 3 件ある」で止まっていた。d4b3aee で
+判定器は resume を見るようになったが、**製品側は止めていなかった**。設計
+906 行（Read 失敗・省略・ターン終了で回答契約を満たせない場合は partial。
+親は自動 resume せず）も 447・908・932 行も、文章だけで強制力が無い。
+
+入れたもの:
+
+- `plugin/hooks/worker_resume.py` — `SendMessage` の `to` が、このセッション
+  が `token-shunt:bulk-reader` / `token-shunt:code-writer` として起動した
+  agent id なら deny する。起動の同定は `sendback_session.launches()`。
+  セッションファイルが読めない・壊れている場合は **deny しない**
+  （読めないセッションは違反の証拠にならない）。
+- `plugin/hooks/check-worker-resume` — PreToolUse エントリポイント。
+  `hooks.json` の PreToolUse に matcher `SendMessage` として登録。
+- deny 文は代替を名指しする。「同じ明示パスで新規 Agent 起動。共有上限 4 に
+  数える。上限に達していれば、確認できなかったパスを添えて partial」。
+- `bulk-reader/SKILL.md` §3 に同じ手順を足した。ワーカーが報告なしで停止した
+  場合（ターン上限・エラー・空戻り）も新規起動、上限なら partial、停止した
+  ワーカーは resume も message もしない。代替を書かない deny は親を行き止まり
+  にするため、フックと本文は対で入れる。
+- 名前の登録は 4 か所: `judge.py` の `TS_HOOKS` と `TS_HOOK_NAMES`
+  （`PreToolUse:SendMessage`）、`test_build_zip.py` の `HOOKS`、
+  `build-zip.sh` の chmod・python 検証・awk 検証。登録済みフックが許可表に
+  無いと、委譲ケースが全部「外部フック」で落ちる。
+
+`test_reader_call_contract.py` の SKILL.md 上限は 7300 → 7700 に上げた。本文の
+規則は 1 行も削っていない（理由はテスト内コメント）。
+
+テストは `evals/test_worker_resume.py` に 12 件（deny 判定 9、登録 2、SKILL.md
+の代替手順 1）。オフライン: `evals/run.sh` 240 pass / 0 fail、
+`unittest discover -s evals` 241 OK、`-s evals/compare` 432 OK、
+`judge.py --selftest` 全項目 pass。実行課金なし。
+
+zip は再生成していない（リリース時にまとめて）。

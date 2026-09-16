@@ -649,7 +649,12 @@ class SkillDocumentTests(unittest.TestCase):
         # are hooked and which are not — a reader that believes the old
         # sentence either fears a deny that will not come or walks into one.
         # ~240 bytes, and the prohibitions above it are untouched.
-        self.assertLess(self.SKILL.stat().st_size, 7300,
+        # Raised from 7300 on 2026-09-16: check-worker-resume now denies
+        # SendMessage to a stopped worker, and a deny that names no
+        # alternative strands the parent. §3 has to say what replaces
+        # resume — a new invocation with the same paths inside the cap of
+        # 4, else partial. ~330 bytes, no body rule removed.
+        self.assertLess(self.SKILL.stat().st_size, 7700,
                         self.SKILL.stat().st_size)
 
 
