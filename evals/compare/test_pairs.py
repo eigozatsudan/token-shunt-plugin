@@ -105,8 +105,8 @@ class OutputTests(PairsFixture):
         self.assertEqual(row["auto_read_bytes"], "0")
         self.assertEqual(row["direct_cost_usd"], "0.2500")
         self.assertEqual(row["auto_cost_usd"], "0.3000")
-        self.assertEqual(row["direct_accuracy_any"], "1")
-        self.assertEqual(row["auto_accuracy_any"], "1")
+        self.assertEqual(row["direct_accuracy"], "1")
+        self.assertEqual(row["auto_accuracy"], "1")
         self.assertEqual(row["direct_pass"], "1")
         self.assertEqual(row["auto_pass"], "1")
 
@@ -119,7 +119,7 @@ class OutputTests(PairsFixture):
         self.assertEqual(got.stdout.splitlines()[0],
                          "run,case,direct_read_bytes,auto_read_bytes,"
                          "direct_cost_usd,auto_cost_usd,"
-                         "direct_accuracy_any,auto_accuracy_any,"
+                         "direct_accuracy,auto_accuracy,"
                          "direct_pass,auto_pass,auto_reasons")
 
     def test_rows_are_sorted_so_the_file_is_stable(self):
@@ -142,7 +142,36 @@ class OutputTests(PairsFixture):
         self.assertEqual(row["auto_pass"], "0")
         self.assertIn("child_no_body", row["auto_reasons"])
 
-    def test_a_missing_accuracy_check_is_blank_not_zero(self):
+    def test_the_plain_accuracy_check_is_used_when_there_is_no_accuracy_any(self):
+        # Cases declare accuracy_any, or accuracy, or neither. Reading only
+        # the first drops a fact the run did record; reporting 0/20 that way
+        # has already happened once
+        # (reviews/fence-prevalence-design-2026-09-17.md, section 11.2).
+        d, _ = self.run_dir("run.aaa", "c1")
+        (d / "summary.json").write_text(json.dumps(
+            {"cases": {"c1": {"modes": {
+                "direct": {"checks": {"accuracy": True}, "reasons": []},
+                "auto": {"checks": {"accuracy": False}, "reasons": []}}}}}))
+        self.transcript(d, "c1", "direct")
+        self.transcript(d, "c1", "auto")
+        row = self.rows(self.pairs(str(self.runs)).stdout)[0]
+        self.assertEqual(row["direct_accuracy"], "1")
+        self.assertEqual(row["auto_accuracy"], "0")
+
+    def test_accuracy_any_wins_when_a_case_declares_both(self):
+        d, _ = self.run_dir("run.aaa", "c1")
+        (d / "summary.json").write_text(json.dumps(
+            {"cases": {"c1": {"modes": {
+                "direct": {"checks": {"accuracy_any": True, "accuracy": False},
+                           "reasons": []},
+                "auto": {"checks": {"accuracy_any": True, "accuracy": False},
+                         "reasons": []}}}}}))
+        self.transcript(d, "c1", "direct")
+        self.transcript(d, "c1", "auto")
+        self.assertEqual(self.rows(self.pairs(str(self.runs)).stdout)[0]
+                         ["direct_accuracy"], "1")
+
+    def test_a_case_declaring_neither_accuracy_check_is_blank_not_zero(self):
         # An absent check and a failed one are different facts, and a row
         # that calls the first a zero cannot be told from the second later.
         d, _ = self.run_dir("run.aaa", "c1")
@@ -152,7 +181,7 @@ class OutputTests(PairsFixture):
         self.transcript(d, "c1", "direct")
         self.transcript(d, "c1", "auto")
         row = self.rows(self.pairs(str(self.runs)).stdout)[0]
-        self.assertEqual(row["direct_accuracy_any"], "")
+        self.assertEqual(row["direct_accuracy"], "")
 
 
 class SelectionTests(PairsFixture):
@@ -224,7 +253,7 @@ class SingleArmTests(PairsFixture):
         rows = self.rows(got.stdout)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["auto_cost_usd"], "0.3000")
-        self.assertEqual(rows[0]["auto_accuracy_any"], "1")
+        self.assertEqual(rows[0]["auto_accuracy"], "1")
 
     def test_the_arm_that_did_not_run_is_blank_not_zero(self):
         # Zero bytes and zero dollars are findings: zero is exactly what a
@@ -233,7 +262,7 @@ class SingleArmTests(PairsFixture):
         self.auto_only()
         row = self.rows(self.pairs(str(self.runs)).stdout)[0]
         for column in ("direct_read_bytes", "direct_cost_usd",
-                       "direct_accuracy_any", "direct_pass"):
+                       "direct_accuracy", "direct_pass"):
             self.assertEqual(row[column], "", column)
 
     def test_a_direct_only_case_is_a_row_with_the_auto_columns_blank(self):
@@ -243,7 +272,7 @@ class SingleArmTests(PairsFixture):
                                                    "reasons": []}}}}}))
         self.transcript(d, "c1", "direct", costs=[0.2])
         row = self.rows(self.pairs(str(self.runs)).stdout)[0]
-        self.assertEqual(row["direct_accuracy_any"], "0")
+        self.assertEqual(row["direct_accuracy"], "0")
         self.assertEqual(row["auto_cost_usd"], "")
         self.assertEqual(row["auto_reasons"], "")
 
@@ -261,7 +290,7 @@ class SingleArmTests(PairsFixture):
         self.assertEqual(self.pairs(str(self.runs)).stdout.splitlines()[0],
                          "run,case,direct_read_bytes,auto_read_bytes,"
                          "direct_cost_usd,auto_cost_usd,"
-                         "direct_accuracy_any,auto_accuracy_any,"
+                         "direct_accuracy,auto_accuracy,"
                          "direct_pass,auto_pass,auto_reasons")
 
     def test_single_and_paired_cases_can_share_one_block(self):

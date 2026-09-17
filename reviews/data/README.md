@@ -45,16 +45,32 @@ worker が何を報告したかを問う測定では direct に worker が居ら
 ## 列
 
 `run`, `case`, `direct_read_bytes`, `auto_read_bytes`,
-`direct_cost_usd`, `auto_cost_usd`, `direct_accuracy_any`,
-`auto_accuracy_any`, `direct_pass`, `auto_pass`, `auto_reasons`
+`direct_cost_usd`, `auto_cost_usd`, `direct_accuracy`,
+`auto_accuracy`, `direct_pass`, `auto_pass`, `auto_reasons`
 
 - `*_read_bytes` は**親自身**が Read で飲んだ、fixture 配下のバイト数。
   子が読んだ分は含まない（それが製品の目的そのものなので）。
-- `*_accuracy_any` と `*_pass` は、**検査が無かった場合は空欄**。
+- `*_accuracy` と `*_pass` は、**検査が無かった場合は空欄**。
   空欄と 0 は違う事実である。**走らなかった腕も同様に空欄**である。
-- `*_accuracy_any` は `accuracy_any` だけを見る。
-  **`accuracy` しか宣言していない case は空欄になる**（0 ではない）。
+- `*_accuracy` は **`accuracy_any` があればそれ、無ければ `accuracy`、
+  どちらも無ければ空欄**。case によって 3 通りある。
+  **列名は事実（答えが合っていたか）で付けてあり、検査名ではない。**
+  どちらの検査だったかは `evals/compare/cases.json` の case 宣言で分かる。
+  以前、`accuracy` しか持たない case を空欄と読んで **0/20 と誤報した**
+  （`reviews/fence-prevalence-design-2026-09-17.md` §11.2）。
 - **case 固有の指標はここに足さない。** それは review に書く。
+
+## 古い CSV
+
+`cf88864` より前に `pairs.py` が書いた CSV は、この列を
+**`direct_accuracy_any` / `auto_accuracy_any`** という名前で持つ
+（`pairs-tool-trial-2026-09-17.csv`）。**値の意味は当時のまま**で、
+`accuracy` しか宣言していない case は空欄になっている。
+**書き直さない** — run が無いので作り直せず、手で直せば
+「CSV は事後に編集しない」を破ることになる。
+
+`fence-sendback-2026-09-17.csv` と `fence-prevalence-2026-09-17.csv` は
+`pairs.py` ではなく書き捨ての採点器が書いたもので、列も別である。
 
 ## 注意
 

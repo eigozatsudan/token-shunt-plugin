@@ -46,7 +46,7 @@ USAGE = 2
 MODES = ('direct', 'auto')
 COLUMNS = ['run', 'case', 'direct_read_bytes', 'auto_read_bytes',
            'direct_cost_usd', 'auto_cost_usd',
-           'direct_accuracy_any', 'auto_accuracy_any',
+           'direct_accuracy', 'auto_accuracy',
            'direct_pass', 'auto_pass', 'auto_reasons']
 
 
@@ -70,12 +70,28 @@ def arm_row(run, case, mode, verdict, root):
     row = {
         '%s_read_bytes' % mode: parent_read_bytes(transcript, root),
         '%s_cost_usd' % mode: '%.4f' % (transcript_cost(transcript) or 0.0),
-        '%s_accuracy_any' % mode: flag(checks.get('accuracy_any')),
+        '%s_accuracy' % mode: flag(accuracy(checks)),
         '%s_pass' % mode: flag(not reasons),
     }
     if mode == 'auto':
         row['auto_reasons'] = '; '.join(str(r) for r in reasons)
     return row
+
+
+def accuracy(checks):
+    """`accuracy_any` if the case declares it, else `accuracy`, else nothing.
+
+    Cases declare one, the other, or neither. Reading only `accuracy_any`
+    drops a result the run did record, and that has already been reported
+    as a row of zeroes once
+    (reviews/fence-prevalence-design-2026-09-17.md, section 11.2). The
+    column is named for the fact -- whether the answer was right -- not for
+    the check that established it; which check a case declares is in
+    cases.json.
+    """
+    if 'accuracy_any' in checks:
+        return checks['accuracy_any']
+    return checks.get('accuracy')
 
 
 def pair_rows(runs_root, root_base=None, warn=None):
