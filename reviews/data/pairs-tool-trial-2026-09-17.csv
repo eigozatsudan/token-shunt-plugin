@@ -1,0 +1,5 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy_any,auto_accuracy_any,direct_pass,auto_pass,auto_reasons
+run.1tNgbqAO,redmine-last-query,5690,0,0.0561,0.1468,1,1,1,1,
+run.JY3Z2wgL,redmine-last-helper,78934,0,0.1785,0.1115,1,1,1,1,
+run.Zh1Yx9Kj,redmine-last-user,39970,0,0.1033,0.0970,1,1,1,1,
+run.z3pIlThS,redmine-last-journal,3694,0,0.0516,0.1019,1,1,1,1,
