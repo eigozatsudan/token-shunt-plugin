@@ -102,3 +102,11 @@ pair ではないので `pairs.py` の列とは別物。
 `wording-live-check-round2` の 3/3 pass は、この率の下でも
 48% の確率で起きる — **単独で引用しないこと**。
 記録: `reviews/parent-no-read-rate-2026-09-17.md`。
+
+## parent-no-read-shape-2026-09-17.csv
+
+漏れ 13 arm の形の分類（事後探索・事前登録なし）。列は
+`run,mode,path,shape,any_denied_read,parent_agent_calls,agents_carrying_path`。
+`shape` は path 単位の分類なので、**条文が届く範囲を数えるときは
+`parent_agent_calls` と併せて読むこと** — arm が何かを委譲していれば
+現行条文は当たる（14/31）。記録: `reviews/parent-no-read-shape-2026-09-17.md`。
