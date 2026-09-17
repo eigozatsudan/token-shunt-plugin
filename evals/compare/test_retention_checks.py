@@ -353,10 +353,49 @@ class CodeFenceTests(unittest.TestCase):
             '```\ndef joins_for_order_statement(order_options)\n```\n\n'
             + item(A, 'last method: joins_for_order_statement'))
         self.assertEqual(got['status'], rc.VIOLATION)
-        # Opening and closing marker: both lines are reported, so the
-        # worker sees exactly what to delete.
-        self.assertEqual(len(got['fences']), 2)
+        # One entry per fenced block, not per marker line.
+        self.assertEqual(len(got['fences']), 1)
         self.assertIn('code fence', got['reason'])
+
+    def test_the_entry_locates_the_fence_and_quotes_what_is_inside(self):
+        # Measured 2026-09-17: a bare fence made the send-back say
+        # '```; ```', which tells the worker nothing about what to delete
+        # (reviews/fence-sendback-2026-09-17.md section 4).
+        got = rc.check_code_fence(
+            'line one\nline two\n```\ndef joins_for_order_statement(o)\n```')
+        entry = got['fences'][0]
+        self.assertIn('line 3', entry)
+        self.assertIn('def joins_for_order_statement(o)', entry)
+
+    def test_an_info_string_is_kept(self):
+        got = rc.check_code_fence('```ruby\ndef x\n```')
+        self.assertIn('```ruby', got['fences'][0])
+
+    def test_a_long_quoted_line_is_truncated(self):
+        got = rc.check_code_fence('```\n' + 'z' * 500 + '\n```')
+        entry = got['fences'][0]
+        self.assertLess(len(entry), 200)
+        self.assertIn('…', entry)
+
+    def test_an_empty_fence_says_so_rather_than_quoting_nothing(self):
+        got = rc.check_code_fence('```\n```')
+        self.assertIn('empty', got['fences'][0])
+
+    def test_the_first_non_empty_line_inside_is_the_one_quoted(self):
+        got = rc.check_code_fence('```\n\n\ndef x\n```')
+        self.assertIn('def x', got['fences'][0])
+
+    def test_an_unclosed_fence_is_still_reported(self):
+        got = rc.check_code_fence('```\ndef x')
+        self.assertEqual(got['status'], rc.VIOLATION)
+        self.assertEqual(len(got['fences']), 1)
+        self.assertIn('def x', got['fences'][0])
+
+    def test_two_blocks_are_two_entries(self):
+        got = rc.check_code_fence('```\ndef a\n```\nprose\n```\ndef b\n```')
+        self.assertEqual(len(got['fences']), 2)
+        self.assertIn('def a', got['fences'][0])
+        self.assertIn('def b', got['fences'][1])
 
     def test_a_tilde_fence_counts(self):
         got = rc.check_code_fence('~~~ruby\ndef x\n~~~')
@@ -384,6 +423,7 @@ class CodeFenceTests(unittest.TestCase):
     def test_the_reason_quotes_the_opening_line(self):
         got = rc.check_code_fence('```ruby\ndef x\n```')
         self.assertIn('```ruby', got['reason'])
+        self.assertIn('def x', got['reason'])
 
 
 class DeclaredLengthTests(unittest.TestCase):

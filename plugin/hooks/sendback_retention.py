@@ -137,8 +137,12 @@ _DECLARED = re.compile(r"\((\d{1,4})\s*(?:chars?|characters)\)", re.I)
 # backticks and trailing sentence punctuation are stripped before counting.
 _LITERAL = re.compile(r"[^\s`\"']{4,}")
 # A fence opens a line, optionally indented. Three marks, not two: ``x``
-# is inline code, which the contract allows.
+# is inline code, which the contract allows. Markers alternate open/close,
+# whichever mark is used: a report is not Markdown to render, and the
+# simpler rule cannot miss a block.
 _FENCE = re.compile(r"[ \t]*(?:```|~~~)")
+# How much of the quoted line the send-back repeats back to the worker.
+_QUOTE_MAX = 60
 
 
 def _literals(text):
@@ -170,13 +174,41 @@ def check_code_fence(text):
 
     Inline backticks are left alone: the contract bans fences, and a
     symbol in single backticks is how a compliant report names one.
+
+    One entry per fenced block, locating it and quoting the first line
+    inside. Listing the marker lines instead told a worker facing a bare
+    fence only "```; ```", which names nothing it could act on
+    (reviews/fence-sendback-2026-09-17.md section 4).
     """
-    fences = [line.strip() for line in (text or '').splitlines()
-              if _FENCE.match(line)]
+    lines = (text or '').splitlines()
+    fences, opened = [], None
+    for number, line in enumerate(lines, 1):
+        if not _FENCE.match(line):
+            continue
+        if opened is None:
+            opened = (number, line.strip())
+        else:
+            fences.append(_describe(opened, lines[opened[0]:number - 1]))
+            opened = None
+    if opened is not None:
+        # An unclosed fence is still a fence: everything after it is quoted.
+        fences.append(_describe(opened, lines[opened[0]:]))
     if not fences:
         return {'status': OK, 'reason': '', 'fences': []}
     return {'status': VIOLATION, 'fences': fences,
             'reason': 'code fence in the report: ' + '; '.join(fences)}
+
+
+def _describe(opened, inside):
+    """`line 3: ``` — def foo(bar)`, so the worker can find and delete it."""
+    number, marker = opened
+    first = next((line.strip() for line in inside if line.strip()), '')
+    if not first:
+        return 'line %d: %s (empty fence)' % (number, marker)
+    if len(first) > _QUOTE_MAX:
+        # Enough to identify the block, never enough to be a body quote.
+        first = first[:_QUOTE_MAX] + '…'
+    return 'line %d: %s — %s' % (number, marker, first)
 
 
 def check_declared_lengths(text):

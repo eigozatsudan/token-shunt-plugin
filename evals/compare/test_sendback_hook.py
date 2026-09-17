@@ -561,6 +561,18 @@ class WorkerTests(HookFixture):
         self.assertIn('code fence', out['reason'])
         self.assertIn('prose', out['reason'])
 
+    def test_the_send_back_names_what_to_delete(self):
+        # A bare fence used to produce 'code fence in the report: ```; ```',
+        # which named nothing (reviews/fence-sendback-2026-09-17.md
+        # section 4). The worker repaired it anyway; the next one may not.
+        rec, out = sh.decide(self.worker_event(
+            'The last def is at line 1691:\n\n'
+            '```\ndef joins_for_order_statement(order_options)\n```\n\n'
+            + self.line))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('def joins_for_order_statement', out['reason'])
+        self.assertIn('line 3', out['reason'])
+
     def test_a_report_without_a_fence_records_the_check_as_ok(self):
         rec, out = sh.decide(self.worker_event(self.line))
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
