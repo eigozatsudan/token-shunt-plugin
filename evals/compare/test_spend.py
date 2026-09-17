@@ -86,6 +86,63 @@ class SpendTests(unittest.TestCase):
         self.transcript("run.a", "case.jsonl", 1.5)
         self.assertEqual(3, self.spend("--cap", "1.0", str(self.root)).returncode)
 
+    def test_a_reserve_stops_one_run_before_the_cap(self):
+        # The check runs BEFORE a run, so a bare cap overshoots by up to one
+        # run: $1.0868 went out against a $1.0 cap on 2026-09-17
+        # (reviews/pairs-tool-trial-2026-09-17.md section 3). The reserve is
+        # what the next run is expected to cost.
+        self.transcript("r1", "a.jsonl", 0.80)
+        self.assertEqual(0, self.spend("--cap", "1.0", str(self.root)).returncode)
+        result = self.spend("--cap", "1.0", "--reserve", "0.25", str(self.root))
+        self.assertEqual(3, result.returncode)
+        self.assertIn("0.25", result.stderr)
+
+    def test_a_reserve_that_still_fits_exits_zero(self):
+        self.transcript("r1", "a.jsonl", 0.50)
+        self.assertEqual(0, self.spend("--cap", "1.0", "--reserve", "0.25",
+                                       str(self.root)).returncode)
+
+    def test_the_boundary_stops(self):
+        # total + reserve == cap: the run would land exactly on the cap, and
+        # the bare cap already treats landing on it as a stop.
+        self.transcript("r1", "a.jsonl", 0.75)
+        self.assertEqual(3, self.spend("--cap", "1.0", "--reserve", "0.25",
+                                       str(self.root)).returncode)
+
+    def test_a_reserve_over_the_whole_cap_stops_before_anything_is_spent(self):
+        # Nothing spent yet and one run cannot fit: starting is the mistake.
+        result = self.spend("--cap", "0.20", "--reserve", "0.25", str(self.root))
+        self.assertEqual(3, result.returncode)
+
+    def test_the_printed_total_is_the_spend_not_the_reserve(self):
+        # The number on stdout is what has been spent; the reserve only
+        # decides the exit code.
+        self.transcript("r1", "a.jsonl", 0.80)
+        result = self.spend("--cap", "1.0", "--reserve", "0.25", str(self.root))
+        self.assertEqual("0.8000", result.stdout.splitlines()[0])
+
+    def test_the_options_may_come_in_either_order(self):
+        self.transcript("r1", "a.jsonl", 0.80)
+        self.assertEqual(3, self.spend("--reserve", "0.25", "--cap", "1.0",
+                                       str(self.root)).returncode)
+
+    def test_a_reserve_without_a_cap_is_a_usage_error(self):
+        # A reserve decides nothing on its own, and silently ignoring it
+        # would leave the caller believing it had a stop rule.
+        result = self.spend("--reserve", "0.25", str(self.root))
+        self.assertEqual(2, result.returncode)
+        self.assertIn("cap", result.stderr.lower())
+
+    def test_a_reserve_that_is_not_a_positive_number_is_a_usage_error(self):
+        for bad in ("abc", "0", "-1"):
+            with self.subTest(bad=bad):
+                result = self.spend("--cap", "1.0", "--reserve", bad,
+                                    str(self.root))
+                self.assertEqual(2, result.returncode)
+
+    def test_a_reserve_with_no_value_is_a_usage_error(self):
+        self.assertEqual(2, self.spend("--cap", "1.0", "--reserve").returncode)
+
     def test_a_cap_that_is_not_a_positive_number_is_a_usage_error(self):
         # Distinct from the over-cap code, so a typo cannot read as "stop".
         for bad in ("nonsense", "-1", "0"):
