@@ -39,10 +39,13 @@ Agent.
    in sight: once a path has gone to a worker, that worker's report is
    the answer, so don't read the file yourself to check it, to finish
    it, or because the file is small enough that the Read would pass.
-   The order does not save a Read either: when one question spans
-   several paths and any one of them routes to a worker, they all go in
-   that invocation — don't read the small ones yourself first and
-   delegate only the one that was denied.
+   The order does not save a Read either, and neither does the
+   small-task check above: when one question spans several paths and any
+   one of them routes to a worker, every path of that question goes to
+   the worker in that invocation. A path being small enough to keep is
+   not a reason to keep it — split that way the parent ends up holding
+   body the worker was there to hold, and the relationship answer gets
+   stitched out of two contexts, which §2 forbids.
    Parent Reads stay reserved for the edit contract in step 4.
 
 2. **Batching.** One invocation = at most 3 explicit paths. Relationship

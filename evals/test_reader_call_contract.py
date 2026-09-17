@@ -706,7 +706,15 @@ class SkillDocumentTests(unittest.TestCase):
         # delegation (reviews/parent-no-read-ab-2026-09-17.md section 5).
         # Step 1 now says the paths of one question travel together;
         # ~250 bytes, nothing removed.
-        self.assertLess(self.SKILL.stat().st_size, 8200,
+        # Raised from 8200 the same day: that repair ended "delegate only
+        # the one that was denied", which let the deny condition back in
+        # through the tail, and the live run walked straight through it --
+        # wc -c on all three, two small files read in the parent, the big
+        # one delegated, no deny anywhere
+        # (reviews/wording-live-check-2026-09-17.md, run.UIXaDr2A auto).
+        # The rule now carries no deny and says the small-task check does
+        # not exempt a path; ~230 bytes, nothing removed.
+        self.assertLess(self.SKILL.stat().st_size, 8500,
                         self.SKILL.stat().st_size)
 
 

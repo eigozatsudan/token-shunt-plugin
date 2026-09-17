@@ -1,0 +1,4 @@
+run,case,mode,parent_no_read,reason,cost_usd
+run.UIXaDr2A,auto-explicit-multifile,auto,FAIL,parent_no_read: parent Read succeeded on {FIX}/rails/app/models/concerns/notifiable.rb; parent_no_read: parent Read succeeded on {FIX}/rails/app/jobs/welcome_email_job.rb,0.1481
+run.UIXaDr2A,auto-explicit-multifile,haiku,pass,,0.1057
+run.UIXaDr2A,auto-explicit-multifile,sonnet,pass,,0.2065

@@ -173,11 +173,22 @@ class RegistrationTests(unittest.TestCase):
         # nothing above covered it
         # (reviews/parent-no-read-ab-2026-09-17.md section 5,
         # run.mnVnW1FU auto-explicit-multifile.sonnet).
+        #
+        # The first repair ended "delegate only the one that was denied",
+        # which put the deny condition back in through the tail. The live
+        # run measured it: a parent sized all three with wc -c, read the
+        # two small files and delegated the big one, no deny anywhere
+        # (reviews/wording-live-check-2026-09-17.md, run.UIXaDr2A auto).
+        # The rule is now stated without any deny in it, and says which
+        # side of the small-task check wins.
         skill = ' '.join((HOOKS.parent / 'skills' / 'bulk-reader'
                           / 'SKILL.md').read_text(encoding='utf-8').split())
-        clause = skill[skill.index('recover the answer'):][:900]
+        clause = skill[skill.index('recover the answer'):][:1100]
         self.assertIn('order does not save a Read', clause)
-        self.assertIn('they all go in that invocation', clause)
+        self.assertIn('every path of that question goes to the worker',
+                      clause)
+        self.assertNotIn('the one that was denied', clause)
+        self.assertNotIn('denied', clause[clause.index('order does not'):])
 
 
 if __name__ == '__main__':
