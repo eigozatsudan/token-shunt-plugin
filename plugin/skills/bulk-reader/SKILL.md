@@ -125,3 +125,7 @@ Several small files, each under the hook thresholds, can still total
 over 16384 bytes without firing a deny. v0.1 does not auto-delegate
 that; delegate through this skill only when the parent decides it's
 needed.
+
+Editing a file that has already gone to a worker is likewise out of
+scope: the hook locks that path against parent Reads, and step 4 needs
+one. If an edit is coming, keep it out of the worker call.

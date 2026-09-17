@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""PostToolUse entry point: lock the paths a worker launch carried.
+
+The decision lives in `delegated_paths`, beside this file so the tests can
+import it; running a script puts that directory on the path. Registered in
+hooks.json on PostToolUse for Agent|Task.
+"""
+import sys
+
+import delegated_paths
+
+if __name__ == '__main__':
+    sys.exit(delegated_paths.main('launch'))
