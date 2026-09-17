@@ -1366,7 +1366,13 @@
               "{FIX}/gen/collide/beta.py"
             ]
           },
-          "retry_policy": true
+          "retry_policy": true,
+          "parent_no_read": [
+            "{FIX}/gen/collide/alpha.py",
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/gen/collide/beta.py"
+          ]
         }
       },
       "note": "Experiment only (suite X, billed by slot). Follow-up turns of one session: the parent holds no file bodies, so each turn forces a fresh worker whose declared set is narrowed. That narrowing is the opportunity the scope measurement counts (reviews/scope-followup-design-2026-09-16.md). Turns 2 and 3 ask about earlier findings; neither asks for a file to be read."
@@ -1404,7 +1410,11 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/models/issue.rb",
+            "{FIX}/redmine/app/models/issue_status.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1446,7 +1456,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/models/issue.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1485,7 +1498,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/models/journal.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1523,7 +1539,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/models/user.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1561,7 +1580,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/models/query.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1599,7 +1621,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1630,7 +1655,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1661,7 +1689,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ]
         }
       },
       "gold_any": [
@@ -1699,7 +1730,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/views/generic/list.py"
+          ]
         }
       },
       "gold_any": [
@@ -1737,7 +1771,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/db/models/indexes.py"
+          ]
         }
       },
       "gold_any": [
@@ -1775,7 +1812,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/db/backends/sqlite3/introspection.py"
+          ]
         }
       },
       "gold_any": [
@@ -1813,7 +1853,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/core/management/base.py"
+          ]
         }
       },
       "gold_any": [
@@ -1851,7 +1894,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/test/utils.py"
+          ]
         }
       },
       "gold_any": [
@@ -1889,7 +1935,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/forms/fields.py"
+          ]
         }
       },
       "gold_any": [
@@ -1927,7 +1976,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/db/models/expressions.py"
+          ]
         }
       },
       "gold_any": [
@@ -1965,7 +2017,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/db/models/sql/query.py"
+          ]
         }
       },
       "gold_any": [

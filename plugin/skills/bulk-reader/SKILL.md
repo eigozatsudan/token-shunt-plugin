@@ -35,8 +35,11 @@ Agent.
    with `files_with_matches`, or `content` with `head_limit`
    1-20 and no `-A`/`-B`/`-C`/`context`. After a denied Read, never
    recover the answer through Bash, Grep, or smaller parent Reads;
-   follow-ups go to a new bounded worker call, and parent Reads stay
-   reserved for the edit contract in step 4.
+   follow-ups go to a new bounded worker call. This holds with no deny
+   in sight: once a path has gone to a worker, that worker's report is
+   the answer, so don't read the file yourself to check it, to finish
+   it, or because the file is small enough that the Read would pass.
+   Parent Reads stay reserved for the edit contract in step 4.
 
 2. **Batching.** One invocation = at most 3 explicit paths. Relationship
    questions across files MUST pass those paths in the same invocation

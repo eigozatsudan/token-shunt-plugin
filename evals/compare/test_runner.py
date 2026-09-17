@@ -1055,12 +1055,62 @@ class DjangoDoseCaseTests(unittest.TestCase):
             with self.subTest(case=case):
                 mine = dict(self.by_id[case]["expect"]["delegate"])
                 theirs = dict(self.origin["expect"]["delegate"])
-                self.assertEqual(["{FIX}/django/" + path],
-                                 mine.pop("child_reads_once"))
-                theirs.pop("child_reads_once")
+                for key in ("child_reads_once", "parent_no_read"):
+                    self.assertEqual(["{FIX}/django/" + path], mine.pop(key), key)
+                    theirs.pop(key)
                 self.assertEqual(theirs, mine)
 
     def test_they_are_shelved_so_an_absent_corpus_cannot_gate_a_release(self):
         for case in self.FILES:
             with self.subTest(case=case):
                 self.assertEqual("X", self.by_id[case]["suite"])
+
+
+class ReadOnlyDelegationTests(unittest.TestCase):
+    """A case that only delegates reading must forbid every parent Read.
+
+    `parent_no_full_read` tolerates a targeted read because the edit
+    contract needs one. Where there is no edit, there is nothing for the
+    parent to read: the worker read the file. A Django run launched the
+    worker, read a 12-line slice of the same file itself, and passed every
+    check (reviews/django-dose-2026-09-17.md section 5).
+    """
+
+    def setUp(self):
+        self.cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+
+    def read_only(self):
+        for case in self.cases:
+            expect = case.get("expect") or {}
+            delegate = expect.get("delegate") or {}
+            if not delegate.get("child_reads_once"):
+                continue
+            blob = json.dumps(expect)
+            if "parent_targeted_read" in blob or "edit_flow" in blob:
+                continue          # the parent reads the original on purpose
+            yield case, delegate
+
+    def test_every_read_only_case_forbids_the_parent_its_own_read(self):
+        checked = 0
+        for case, delegate in self.read_only():
+            if case.get("suite") != "X":
+                continue          # widening this to the release suites needs a run
+            checked += 1
+            with self.subTest(case=case["id"]):
+                self.assertEqual(sorted(delegate["child_reads_once"]),
+                                 sorted(delegate.get("parent_no_read") or []),
+                                 "%s: the worker's paths are not the parent's"
+                                 % case["id"])
+        self.assertGreater(checked, 10)
+
+    def test_no_case_forbids_a_read_it_also_requires(self):
+        # parent_no_read and parent_reads on one path would be unsatisfiable.
+        for case in self.cases:
+            delegate = (case.get("expect") or {}).get("delegate") or {}
+            forbidden = set(delegate.get("parent_no_read") or [])
+            if not forbidden:
+                continue
+            with self.subTest(case=case["id"]):
+                self.assertEqual(set(), forbidden & set(
+                    delegate.get("parent_reads") or []))

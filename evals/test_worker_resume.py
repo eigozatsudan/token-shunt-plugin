@@ -153,6 +153,17 @@ class RegistrationTests(unittest.TestCase):
         clause = skill[skill.index('stops without a report'):][:400]
         self.assertIn('new invocation', clause.lower())
         self.assertIn('partial', clause)
+    def test_the_skill_forbids_the_parent_read_without_needing_a_deny_first(self):
+        # The rule used to begin "After a denied Read", so a parent that
+        # delegated a file small enough to pass the hook was not covered by
+        # it at all. One did exactly that, read a slice of the file it had
+        # delegated, and passed every check
+        # (reviews/django-dose-2026-09-17.md section 5, run.o9sZc80u).
+        skill = ' '.join((HOOKS.parent / 'skills' / 'bulk-reader'
+                          / 'SKILL.md').read_text(encoding='utf-8').split())
+        clause = skill[skill.index('recover the answer'):][:600]
+        self.assertIn('no deny in sight', clause)
+        self.assertIn("worker's report is the answer", clause)
 
 
 if __name__ == '__main__':

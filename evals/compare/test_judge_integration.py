@@ -28,7 +28,9 @@ def child_read(agent_id, rid, path, body='ok'):
              {'type': 'tool_result', 'tool_use_id': rid, 'content': body}]}}]
 
 
-class JudgeIntegrationTests(unittest.TestCase):
+class JudgeFixture(unittest.TestCase):
+    """Case specs resolved into a temporary tree, and the judge run on them."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -58,6 +60,8 @@ class JudgeIntegrationTests(unittest.TestCase):
         p.write_text('\n'.join(json.dumps(e) for e in [init] + events))
         return judge.judge(str(p), spec, {'mode': mode})
 
+
+class JudgeIntegrationTests(JudgeFixture):
     def test_actual_edit_case_enforces_order(self):
         spec = self.case('auto-edit-grep-location')
         spec['gold'] = ['HDR_MODE=on']
@@ -434,3 +438,80 @@ class QuoteLeakContiguityTests(unittest.TestCase):
     def test_crlf_reply_matches_lf_fixture(self):
         body = "".join("line%d\n" % i for i in range(30))
         self.assertTrue(judge.quote_leak(body.replace("\n", "\r\n"), ["f"], {"f": body})[0])
+
+
+class ParentNoReadTests(JudgeFixture):
+    """A delegated path the parent read itself, in any amount.
+
+    `parent_no_full_read` only catches a full read. On Django the parent
+    launched the worker and then read a 12-line slice of the same file, and
+    the run passed every check (reviews/django-dose-2026-09-17.md section 5,
+    run.o9sZc80u). Corpus body reached the parent and nothing said so.
+    """
+
+    def spec_with_parent_no_read(self):
+        spec = self.case('auto-routing-boundary-16k-plus')
+        path = spec['expect']['delegate']['parent_no_full_read'][0]
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text('padding\n' * 400 + 'marker\n')
+        spec['expect']['delegate']['parent_no_read'] = [path]
+        return spec, path, spec['gold'][0]
+
+    def delegation(self, path, gold):
+        return (tool('a', 'Agent', {
+            'subagent_type': 'token-shunt:bulk-reader', 'model': 'haiku',
+            'prompt': path}, 'confirmed: ' + gold,
+            extra={'resolvedModel': 'claude-haiku'})
+            + child_read('a', 'cr', path, gold)
+            + [{'type': 'result', 'result': gold}])
+
+    def test_a_targeted_parent_read_fails_although_it_is_not_a_full_read(self):
+        spec, path, gold = self.spec_with_parent_no_read()
+        events = tool('r', 'Read', {'file_path': path, 'offset': 399,
+                                    'limit': 3}, '399→padding\n400→marker')
+        v, _ = self.run_judge(events + self.delegation(path, gold), spec)
+        self.assertFalse(v['checks'].get('parent_no_read'))
+        self.assertTrue(v['checks'].get('parent_no_full_read'),
+                        'this is the gap: the old check sees nothing wrong')
+        self.assertIn('parent_no_read', ' '.join(v['reasons']))
+
+    def test_a_full_parent_read_fails_it_too(self):
+        spec, path, gold = self.spec_with_parent_no_read()
+        events = tool('r', 'Read', {'file_path': path}, 'padding')
+        v, _ = self.run_judge(events + self.delegation(path, gold), spec)
+        self.assertFalse(v['checks'].get('parent_no_read'))
+
+    def test_a_run_where_only_the_worker_read_passes(self):
+        spec, path, gold = self.spec_with_parent_no_read()
+        v, _ = self.run_judge(self.delegation(path, gold), spec)
+        self.assertTrue(v['checks'].get('parent_no_read'), v['reasons'])
+
+    def test_a_denied_parent_read_passes_because_no_body_came_back(self):
+        # The hook denying a Read is the product working. What is judged is
+        # whether corpus body reached the parent, not whether it was asked for.
+        spec, path, gold = self.spec_with_parent_no_read()
+        events = tool('r', 'Read', {'file_path': path},
+                      'File exceeds token-shunt thresholds', error=True)
+        v, _ = self.run_judge(events + self.delegation(path, gold), spec)
+        self.assertTrue(v['checks'].get('parent_no_read'), v['reasons'])
+
+    def test_a_parent_read_of_another_file_is_not_this_files_business(self):
+        spec, path, gold = self.spec_with_parent_no_read()
+        other = str(self.root / 'elsewhere.txt')
+        Path(other).write_text('unrelated\n')
+        events = tool('r', 'Read', {'file_path': other}, 'unrelated')
+        v, _ = self.run_judge(events + self.delegation(path, gold), spec)
+        self.assertTrue(v['checks'].get('parent_no_read'), v['reasons'])
+
+    def test_a_case_that_does_not_declare_it_records_no_opinion(self):
+        # Edit cases read the original on purpose; the check must stay absent
+        # rather than arrive as a failure.
+        spec = self.case('auto-routing-boundary-16k-plus')
+        path = spec['expect']['delegate']['parent_no_full_read'][0]
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text('marker\n')
+        gold = spec['gold'][0]
+        events = tool('r', 'Read', {'file_path': path, 'offset': 1,
+                                    'limit': 1}, 'marker')
+        v, _ = self.run_judge(events + self.delegation(path, gold), spec)
+        self.assertNotIn('parent_no_read', v['checks'])

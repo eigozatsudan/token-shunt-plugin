@@ -692,7 +692,14 @@ class SkillDocumentTests(unittest.TestCase):
         # alternative strands the parent. §3 has to say what replaces
         # resume — a new invocation with the same paths inside the cap of
         # 4, else partial. ~330 bytes, no body rule removed.
-        self.assertLess(self.SKILL.stat().st_size, 7700,
+        # Raised from 7700 on 2026-09-17: step 1's ban on recovering a
+        # delegated answer yourself was conditioned on "After a denied
+        # Read", so a file small enough to pass the hook was never
+        # covered. On Django a parent delegated a file and then read a
+        # 12-line slice of it, and the run passed
+        # (reviews/django-dose-2026-09-17.md section 5). The rule now
+        # holds with no deny in sight; ~230 bytes, nothing removed.
+        self.assertLess(self.SKILL.stat().st_size, 7900,
                         self.SKILL.stat().st_size)
 
 

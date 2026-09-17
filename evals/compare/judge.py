@@ -1437,6 +1437,24 @@ def judge(transcript_path, spec, ctx):
         else:
             passed("parent_no_full_read")
 
+    # `parent_no_full_read` tolerates a targeted read, because the edit
+    # contract needs one. A case that only delegates reading declares this
+    # instead: the worker read the file, so no amount of it belongs in the
+    # parent. On Django a parent launched the worker and then read a
+    # 12-line slice of the same file, and the run passed
+    # (reviews/django-dose-2026-09-17.md section 5).
+    for p in exp.get("parent_no_read", []):
+        successful = [u for u in tr.parent_tool_uses("Read")
+                      if (r := tr.result_of(u["id"])) and not r["is_error"]]
+        unresolved = any(use_targets_path(u, p, spec) is None for u in successful)
+        if unresolved:
+            fail("parent_no_read", "unresolved path identity: relative Read/path "
+                 "requires recorded absolute tool cwd")
+        elif any(use_targets_path(u, p, spec) for u in successful):
+            fail("parent_no_read", "parent Read succeeded on %s" % p)
+        else:
+            passed("parent_no_read")
+
     ptr = exp.get("parent_targeted_read")
     if ptr:
         p = ptr["path"] if isinstance(ptr, dict) else ptr
