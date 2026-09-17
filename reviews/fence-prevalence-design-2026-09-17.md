@@ -155,3 +155,54 @@ control 1/24。基準率を 1 つの case（`redmine-last-query`）の 3/12 = 25
 
 **結果の中身（フェンスの有無、正答）は見ない。** 計器が動いているかの確認であって
 中間解析ではない。**崩れていたら止めて、何が違ったかを記録してから設計をやり直す。**
+
+---
+
+## 11. 修正（2026-09-17、機構確認の後・結果を見る前）
+
+§10.1 の機構確認で **suite A / B の case が `isolation` で fail した**:
+
+```
+FAIL compare-bulk-facts/auto: isolation: delegate=[9749] direct=None fixture=65669
+FAIL auto-bulk-facts/auto:    isolation: delegate=[4446] direct=None fixture=65669
+```
+
+**`isolation` は delegate と direct を比べる検査であり、`MODES=auto` では
+原理的に評価できない**（`direct=None`）。suite X の case は `isolation` を
+宣言していないので通っていた。**私が case 集合の性質を確認せずに設計した。**
+
+### 11.1 計器そのものは動いている
+
+3 run とも **`child_no_body` は評価されている**（checks に存在する）。
+落ちた理由は **`isolation` だけ**で、**本測定の outcome ではない。**
+
+**見たのは checks のキー集合と reason の種別だけで、
+フェンスの有無も正答も見ていない。**
+
+### 11.2 直すこと
+
+1. **`isolation` は本測定の読み取りから除外する。**
+   片腕では定義上評価できない検査であり、**fence とは無関係。**
+   verdict の pass/fail は**もともと本測定の outcome ではない**
+   （§5 の主要は reasons の中の
+   `child_no_body: code fence in child message` の有無）。
+2. **正答の列は `accuracy_any` 固定をやめる。**
+   実際には case によって **`accuracy_any` / `accuracy` / どちらも無い**の
+   3 通りがある（`reader-followup-scope` はどちらも持たない）。
+   **`accuracy_any` があればそれ、無ければ `accuracy`、どちらも無ければ空欄**とする。
+   **空欄と 0 は違う事実である**（`pairs.py` と同じ規則）。
+   以前 `accuracy` を `accuracy_any` と取り違えて 0/20 と誤報した前例がある。
+
+### 11.3 直さないこと
+
+- **走らせ方は変えない。** run の中身は同じで、変えたのは**読み方**だけ。
+- **N も case 集合も枠も変えない。**
+- **機構確認の 3 run は N に算入する**（同じ手順で走っており、
+  継続の可否を結果で判断していないため）。
+
+### 11.4 費用の見通しが上振れしている
+
+機構確認 3 run で **$0.6847（$0.228/run）**。§4 の計画値 $0.180 より高い。
+このまま 105 run なら **$23.9** で、**枠 $22 に収まらない。**
+**ガードが 96 run 前後で止める見込み。**
+§4・§6 のとおり**止まったところまでで報告し、後から足さない。**
