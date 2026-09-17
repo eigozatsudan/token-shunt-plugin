@@ -94,3 +94,11 @@ pair ではないので `pairs.py` の列とは別物。
 **二つは必ず一緒に読むこと** — 2 回目は条文を直してから走らせた
 選択の効いた結果で、単独では「直った」の根拠にならない。
 記録: `reviews/wording-live-check-2026-09-17.md`。
+
+## parent-no-read-rate-2026-09-17.csv
+
+条文を `b5f3e93` に固定した独立 20 run（60 arm）の行。列は
+`run,case,mode,parent_no_read,cost_usd`。13/60 が FAIL（21.7%）。
+`wording-live-check-round2` の 3/3 pass は、この率の下でも
+48% の確率で起きる — **単独で引用しないこと**。
+記録: `reviews/parent-no-read-rate-2026-09-17.md`。
