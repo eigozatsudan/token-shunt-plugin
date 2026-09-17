@@ -1092,15 +1092,14 @@ class ReadOnlyDelegationTests(unittest.TestCase):
             yield case, delegate
 
     def test_every_read_only_case_forbids_the_parent_its_own_read(self):
-        # Suites A and B joined X on 2026-09-17. The check was first
+        # Suites A and B joined X on 2026-09-17, after the check was
         # replayed over two archived live runs: of 37 delegate arms that
-        # ran to completion, 35 passed and 2 failed -- one parent read
-        # two of the three files it had just delegated, in both the
-        # haiku and the sonnet arm of auto-explicit-multifile. Those
-        # runs predate the SKILL.md wording fix, so the release suites
-        # now carry a check that has caught a real leak and whose live
-        # pass rate is not yet established
-        # (reviews/parent-no-read-ab-2026-09-17.md).
+        # ran to completion, 35 passed and 2 failed, and both failures
+        # were arms that had already failed other checks at the time --
+        # no arm that passed then fails now. The two are the parent of
+        # auto-explicit-multifile reading two of the three files of its
+        # own question, once after delegating them and once before
+        # delegating anything (reviews/parent-no-read-ab-2026-09-17.md).
         checked = 0
         for case, delegate in self.read_only():
             checked += 1

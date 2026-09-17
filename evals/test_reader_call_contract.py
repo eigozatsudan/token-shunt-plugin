@@ -699,7 +699,14 @@ class SkillDocumentTests(unittest.TestCase):
         # 12-line slice of it, and the run passed
         # (reviews/django-dose-2026-09-17.md section 5). The rule now
         # holds with no deny in sight; ~230 bytes, nothing removed.
-        self.assertLess(self.SKILL.stat().st_size, 7900,
+        # Raised from 7900 the same day: that clause is ordered -- it
+        # speaks of a path already sent to a worker. A parent denied on
+        # the big file read the two small files of the same question
+        # itself and delegated only the big one, every Read before any
+        # delegation (reviews/parent-no-read-ab-2026-09-17.md section 5).
+        # Step 1 now says the paths of one question travel together;
+        # ~250 bytes, nothing removed.
+        self.assertLess(self.SKILL.stat().st_size, 8200,
                         self.SKILL.stat().st_size)
 
 

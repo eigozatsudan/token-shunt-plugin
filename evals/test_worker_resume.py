@@ -165,6 +165,20 @@ class RegistrationTests(unittest.TestCase):
         self.assertIn('no deny in sight', clause)
         self.assertIn("worker's report is the answer", clause)
 
+    def test_the_skill_forbids_reading_the_small_paths_before_delegating(self):
+        # The clause above is ordered: it speaks of a path that has already
+        # gone to a worker. A parent whose Read of the big file was denied
+        # then read the two small files of the same question itself and
+        # delegated only the big one -- every Read before any delegation, so
+        # nothing above covered it
+        # (reviews/parent-no-read-ab-2026-09-17.md section 5,
+        # run.mnVnW1FU auto-explicit-multifile.sonnet).
+        skill = ' '.join((HOOKS.parent / 'skills' / 'bulk-reader'
+                          / 'SKILL.md').read_text(encoding='utf-8').split())
+        clause = skill[skill.index('recover the answer'):][:900]
+        self.assertIn('order does not save a Read', clause)
+        self.assertIn('they all go in that invocation', clause)
+
 
 if __name__ == '__main__':
     unittest.main()
