@@ -974,3 +974,93 @@ class FenceBaitCaseTests(unittest.TestCase):
                                  self.by_id[case]["gold_any"])
                 self.assertEqual(self.origin["fixtures"],
                                  self.by_id[case]["fixtures"])
+
+
+class DjangoDoseCaseTests(unittest.TestCase):
+    """The replication cases of reviews/django-dose-design-2026-09-17.md.
+
+    The dose result was measured on one corpus in one language, and its
+    crossover point was drawn through four points. These eight files span
+    8KB to 119KB of a second corpus so the crossover has eight. The question
+    is deliberately the same one the Redmine cases ask, so that a difference
+    is a difference of corpus rather than of question.
+    """
+
+    FILES = {
+        "django-generic-list": ("django/views/generic/list.py",
+                                "get_template_names"),
+        "django-indexes": ("django/db/models/indexes.py", "as_sqlite"),
+        "django-sqlite-introspection":
+            ("django/db/backends/sqlite3/introspection.py",
+             "_get_column_collations"),
+        "django-management-base": ("django/core/management/base.py",
+                                   "handle_label"),
+        "django-test-utils": ("django/test/utils.py", "garbage_collect"),
+        "django-forms-fields": ("django/forms/fields.py", "has_changed"),
+        "django-expressions": ("django/db/models/expressions.py",
+                               "window_frame_start_end"),
+        "django-sql-query": ("django/db/models/sql/query.py",
+                             "update_join_types"),
+    }
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        self.origin = self.by_id["redmine-last-helper"]
+        for case in self.FILES:
+            self.assertIn(case, self.by_id, "%s is not declared" % case)
+
+    def test_the_dose_range_is_covered_by_eight_cases(self):
+        self.assertEqual(8, len(self.FILES))
+
+    def test_each_case_reads_its_own_file_under_the_declared_prefix(self):
+        for case, (path, _) in self.FILES.items():
+            with self.subTest(case=case):
+                declared = self.by_id[case]
+                self.assertEqual("DJANGO_ROOT", declared["external_root"])
+                self.assertEqual("django", declared["external_prefix"])
+                self.assertEqual(["django/" + path], declared["fixtures"])
+                self.assertEqual(["django/" + path], declared["fixture_bytes"])
+
+    def test_the_gold_is_the_last_function_the_file_defines(self):
+        for case, (_, last_def) in self.FILES.items():
+            with self.subTest(case=case):
+                self.assertEqual([last_def], self.by_id[case]["gold_any"])
+
+    def test_both_arms_run_because_the_dose_comes_from_the_direct_arm(self):
+        # parent_read_bytes of the direct arm is the dose. Without that arm
+        # there is no measurement, only a cost.
+        for case in self.FILES:
+            with self.subTest(case=case):
+                self.assertEqual(["direct", "auto"], self.by_id[case]["modes"])
+                self.assertIn("parent_reads",
+                              self.by_id[case]["expect"]["direct"])
+
+    def test_the_question_is_the_one_the_redmine_cases_ask(self):
+        # Same forcing question, so what differs between the blocks is the
+        # corpus rather than the question.
+        for case in self.FILES:
+            with self.subTest(case=case):
+                for key in ("prompt_direct", "prompt_delegate"):
+                    prompt = self.by_id[case][key]
+                    self.assertIn("最後に定義されている", prompt)
+                    self.assertIn("def 行の行番号", prompt)
+                    self.assertIn("ファイル全体を見ないと答えられない", prompt)
+
+    def test_the_judged_contract_matches_the_redmine_cases(self):
+        # Everything the judge checks about the delegate arm is the same;
+        # only the path the worker may read differs, case by case.
+        for case, (path, _) in self.FILES.items():
+            with self.subTest(case=case):
+                mine = dict(self.by_id[case]["expect"]["delegate"])
+                theirs = dict(self.origin["expect"]["delegate"])
+                self.assertEqual(["{FIX}/django/" + path],
+                                 mine.pop("child_reads_once"))
+                theirs.pop("child_reads_once")
+                self.assertEqual(theirs, mine)
+
+    def test_they_are_shelved_so_an_absent_corpus_cannot_gate_a_release(self):
+        for case in self.FILES:
+            with self.subTest(case=case):
+                self.assertEqual("X", self.by_id[case]["suite"])

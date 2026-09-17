@@ -1668,6 +1668,310 @@
         "autocomplete_data_sources"
       ],
       "note": "Bait case for reviews/fence-bait-design-2026-09-17.md. Same file, same judged contract and same gold as redmine-last-helper; the question additionally asks for the parameter name, which is the flourish the one observed fence violation made (run.9ooxkL0s pasted the def line after answering correctly in prose). Deliberately billed by slot; never part of a release run."
+    },
+    {
+      "id": "django-generic-list",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/views/generic/list.py"
+      ],
+      "fixture_bytes": [
+        "django/django/views/generic/list.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/views/generic/list.py, answer: list.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/views/generic/list.py only --question \"list.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/views/generic/list.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/views/generic/list.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "get_template_names"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 8009 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-indexes",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/db/models/indexes.py"
+      ],
+      "fixture_bytes": [
+        "django/django/db/models/indexes.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/db/models/indexes.py, answer: indexes.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/db/models/indexes.py only --question \"indexes.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/db/models/indexes.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/db/models/indexes.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "as_sqlite"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 11935 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-sqlite-introspection",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/db/backends/sqlite3/introspection.py"
+      ],
+      "fixture_bytes": [
+        "django/django/db/backends/sqlite3/introspection.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/db/backends/sqlite3/introspection.py, answer: introspection.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/db/backends/sqlite3/introspection.py only --question \"introspection.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/db/backends/sqlite3/introspection.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/db/backends/sqlite3/introspection.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "_get_column_collations"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 17930 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-management-base",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/core/management/base.py"
+      ],
+      "fixture_bytes": [
+        "django/django/core/management/base.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/core/management/base.py, answer: base.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/core/management/base.py only --question \"base.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/core/management/base.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/core/management/base.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "handle_label"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 24771 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-test-utils",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/test/utils.py"
+      ],
+      "fixture_bytes": [
+        "django/django/test/utils.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/test/utils.py, answer: utils.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/test/utils.py only --question \"utils.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/test/utils.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/test/utils.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "garbage_collect"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 32702 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-forms-fields",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/forms/fields.py"
+      ],
+      "fixture_bytes": [
+        "django/django/forms/fields.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/forms/fields.py, answer: fields.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/forms/fields.py only --question \"fields.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/forms/fields.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/forms/fields.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "has_changed"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 49982 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-expressions",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/db/models/expressions.py"
+      ],
+      "fixture_bytes": [
+        "django/django/db/models/expressions.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/db/models/expressions.py, answer: expressions.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/db/models/expressions.py only --question \"expressions.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/db/models/expressions.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/db/models/expressions.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "window_frame_start_end"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 73717 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-sql-query",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/db/models/sql/query.py"
+      ],
+      "fixture_bytes": [
+        "django/django/db/models/sql/query.py"
+      ],
+      "prompt_direct": "In {FIX}/django/django/db/models/sql/query.py, answer: query.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない. Use the Read tool to read the file before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/django/django/db/models/sql/query.py only --question \"query.py の中で最後に定義されている関数の名前と、その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/db/models/sql/query.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/django/django/db/models/sql/query.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "update_join_types"
+      ],
+      "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 119129 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
     }
   ]
 }
