@@ -919,3 +919,58 @@ class CaseInvariantTests(unittest.TestCase):
                 self.assertIn("direct", case["modes"],
                               "%s: compared against direct without running it"
                               % case["id"])
+
+
+class FenceBaitCaseTests(unittest.TestCase):
+    """The bait cases of reviews/fence-bait-design-2026-09-17.md.
+
+    They exist to make the code-fence violation happen on demand, so the
+    send-back can be measured at all: the natural rate is 1.2%
+    (reviews/fence-prevalence-2026-09-17.md). The bait is asking for the
+    parameter name -- answerable in prose, quickest to show by quoting the
+    def line, which is the flourish the one observed violation made.
+    """
+
+    BAIT = ("fence-bait-helper", "fence-bait-helper-3")
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        self.origin = self.by_id["redmine-last-helper"]
+        for case in self.BAIT:
+            self.assertIn(case, self.by_id, "%s is not declared" % case)
+
+    def test_they_are_shelved_and_read_the_external_corpus(self):
+        for case in self.BAIT:
+            with self.subTest(case=case):
+                self.assertEqual("X", self.by_id[case]["suite"])
+                self.assertEqual("REDMINE_ROOT",
+                                 self.by_id[case]["external_root"])
+
+    def test_they_run_the_delegate_arm_only(self):
+        # direct has no worker, so it cannot show a worker's report.
+        for case in self.BAIT:
+            with self.subTest(case=case):
+                self.assertEqual(["auto"], self.by_id[case]["modes"])
+                self.assertNotIn("direct", self.by_id[case]["expect"])
+
+    def test_the_bait_asks_for_the_parameter_name(self):
+        for case in self.BAIT:
+            with self.subTest(case=case):
+                self.assertIn("引数名", self.by_id[case]["prompt_delegate"])
+
+    def test_the_second_variant_offers_three_chances_to_flourish(self):
+        self.assertIn("3 つ", self.by_id["fence-bait-helper-3"]["prompt_delegate"])
+
+    def test_the_judged_contract_matches_the_case_the_violation_came_from(self):
+        # The measurement compares fenced runs against redmine-last-helper's
+        # own history, so what the judge checks must not drift.
+        for case in self.BAIT:
+            with self.subTest(case=case):
+                self.assertEqual(self.origin["expect"]["delegate"],
+                                 self.by_id[case]["expect"]["delegate"])
+                self.assertEqual(self.origin["gold_any"],
+                                 self.by_id[case]["gold_any"])
+                self.assertEqual(self.origin["fixtures"],
+                                 self.by_id[case]["fixtures"])

@@ -1606,6 +1606,68 @@
         "autocomplete_data_sources"
       ],
       "note": "Dose point for the cost hypothesis (reviews/redmine-dose-design-2026-09-17.md): 70137 bytes, answer at the end of the file. Same forcing question as redmine-last-method with a different amount to read, so what varies is how much the parent must ingest, not what it is asked to do."
+    },
+    {
+      "id": "fence-bait-helper",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/helpers/application_helper.rb only --question \"application_helper.rb の中で最後に定義されているメソッドの名前・引数名・その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "autocomplete_data_sources"
+      ],
+      "note": "Bait case for reviews/fence-bait-design-2026-09-17.md. Same file, same judged contract and same gold as redmine-last-helper; the question additionally asks for the parameter name, which is the flourish the one observed fence violation made (run.9ooxkL0s pasted the def line after answering correctly in prose). Deliberately billed by slot; never part of a release run."
+    },
+    {
+      "id": "fence-bait-helper-3",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "external_root": "REDMINE_ROOT",
+      "external_prefix": "redmine",
+      "fixtures": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "fixture_bytes": [
+        "redmine/app/helpers/application_helper.rb"
+      ],
+      "prompt_delegate": "Use token-shunt:bulk-reader (--worker-model auto) on {FIX}/redmine/app/helpers/application_helper.rb only --question \"application_helper.rb の中で最後に定義されている 3 つのメソッドについて、それぞれ名前・引数名・その def 行の行番号。ファイル全体を見ないと答えられない\". Report the worker's answer.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "child_reads_once": [
+            "{FIX}/redmine/app/helpers/application_helper.rb"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true
+        }
+      },
+      "gold_any": [
+        "autocomplete_data_sources"
+      ],
+      "note": "Bait case for reviews/fence-bait-design-2026-09-17.md. Same file, same judged contract and same gold as redmine-last-helper; the question additionally asks for the parameter name, which is the flourish the one observed fence violation made (run.9ooxkL0s pasted the def line after answering correctly in prose). Deliberately billed by slot; never part of a release run."
     }
   ]
 }
