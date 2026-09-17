@@ -1092,17 +1092,24 @@ class ReadOnlyDelegationTests(unittest.TestCase):
             yield case, delegate
 
     def test_every_read_only_case_forbids_the_parent_its_own_read(self):
+        # Suites A and B joined X on 2026-09-17. The check was first
+        # replayed over two archived live runs: of 37 delegate arms that
+        # ran to completion, 35 passed and 2 failed -- one parent read
+        # two of the three files it had just delegated, in both the
+        # haiku and the sonnet arm of auto-explicit-multifile. Those
+        # runs predate the SKILL.md wording fix, so the release suites
+        # now carry a check that has caught a real leak and whose live
+        # pass rate is not yet established
+        # (reviews/parent-no-read-ab-2026-09-17.md).
         checked = 0
         for case, delegate in self.read_only():
-            if case.get("suite") != "X":
-                continue          # widening this to the release suites needs a run
             checked += 1
             with self.subTest(case=case["id"]):
                 self.assertEqual(sorted(delegate["child_reads_once"]),
                                  sorted(delegate.get("parent_no_read") or []),
                                  "%s: the worker's paths are not the parent's"
                                  % case["id"])
-        self.assertGreater(checked, 10)
+        self.assertGreater(checked, 25)
 
     def test_no_case_forbids_a_read_it_also_requires(self):
         # parent_no_read and parent_reads on one path would be unsatisfiable.

@@ -277,7 +277,12 @@ class JudgeIntegrationTests(JudgeFixture):
                 self.assertNotIn(size, g, cid)
 
     def test_16k_plus_parent_full_read_fails_even_with_agent(self):
+        # An edit case keeps the looser check and never declares this one.
+        self.assertNotIn('parent_no_read',
+                         self.case('compare-edit-dense-lines')
+                         ['expect']['delegate'])
         spec = self.case('auto-routing-boundary-16k-plus')
+        spec['expect']['delegate'].pop('parent_no_read')
         path = spec['expect']['delegate']['parent_no_full_read'][0]
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text('marker\n')
@@ -506,7 +511,12 @@ class ParentNoReadTests(JudgeFixture):
     def test_a_case_that_does_not_declare_it_records_no_opinion(self):
         # Edit cases read the original on purpose; the check must stay absent
         # rather than arrive as a failure.
+        # An edit case keeps the looser check and never declares this one.
+        self.assertNotIn('parent_no_read',
+                         self.case('compare-edit-dense-lines')
+                         ['expect']['delegate'])
         spec = self.case('auto-routing-boundary-16k-plus')
+        spec['expect']['delegate'].pop('parent_no_read')
         path = spec['expect']['delegate']['parent_no_full_read'][0]
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text('marker\n')

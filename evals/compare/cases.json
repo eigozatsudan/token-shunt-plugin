@@ -37,6 +37,9 @@
           "child_no_body": true,
           "parent_no_full_read": [
             "{FIX}/gen/bulk_facts.py"
+          ],
+          "parent_no_read": [
+            "{FIX}/gen/bulk_facts.py"
           ]
         }
       },
@@ -78,6 +81,9 @@
             "{FIX}/gen/oneline.json"
           ],
           "allow_unreadable_line_partial": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "parent_no_read": [
             "{FIX}/gen/oneline.json"
           ]
         }
@@ -173,7 +179,12 @@
           "parent_no_full_read": [
             "{FIX}/rails/app/models/user.rb"
           ],
-          "gold_confirmed": true
+          "gold_confirmed": true,
+          "parent_no_read": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ]
         }
       },
       "isolation": "delegate_lt_direct_and_fixture"
@@ -474,7 +485,13 @@
           "child_msg_max": 4000,
           "child_no_body": true,
           "gold_confirmed": true,
-          "retry_policy": true
+          "retry_policy": true,
+          "parent_no_read": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb",
+            "{FIX}/rails/app/mailers/user_mailer.rb"
+          ]
         }
       }
     },
@@ -520,7 +537,13 @@
               "{FIX}/gen/collide/beta.py"
             ]
           },
-          "retry_policy": true
+          "retry_policy": true,
+          "parent_no_read": [
+            "{FIX}/gen/collide/alpha.py",
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/gen/collide/beta.py"
+          ]
         }
       }
     },
@@ -542,7 +565,10 @@
           ],
           "agent_calls_max": 4,
           "child_msg_max": 4000,
-          "child_no_body": true
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
         }
       },
       "gold_any": [
@@ -567,6 +593,9 @@
           "agent_calls_max": 2,
           "retry_policy": true,
           "child_reads_once": [
+            "{FIX}/gen/bulk_facts.py"
+          ],
+          "parent_no_read": [
             "{FIX}/gen/bulk_facts.py"
           ]
         }
@@ -635,7 +664,10 @@
           "parent_no_full_read": [
             "{FIX}/gen/bulk_facts.py"
           ],
-          "deny_bypass": true
+          "deny_bypass": true,
+          "parent_no_read": [
+            "{FIX}/gen/bulk_facts.py"
+          ]
         }
       },
       "isolation": "delegate_lt_direct_and_fixture"
@@ -687,6 +719,9 @@
           ],
           "deny_bypass": true,
           "allow_unreadable_line_partial": [
+            "{FIX}/gen/oneline.json"
+          ],
+          "parent_no_read": [
             "{FIX}/gen/oneline.json"
           ]
         }
@@ -766,7 +801,12 @@
             "{FIX}/rails/app/models/user.rb"
           ],
           "deny_bypass": true,
-          "gold_confirmed": true
+          "gold_confirmed": true,
+          "parent_no_read": [
+            "{FIX}/rails/app/models/user.rb",
+            "{FIX}/rails/app/models/concerns/notifiable.rb",
+            "{FIX}/rails/app/jobs/welcome_email_job.rb"
+          ]
         }
       },
       "isolation": "delegate_lt_direct_and_fixture"
@@ -1192,6 +1232,9 @@
             "{FIX}/gen/bounds/b16385.txt"
           ],
           "parent_no_full_read": [
+            "{FIX}/gen/bounds/b16385.txt"
+          ],
+          "parent_no_read": [
             "{FIX}/gen/bounds/b16385.txt"
           ]
         }

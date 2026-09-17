@@ -77,3 +77,11 @@ worker が何を報告したかを問う測定では direct に worker が居ら
 - **CSV は事後に手で編集しない。** 直すなら run から作り直す。
 - 費用は**その日のモデル価格**に依る。行は比較可能だが、
   別の日の測定と絶対額を並べるときは価格差を勘定に入れること。
+
+## parent-no-read-ab-2026-09-17.csv
+
+保管済み live run に後から `parent_no_read` を当てた再判定の行。
+列は `run,case,mode,parent_no_read,reason`。`parent_no_read` は
+`pass` / `FAIL` / `absent`（`run` check が先に落ちて判定に届かなかった）。
+pair ではないので `pairs.py` の列とは別物。
+記録: `reviews/parent-no-read-ab-2026-09-17.md`。
