@@ -136,6 +136,9 @@ _DECLARED = re.compile(r"\((\d{1,4})\s*(?:chars?|characters)\)", re.I)
 # A literal the worker copied: one unbroken run with no spaces. Quotes,
 # backticks and trailing sentence punctuation are stripped before counting.
 _LITERAL = re.compile(r"[^\s`\"']{4,}")
+# A fence opens a line, optionally indented. Three marks, not two: ``x``
+# is inline code, which the contract allows.
+_FENCE = re.compile(r"[ \t]*(?:```|~~~)")
 
 
 def _literals(text):
@@ -153,6 +156,27 @@ def _literals(text):
         while ':' in value:
             value = value.split(':', 1)[1]
             yield value
+
+
+def check_code_fence(text):
+    """Did the worker open a code fence in its report?
+
+    The worker contract forbids fences outright, "including around a
+    single value", because a fence is how source text travels: the point
+    of the worker is that the file's own text stays out of the parent.
+    The rule is not about volume, so one quoted `def` line breaks it as a
+    whole body does -- measured live on Redmine in three of twelve reports
+    for one question (reviews/redmine-dose-2026-09-17.md section 5).
+
+    Inline backticks are left alone: the contract bans fences, and a
+    symbol in single backticks is how a compliant report names one.
+    """
+    fences = [line.strip() for line in (text or '').splitlines()
+              if _FENCE.match(line)]
+    if not fences:
+        return {'status': OK, 'reason': '', 'fences': []}
+    return {'status': VIOLATION, 'fences': fences,
+            'reason': 'code fence in the report: ' + '; '.join(fences)}
 
 
 def check_declared_lengths(text):

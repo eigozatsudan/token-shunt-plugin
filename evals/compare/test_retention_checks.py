@@ -332,6 +332,60 @@ if __name__ == '__main__':
     unittest.main()
 
 
+class CodeFenceTests(unittest.TestCase):
+    """The worker contract forbids code fences, including around one value.
+
+    Measured live on Redmine: three of twelve `redmine-last-query` worker
+    reports wrapped the requested `def` line in a fence
+    (reviews/redmine-dose-2026-09-17.md section 5). The rule is not about
+    how much source is quoted, so one line breaks it exactly as a body does.
+    """
+
+    def test_a_contracted_report_has_no_fence(self):
+        got = rc.check_code_fence(item(A, 'last method: deliver_notification'))
+        self.assertEqual(got['status'], rc.OK)
+        self.assertEqual(got['fences'], [])
+
+    def test_a_fence_around_a_single_line_is_a_violation(self):
+        # The exact shape observed live.
+        got = rc.check_code_fence(
+            'The last def is at line 1691:\n\n'
+            '```\ndef joins_for_order_statement(order_options)\n```\n\n'
+            + item(A, 'last method: joins_for_order_statement'))
+        self.assertEqual(got['status'], rc.VIOLATION)
+        # Opening and closing marker: both lines are reported, so the
+        # worker sees exactly what to delete.
+        self.assertEqual(len(got['fences']), 2)
+        self.assertIn('code fence', got['reason'])
+
+    def test_a_tilde_fence_counts(self):
+        got = rc.check_code_fence('~~~ruby\ndef x\n~~~')
+        self.assertEqual(got['status'], rc.VIOLATION)
+
+    def test_an_indented_fence_counts(self):
+        got = rc.check_code_fence('  ```\n  def x\n  ```')
+        self.assertEqual(got['status'], rc.VIOLATION)
+
+    def test_inline_backticks_are_not_a_fence(self):
+        # Single backticks around a symbol are not what the contract bans,
+        # and blocking them would send back reports that follow it.
+        got = rc.check_code_fence(
+            item(A, 'the method is `deliver_notification`'))
+        self.assertEqual(got['status'], rc.OK)
+
+    def test_two_backticks_are_not_a_fence(self):
+        self.assertEqual(rc.check_code_fence('``x``')['status'], rc.OK)
+
+    def test_an_empty_report_is_not_a_violation(self):
+        for text in ('', None):
+            with self.subTest(text=text):
+                self.assertEqual(rc.check_code_fence(text)['status'], rc.OK)
+
+    def test_the_reason_quotes_the_opening_line(self):
+        got = rc.check_code_fence('```ruby\ndef x\n```')
+        self.assertIn('```ruby', got['reason'])
+
+
 class DeclaredLengthTests(unittest.TestCase):
     """A worker that states a value's length has checked its own copy.
 

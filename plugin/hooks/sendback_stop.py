@@ -278,9 +278,11 @@ def decide_worker(event):
         return rec, {}
     check = rc.check_child_items([said])
     lengths = rc.check_declared_lengths(said)
+    fences = rc.check_code_fence(said)
     demoted = rc.unconfirmed_lines(said)
     rec['checks'] = {'child_items': check['status'],
-                     'declared_lengths': lengths['status']}
+                     'declared_lengths': lengths['status'],
+                     'code_fence': fences['status']}
     rec['items'] = len(check['items'])
     rec['unconfirmed'] = len(demoted)
     claims = [l for l in check['items'] if not rc.vacuous_item(l)]
@@ -299,9 +301,8 @@ def decide_worker(event):
         # worker has the facts and wrote them outside the contract, which
         # is exactly what a send-back repairs (observed live 2026-09-15:
         # three elided-path items plus one honest `unconfirmed:` line).
-        rec.update(outcome=NO_BLOCK,
-                   reason='worker reported only unconfirmed items')
-        return rec, {}
+        return no_body_or(rec, fences,
+                          'worker reported only unconfirmed items')
     if check['status'] != rc.VIOLATION:
         if lengths['status'] == rc.VIOLATION:
             # The worker stated the length and then copied the value short.
@@ -310,11 +311,34 @@ def decide_worker(event):
             rec.update(outcome=BLOCKED, reason=lengths['reason'])
             return rec, {'decision': 'block',
                          'reason': length_block_reason(lengths)}
-        rec.update(outcome=NO_BLOCK, reason='worker items %s' % check['status'])
-        return rec, {}
+        return no_body_or(rec, fences,
+                          'worker items %s' % check['status'])
     rec.update(outcome=BLOCKED, reason=check['reason'],
                unusable=len(check['unusable']))
     return rec, {'decision': 'block', 'reason': worker_block_reason(check)}
+
+
+def fence_block_reason(fences):
+    head = ('token-shunt: your report put source text in a code fence. The '
+            'file\'s own text never goes in the report — not a body, not a '
+            'single line, not one value. Restate the fact in prose on a '
+            '`confirmed:` line and remove the fence:')
+    return '\n'.join([head] + list(fences))
+
+
+def no_body_or(rec, fences, reason):
+    """Block a report that carried source text, or record the given no-block.
+
+    The fence is judged last, so a report that is also missing paths or
+    contradicting its own declared length is sent back for that instead:
+    one send-back asks for one repair, and those two make the facts
+    unusable while a fence only adds what should not be there.
+    """
+    if fences['status'] != rc.VIOLATION:
+        rec.update(outcome=NO_BLOCK, reason=reason)
+        return rec, {}
+    rec.update(outcome=BLOCKED, reason=fences['reason'])
+    return rec, {'decision': 'block', 'reason': fence_block_reason(fences['fences'])}
 
 
 def length_block_reason(lengths):

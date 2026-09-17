@@ -548,6 +548,49 @@ class WorkerTests(HookFixture):
         self.assertEqual(rec['outcome'], sh.NO_BLOCK)
         self.assertEqual(rec['checks']['child_items'], 'ok')
 
+    def test_a_code_fence_in_the_report_is_sent_back(self):
+        # Measured live on Redmine: the worker answered correctly and put
+        # the requested `def` line in a fence
+        # (reviews/redmine-dose-2026-09-17.md section 5).
+        rec, out = sh.decide(self.worker_event(
+            'The last def is at line 1691:\n\n'
+            '```\ndef joins_for_order_statement(order_options)\n```\n\n'
+            + self.line))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertEqual(rec['checks']['code_fence'], 'violation')
+        self.assertIn('code fence', out['reason'])
+        self.assertIn('prose', out['reason'])
+
+    def test_a_report_without_a_fence_records_the_check_as_ok(self):
+        rec, out = sh.decide(self.worker_event(self.line))
+        self.assertEqual(rec['outcome'], sh.NO_BLOCK)
+        self.assertEqual(rec['checks']['code_fence'], 'ok')
+        self.assertEqual(out, {})
+
+    def test_a_missing_path_outranks_a_fence(self):
+        # Both are violations; the worker is told the one that makes its
+        # facts unusable, so the send-back asks for one repair, not two.
+        rec, out = sh.decide(self.worker_event(
+            '```\ndef x\n```\nconfirmed: user.rb — class User'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('absolute path', out['reason'])
+
+    def test_a_fence_beside_only_unconfirmed_items_is_still_sent_back(self):
+        # This branch exists so a worker that confirmed nothing is not asked
+        # to invent a citation. Removing a fence invents nothing.
+        rec, out = sh.decide(self.worker_event(
+            '```\ndef x\n```\n'
+            'unconfirmed: /srv/one.json — payload_sha; unreadable line'))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('code fence', out['reason'])
+
+    def test_a_short_value_outranks_a_fence(self):
+        rec, out = sh.decide(self.worker_event(
+            '```\ndef x\n```\n%s\nconfirmed: %s — payload_sha (64 chars): '
+            'sha256:%s' % (self.line, self.src, '6' * 61)))
+        self.assertEqual(rec['outcome'], sh.BLOCKED)
+        self.assertIn('character', out['reason'])
+
     def test_a_failed_worker_turn_is_not_sent_back(self):
         # The CLI wrote these in place of a report; there is no worker
         # turn to restate. Both shapes are in the saved corpus.
