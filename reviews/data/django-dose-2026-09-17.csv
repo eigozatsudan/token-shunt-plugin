@@ -1,0 +1,81 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.0B5clFHq,django-test-utils,36614,0,0.1008,0.0844,1,1,1,1,
+run.0pOYfXTS,django-indexes,13027,0,0.0641,0.1027,1,1,1,1,
+run.0vkWFsiF,django-generic-list,8801,0,0.0512,0.1172,1,1,1,1,
+run.28GFSrfD,django-expressions,9311,443,0.0610,0.1748,1,1,1,0,resume: parent resumed worker abc0314ed84f24fac instead of launching again; child_no_body: code fence in child message
+run.28wdHmsG,django-sql-query,10274,0,0.0613,0.1520,1,1,1,1,
+run.54OQZfK6,django-generic-list,8801,0,0.0581,0.0906,1,1,1,1,
+run.5bNKzgfS,django-sqlite-introspection,19622,0,0.0731,0.0802,1,1,1,1,
+run.5jLh2lIz,django-test-utils,36614,0,0.1011,0.1808,1,1,1,0,child_status: worker toolu_014RGh6Z4REHJnpdSisnhAFK lacks explicit status and stop_reason
+run.631gO0Ao,django-management-base,27489,0,0.0865,0.2261,1,1,1,1,
+run.6XFjhHya,django-expressions,83218,0,0.1729,0.2489,1,1,1,1,
+run.7PCcFpAz,django-sql-query,10310,0,0.0617,0.1546,1,1,1,1,
+run.89MKQFLj,django-generic-list,8801,0,0.0579,0.2125,1,1,1,0,resume: parent resumed worker a73d24951799c8b8c instead of launching again; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01DKY5p1WCC6YgTeuNR3BiQQ requested 'haiku'; expected sonnet; resolved_model: toolu_01DKY5p1WCC6YgTeuNR3BiQQ resolved ['claude-haiku-4-5-20251001']; expected sonnet; retry_policy: only one auto Sonnet retry is permitted; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_015wbUUW5jdVQnd5Ni6WeUsV requested 'haiku'; expected sonnet; resolved_model: toolu_015wbUUW5jdVQnd5Ni6WeUsV resolved ['claude-haiku-4-5-20251001']; expected sonnet
+run.8jVe0KqV,django-management-base,6172,0,0.0542,0.1982,1,1,1,1,
+run.AR8KxMZW,django-sql-query,132209,0,0.2698,0.1637,1,1,1,1,
+run.AhTn6Sbk,django-management-base,27495,0,0.0837,0.0806,1,1,1,1,
+run.AmUoZqkS,django-test-utils,36620,0,0.0910,0.2602,1,1,1,0,retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01UNFvNBKka1HGaQQahDJ271 requested 'haiku'; expected sonnet; resolved_model: toolu_01UNFvNBKka1HGaQQahDJ271 resolved ['claude-haiku-4-5-20251001']; expected sonnet; retry_policy: only one auto Sonnet retry is permitted; retry_policy: retry lacks a permitted short diagnosis
+run.AoAmCjGM,django-management-base,27495,0,0.0757,0.1105,1,1,1,0,child_no_body: code fence in child message
+run.Ap1ZBpfU,django-forms-fields,4767,0,0.0630,0.1198,1,1,1,1,
+run.B0PZNRKJ,django-forms-fields,8491,0,0.0587,0.2316,1,1,1,0,retry_policy: retry lacks a permitted short diagnosis
+run.C2W7LVO2,django-generic-list,8801,0,0.0513,0.1904,1,1,1,1,
+run.CJNc3tPk,django-test-utils,36620,0,0.1006,0.2286,1,1,1,1,
+run.EElUVZn9,django-sqlite-introspection,3014,0,0.0530,0.0967,1,1,1,1,
+run.EI7E9kLn,django-sqlite-introspection,19622,0,0.0728,0.1076,1,1,1,1,
+run.EiBKWGup,django-expressions,83225,0,0.1606,0.1126,1,1,1,1,
+run.EpuhXXjr,django-indexes,13027,0,0.0563,0.0710,1,1,1,1,
+run.EqusxxH4,django-sql-query,38361,0,0.1089,0.1813,1,1,1,0,child_reads_once: /tmp/ts-dj/evals/compare/tmp/runs/run.EqusxxH4/work/fixtures/django/django/db/models/sql/query.py: repeated Read without evidence of an incomplete prior Read
+run.F0KpG9GX,django-sql-query,131999,0,0.2369,0.1440,1,1,1,0,child_reads_once: /tmp/ts-dj/evals/compare/tmp/runs/run.F0KpG9GX/work/fixtures/django/django/db/models/sql/query.py: repeated Read without evidence of an incomplete prior Read
+run.G3PGzBBv,django-forms-fields,55973,0,0.1269,0.0911,1,1,1,1,
+run.GFZBNBfr,django-sqlite-introspection,3014,0,0.0511,0.1531,1,1,1,0,retry_policy: retry lacks a permitted short diagnosis
+run.I6kimrJG,django-generic-list,8801,0,0.0579,0.1105,1,1,1,1,
+run.Ksvniigl,django-test-utils,36613,0,0.1014,0.0979,1,1,1,1,
+run.LQf6gevh,django-sqlite-introspection,19622,0,0.0733,0.0902,1,1,1,1,
+run.MddoPjRN,django-generic-list,8801,0,0.0579,0.2545,1,1,1,0,resume: parent resumed worker ab71873c11dd0e578 instead of launching again; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01S27UrMfy8jkTTWDGngCyZd requested 'haiku'; expected sonnet; resolved_model: toolu_01S27UrMfy8jkTTWDGngCyZd resolved ['claude-haiku-4-5-20251001']; expected sonnet; retry_policy: only one auto Sonnet retry is permitted; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01DZomHo9K9GEgAFzRTcPBqY requested 'haiku'; expected sonnet; resolved_model: toolu_01DZomHo9K9GEgAFzRTcPBqY resolved ['claude-haiku-4-5-20251001']; expected sonnet; retry_policy: only one auto Sonnet retry is permitted; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01DSZBaKGQvPFQvL7yxHHuzz requested 'haiku'; expected sonnet; resolved_model: toolu_01DSZBaKGQvPFQvL7yxHHuzz resolved ['claude-haiku-4-5-20251001']; expected sonnet
+run.NSZZxSFX,django-forms-fields,55972,0,0.1301,0.0998,1,1,1,1,
+run.Ob0TKhan,django-indexes,13027,0,0.0564,0.0869,1,1,1,1,
+run.PJOfEHF4,django-test-utils,36620,0,0.0905,0.1248,1,1,1,0,child_no_body: code fence in child message
+run.PTd0deyc,django-forms-fields,55973,0,0.1274,0.2323,1,1,1,0,resume: parent resumed worker ac0a5504da9d8ec12 instead of launching again; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_017N8ipKKkxfGCtBSHCMAWF8 requested 'haiku'; expected sonnet; resolved_model: toolu_017N8ipKKkxfGCtBSHCMAWF8 resolved ['claude-haiku-4-5-20251001']; expected sonnet
+run.PiToWvPv,django-sql-query,7648,0,0.0588,0.1254,1,,1,0,run: result is_error: You've hit your session limit · resets 3:20pm (Asia/Tokyo)
+run.RyRkdcx1,django-test-utils,3432,0,0.0610,0.0842,1,1,1,1,
+run.SjQIIWdx,django-indexes,13027,0,0.0560,0.1040,1,1,1,1,
+run.Sp5cWztg,django-sqlite-introspection,19622,0,0.0649,0.2276,1,1,1,0,child_no_body: code fence in child message; retry_policy: retry lacks a permitted short diagnosis
+run.To4xRnte,django-sql-query,132000,0,0.2339,0.1336,1,1,1,0,child_no_body: code fence in child message
+run.U6QjMpfV,django-test-utils,36620,0,0.0990,0.0767,1,1,1,1,
+run.UGKPuisz,django-indexes,13027,0,0.0575,0.0646,1,1,1,1,
+run.VRVpYGP4,django-indexes,13027,0,0.0560,0.1093,1,1,1,1,
+run.W7O0fuQW,django-sqlite-introspection,19622,0,0.0647,0.0839,1,1,1,1,
+run.WRKnbS50,django-test-utils,36620,0,0.0906,0.1015,1,1,1,1,
+run.WbXjqZtC,django-sql-query,131999,0,0.2360,0.1639,1,1,1,1,
+run.XiDPS5iq,django-sql-query,10274,0,0.0618,0.1435,1,1,1,1,
+run.XiTKdqe9,django-management-base,27495,0,0.0768,0.0936,1,1,1,1,
+run.XyNYhG1I,django-indexes,13027,0,0.0568,0.0728,1,1,1,1,
+run.YM4txD6d,django-expressions,9311,0,0.0625,0.1435,1,0,1,0,accuracy: final answer contains none of: window_frame_start_end; child_no_body: code fence in child message
+run.YY7Y9GFk,django-indexes,13027,0,0.0558,0.1147,1,1,1,1,
+run.Zm4dzKIH,django-forms-fields,4409,0,0.0644,0.0796,1,1,1,1,
+run.ZoT3RdiW,django-sqlite-introspection,19617,0,0.0734,0.0968,1,1,1,1,
+run.aRC6BUzD,django-management-base,27489,0,0.0878,0.0917,1,1,1,0,child_no_body: code fence in child message
+run.cAgA2WIf,django-indexes,13027,0,0.0565,0.1060,1,1,1,1,
+run.dJk04H5q,django-expressions,83218,0,0.1737,0.1198,1,1,1,1,
+run.ekU0CIwQ,django-forms-fields,55980,0,0.1161,0.1307,1,1,1,1,
+run.fAydVstq,django-sql-query,10274,0,0.0622,0.1595,1,1,1,1,
+run.fPkqSIc0,django-indexes,13027,0,0.0562,0.1042,1,1,1,1,
+run.frpzE7jD,django-generic-list,8801,0,0.0511,0.1869,1,1,1,0,retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_01PquREnT1ThQCZeNPYPXpCH requested 'haiku'; expected sonnet; resolved_model: toolu_01PquREnT1ThQCZeNPYPXpCH resolved ['claude-haiku-4-5-20251001']; expected sonnet; retry_policy: only one auto Sonnet retry is permitted; retry_policy: retry lacks a permitted short diagnosis
+run.gvuQ8Ga9,django-sqlite-introspection,19622,0,0.0728,0.0897,1,1,1,1,
+run.ioJHEZQW,django-expressions,83218,0,0.1723,0.3209,1,1,1,1,
+run.jqT7K3Qm,django-expressions,9311,0,0.0608,0.2771,1,1,1,1,
+run.l6xQ2Trf,django-forms-fields,55973,0,0.1282,0.0894,1,1,1,1,
+run.ldsGD73T,django-forms-fields,55973,0,0.1283,0.0914,1,1,1,1,
+run.lk8GKyln,django-expressions,9311,0,0.0609,0.2465,1,1,1,0,resume: parent resumed worker af3004eb41e3f1a16 instead of launching again; retry_policy: retry lacks a permitted short diagnosis; requested_model: toolu_014B3Y1THNmCwpdHQNCVmPHN requested 'haiku'; expected sonnet; resolved_model: toolu_014B3Y1THNmCwpdHQNCVmPHN resolved ['claude-haiku-4-5-20251001']; expected sonnet
+run.nnF5YIfB,django-management-base,27495,0,0.0844,0.1746,1,1,1,1,
+run.o6gq8xM1,django-management-base,27489,0,0.0864,0.1094,1,1,1,1,
+run.o9sZc80u,django-generic-list,8801,1877,0.0576,0.1293,1,1,1,1,
+run.pkyLupil,django-management-base,27491,0,0.0867,0.0891,1,1,1,1,
+run.qi260TmZ,django-expressions,9387,0,0.0646,0.2536,1,1,1,0,child_status: worker toolu_019NC4Tsj5NvP3skRDWzArAV lacks explicit status and stop_reason
+run.rAOxwZud,django-forms-fields,55973,0,0.1282,0.1044,1,1,1,1,
+run.rayPeHhK,django-generic-list,8801,0,0.0582,0.0855,1,1,1,1,
+run.uJinayzo,django-expressions,83218,0,0.1729,0.1195,1,1,1,1,
+run.uVbY2Zip,django-generic-list,8801,0,0.0582,0.1823,1,1,1,1,
+run.vmAGMVZt,django-test-utils,36620,0,0.0912,0.0964,1,1,1,1,
+run.vwpldwD9,django-sqlite-introspection,19622,0,0.0726,0.0800,1,1,1,1,
+run.x9Adhmp5,django-management-base,27489,0,0.0864,0.0888,1,1,1,1,
