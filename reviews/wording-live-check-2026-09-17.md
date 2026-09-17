@@ -94,3 +94,54 @@ contexts, which §2 forbids.
   path`）と `auto` arm の `single_invocation` fail は目に入ったが、
   中身は読んでいない。別の設問である。
 - 設問は増やしていない。
+
+---
+
+# 第 2 回（同日・`60c35b7`）
+
+事前登録: 同設計 §8（`60c35b7`）。
+行: `reviews/data/wording-live-check-round2-2026-09-17.csv`（3 行）。
+
+## 6. 走行
+
+**固定 commit `60c35b7`。** worktree `/tmp/ts-wl2` を detach で固定、
+`git status` 空、条文の存在を確認、その中で `judge.py --selftest`
+全項目 pass。走行前 `spend.py --cap 3 --reserve 0.60` → `0.0000`、rc=0。
+
+設問・slot・N は第 1 回と同一。run dir は `run.Vu4cIjHl`。
+**本段階 $0.4723**（枠 $3）。累計 約 **$119.3 / 上限 $150**。
+
+## 7. 結果
+
+| mode | `parent_no_read` | cost |
+|---|---|---|
+| haiku | pass | $0.1305 |
+| sonnet | pass | $0.1723 |
+| auto | pass | $0.1093 |
+
+**3/3 pass。第 1 回で FAIL した auto arm も pass した。**
+
+## 8. これが意味すること・意味しないこと
+
+事前登録 §8 に先に書いたとおり:
+
+- 書けるのは **「2 回目で再現しなかった」** までである。
+  **「直った」とは書かない。**
+- 第 1 回（`426b780`、`run.UIXaDr2A`）は同じ slot で 1/3 FAIL だった。
+  **この 3/3 pass を第 1 回の結果と切り離して引用しない。**
+- 条文を触って走らせ直した 2 回目なので、選択の効いた結果である。
+  直ったと言うには、条文を固定したまま独立した run を複数本重ねて、
+  漏れ率の上限を絞る必要がある。本記録はそこまでやっていない。
+  n=3 の 3/3 pass に rule of three を当てても上限は約 63%。
+
+## 9. 見たが結論に使っていないもの（逸脱の記録）
+
+- `isolation` は今回も 3 arm とも fail。`direct=None` が理由で、
+  第 1 回と同じ設計上の帰結（§5）。
+- run が自分で出した FAIL 行から、auto arm の `single_invocation` と
+  `child_reads_once` が**今回は落ちていない**ことが目に入った。
+  第 1 回では両方落ちていた。設問ではないので結論に使っていないが、
+  見えてしまったので記録する。
+- `haiku` arm の `gold_confirmed` fail は第 1 回と同じく残っている。
+  中身は読んでいない。
+- 設問は増やしていない。3 回目には進んでいない。

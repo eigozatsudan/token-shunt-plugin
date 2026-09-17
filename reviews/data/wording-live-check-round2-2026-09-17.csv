@@ -1,0 +1,4 @@
+run,case,mode,parent_no_read,reason,cost_usd
+run.Vu4cIjHl,auto-explicit-multifile,auto,pass,,0.1093
+run.Vu4cIjHl,auto-explicit-multifile,haiku,pass,,0.1305
+run.Vu4cIjHl,auto-explicit-multifile,sonnet,pass,,0.1723

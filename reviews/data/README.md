@@ -85,3 +85,12 @@ worker が何を報告したかを問う測定では direct に worker が居ら
 `pass` / `FAIL` / `absent`（`run` check が先に落ちて判定に届かなかった）。
 pair ではないので `pairs.py` の列とは別物。
 記録: `reviews/parent-no-read-ab-2026-09-17.md`。
+
+## wording-live-check-2026-09-17.csv / wording-live-check-round2-2026-09-17.csv
+
+新文言が親の Read を止めるかの live 確認。列は
+`run,case,mode,parent_no_read,reason,cost_usd`。第 1 回が `426b780`
+（1/3 FAIL）、第 2 回が `60c35b7`（3/3 pass）。
+**二つは必ず一緒に読むこと** — 2 回目は条文を直してから走らせた
+選択の効いた結果で、単独では「直った」の根拠にならない。
+記録: `reviews/wording-live-check-2026-09-17.md`。
