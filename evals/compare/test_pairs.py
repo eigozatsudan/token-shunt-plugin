@@ -156,28 +156,31 @@ class OutputTests(PairsFixture):
 
 
 class SelectionTests(PairsFixture):
-    def test_a_case_with_only_one_arm_is_not_a_pair(self):
-        d, _ = self.run_dir("run.aaa", "c1")
-        (d / "summary.json").write_text(json.dumps(
-            {"cases": {"c1": {"modes": {"direct": {"checks": {}, "reasons": []}}}}}))
-        self.transcript(d, "c1", "direct")
-        got = self.pairs(str(self.runs))
-        self.assertEqual(got.returncode, 0)
-        self.assertEqual(self.rows(got.stdout), [])
-
     def test_a_directory_with_no_summary_is_skipped(self):
         (self.runs / "run.junk").mkdir()
         got = self.pairs(str(self.runs))
         self.assertEqual(got.returncode, 0)
         self.assertEqual(self.rows(got.stdout), [])
 
-    def test_a_missing_transcript_drops_the_pair(self):
+    def test_a_missing_transcript_blanks_that_arm_and_keeps_the_other(self):
+        # The arm that ran is still worth keeping; what must not happen is
+        # the missing one being written as a zero.
         d, _ = self.run_dir("run.aaa", "c1")
         self.summary(d, "c1")
         self.transcript(d, "c1", "direct")
         got = self.pairs(str(self.runs))
-        self.assertEqual(self.rows(got.stdout), [])
+        row = self.rows(got.stdout)[0]
+        self.assertEqual(row["direct_pass"], "1")
+        self.assertEqual(row["auto_read_bytes"], "")
+        self.assertEqual(row["auto_pass"], "")
         self.assertIn("run.aaa", got.stderr)
+
+    def test_a_case_with_no_usable_arm_yields_no_row(self):
+        d, _ = self.run_dir("run.aaa", "c1")
+        self.summary(d, "c1")
+        got = self.pairs(str(self.runs))
+        self.assertEqual(got.returncode, 0)
+        self.assertEqual(self.rows(got.stdout), [])
 
     def test_several_run_roots_are_read_together(self):
         other = self.root / "more"
@@ -191,6 +194,96 @@ class SelectionTests(PairsFixture):
             self.transcript(d, "c1", "auto")
         rows = self.rows(self.pairs(str(self.runs), str(other)).stdout)
         self.assertEqual([r["run"] for r in rows], ["run.aaa", "run.bbb"])
+
+
+class SingleArmTests(PairsFixture):
+    """A measurement that ran one arm still has rows worth keeping.
+
+    Three measurements in a row ran `MODES=auto` only -- direct has no
+    worker, so it cannot answer a question about what the worker reported
+    -- and each one had to be scored by a throwaway script because this
+    tool dropped every single-armed case
+    (reviews/fence-sendback-design-2026-09-17.md section 9,
+    reviews/fence-prevalence-design-2026-09-17.md section 9,
+    reviews/fence-bait-2026-09-17.md section 8).
+    """
+
+    def auto_only(self, name="run.aaa", case="c1", **kw):
+        d, fix = self.run_dir(name, case)
+        (d / "summary.json").write_text(json.dumps(
+            {"cases": {case: {"modes": {"auto": {"checks": {"accuracy_any": True},
+                                                 "reasons": list(kw.get("reasons", ()))}}}}}))
+        self.transcript(d, case, "auto", **{k: v for k, v in kw.items()
+                                            if k != "reasons"})
+        return d, fix
+
+    def test_an_auto_only_case_is_a_row(self):
+        self.auto_only(costs=[0.3])
+        got = self.pairs(str(self.runs))
+        self.assertEqual(got.returncode, 0, got.stderr)
+        rows = self.rows(got.stdout)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["auto_cost_usd"], "0.3000")
+        self.assertEqual(rows[0]["auto_accuracy_any"], "1")
+
+    def test_the_arm_that_did_not_run_is_blank_not_zero(self):
+        # Zero bytes and zero dollars are findings: zero is exactly what a
+        # correct auto arm reads. An arm that never ran must not be able to
+        # be mistaken for one that ran and read nothing.
+        self.auto_only()
+        row = self.rows(self.pairs(str(self.runs)).stdout)[0]
+        for column in ("direct_read_bytes", "direct_cost_usd",
+                       "direct_accuracy_any", "direct_pass"):
+            self.assertEqual(row[column], "", column)
+
+    def test_a_direct_only_case_is_a_row_with_the_auto_columns_blank(self):
+        d, _ = self.run_dir("run.aaa", "c1")
+        (d / "summary.json").write_text(json.dumps(
+            {"cases": {"c1": {"modes": {"direct": {"checks": {"accuracy_any": False},
+                                                   "reasons": []}}}}}))
+        self.transcript(d, "c1", "direct", costs=[0.2])
+        row = self.rows(self.pairs(str(self.runs)).stdout)[0]
+        self.assertEqual(row["direct_accuracy_any"], "0")
+        self.assertEqual(row["auto_cost_usd"], "")
+        self.assertEqual(row["auto_reasons"], "")
+
+    def test_an_auto_only_failure_still_carries_its_reasons(self):
+        # This is the column the fence measurements actually needed.
+        self.auto_only(reasons=["child_no_body: code fence in child message"])
+        row = self.rows(self.pairs(str(self.runs)).stdout)[0]
+        self.assertEqual(row["auto_pass"], "0")
+        self.assertIn("code fence", row["auto_reasons"])
+
+    def test_the_header_does_not_change_for_a_single_armed_block(self):
+        # Both shapes share one schema, so blocks can be compared and a
+        # diff of two CSVs stays readable.
+        self.auto_only()
+        self.assertEqual(self.pairs(str(self.runs)).stdout.splitlines()[0],
+                         "run,case,direct_read_bytes,auto_read_bytes,"
+                         "direct_cost_usd,auto_cost_usd,"
+                         "direct_accuracy_any,auto_accuracy_any,"
+                         "direct_pass,auto_pass,auto_reasons")
+
+    def test_single_and_paired_cases_can_share_one_block(self):
+        self.auto_only(name="run.aaa")
+        d, _ = self.run_dir("run.bbb", "c1")
+        self.summary(d, "c1")
+        self.transcript(d, "c1", "direct")
+        self.transcript(d, "c1", "auto")
+        rows = self.rows(self.pairs(str(self.runs)).stdout)
+        self.assertEqual([r["run"] for r in rows], ["run.aaa", "run.bbb"])
+        self.assertEqual(rows[0]["direct_pass"], "")
+        self.assertEqual(rows[1]["direct_pass"], "1")
+
+    def test_the_auto_arm_still_counts_only_the_parents_own_reads(self):
+        d, fix = self.run_dir("run.aaa", "c1")
+        body = "x" * 64
+        (d / "summary.json").write_text(json.dumps(
+            {"cases": {"c1": {"modes": {"auto": {"checks": {}, "reasons": []}}}}}))
+        self.transcript(d, "c1", "auto", reads=[(fix / "f.rb", body)],
+                        child_reads=[(fix / "g.rb", "y" * 999)])
+        row = self.rows(self.pairs(str(self.runs)).stdout)[0]
+        self.assertEqual(row["auto_read_bytes"], "64")
 
 
 class RootTests(PairsFixture):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One row per direct/auto pair, small enough to keep in the repository.
+"""One row per case and run, small enough to keep in the repository.
 
 A review records what a measurement concluded. It does not record the
 numbers a later question would need. On 2026-09-17 the worktrees holding
@@ -12,10 +12,18 @@ commit the CSV beside the review:
     python3 evals/compare/pairs.py -o reviews/data/<name>.csv \\
         /path/to/evals/compare/tmp/runs
 
-The columns are what every paired measurement so far has needed: the
-parent's own corpus intake in each arm, each arm's cost, whether the
-answer was right, and whether the verdict passed. Anything case-specific
-belongs in the review, not here.
+The columns are what every measurement so far has needed: the parent's
+own corpus intake in each arm, each arm's cost, whether the answer was
+right, and whether the verdict passed. Anything case-specific belongs in
+the review, not here.
+
+A block that ran one arm gets rows too. `MODES=auto` is the right setting
+for any question about what the worker reported -- direct has no worker --
+and three such measurements in a row each needed a throwaway scorer
+because this tool used to drop every single-armed case
+(reviews/fence-bait-2026-09-17.md, section 8). The arm that did not run is
+blank in every column, never zero: zero bytes is what a correct auto arm
+reads, so a zero standing for "not run" would read as a finding.
 
 `--root-base` scores run directories that were moved after the run. The
 transcripts hold absolute paths from where the run happened, so matching
@@ -52,8 +60,33 @@ def flag(value):
     return '' if value is None else ('1' if value else '0')
 
 
+def arm_row(run, case, mode, verdict, root):
+    """One arm's columns, or None when its transcript is not there."""
+    transcript = os.path.join(run, 'transcripts', '%s.%s.jsonl' % (case, mode))
+    if not os.path.isfile(transcript):
+        return None
+    checks = verdict.get('checks') or {}
+    reasons = verdict.get('reasons') or []
+    row = {
+        '%s_read_bytes' % mode: parent_read_bytes(transcript, root),
+        '%s_cost_usd' % mode: '%.4f' % (transcript_cost(transcript) or 0.0),
+        '%s_accuracy_any' % mode: flag(checks.get('accuracy_any')),
+        '%s_pass' % mode: flag(not reasons),
+    }
+    if mode == 'auto':
+        row['auto_reasons'] = '; '.join(str(r) for r in reasons)
+    return row
+
+
 def pair_rows(runs_root, root_base=None, warn=None):
-    """Every case in `runs_root` that has both arms, as CSV-ready dicts."""
+    """Every case in `runs_root` that ran at least one arm, as CSV-ready dicts.
+
+    A measurement that ran one arm still has rows worth keeping: `MODES=auto`
+    is the right setting for any question about what the worker reported,
+    since direct has no worker to report. The columns of the arm that did not
+    run stay blank, never zero -- zero bytes is what a correct auto arm reads,
+    so a zero standing for "not run" would read as a finding.
+    """
     rows = []
     for name in sorted(os.listdir(runs_root)):
         run = os.path.join(runs_root, name)
@@ -72,26 +105,20 @@ def pair_rows(runs_root, root_base=None, warn=None):
         root = os.path.join(root_base or runs_root, name, 'work', 'fixtures')
         for case, body in sorted((summary.get('cases') or {}).items()):
             modes = body.get('modes') or {}
-            if not all(mode in modes for mode in MODES):
-                continue
-            row, complete = {'run': name, 'case': case}, True
+            row = dict.fromkeys(COLUMNS, '')
+            row.update(run=name, case=case)
+            ran = 0
             for mode in MODES:
-                transcript = os.path.join(run, 'transcripts',
-                                          '%s.%s.jsonl' % (case, mode))
-                if not os.path.isfile(transcript):
+                if mode not in modes:
+                    continue
+                arm = arm_row(run, case, mode, modes[mode], root)
+                if arm is None:
                     if warn:
                         warn('%s/%s: no %s transcript' % (name, case, mode))
-                    complete = False
-                    break
-                checks = modes[mode].get('checks') or {}
-                reasons = modes[mode].get('reasons') or []
-                row['%s_read_bytes' % mode] = parent_read_bytes(transcript, root)
-                row['%s_cost_usd' % mode] = '%.4f' % (transcript_cost(transcript) or 0.0)
-                row['%s_accuracy_any' % mode] = flag(checks.get('accuracy_any'))
-                row['%s_pass' % mode] = flag(not reasons)
-                if mode == 'auto':
-                    row['auto_reasons'] = '; '.join(str(r) for r in reasons)
-            if complete:
+                    continue
+                row.update(arm)
+                ran += 1
+            if ran:
                 rows.append(row)
     return rows
 
