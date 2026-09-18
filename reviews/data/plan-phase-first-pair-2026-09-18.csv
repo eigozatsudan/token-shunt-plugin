@@ -1,0 +1,3 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.LmYlVVq0,django-plan-trace-bare,,0,,0.1560,,0,,0,accuracy: final answer missing: load_command_class
+run.LmYlVVq0,django-plan-trace-plan,,0,,0.1430,,1,,1,
