@@ -96,9 +96,16 @@ turn 5 だけは新しい path を出さず、**turn 1 と turn 4 の内容を�
 **会話 1 本あたりの親文脈コーパスバイト、対で比較する。**
 
 `parent_bytes.parent_read_bytes(t, root=$FIX)` を
-**その会話の全 turn transcript について合計した値**
-（合計か最終値かは §10-2 の calibration が決める。
-**走らせる前に確定させ、本記録に書き足してから走る**）。
+**その会話の全 turn transcript について合計した値**。
+
+**合計でよいことは §10-2 の calibration が決めた（走らせる前に、$0.0662 で）。**
+`--resume` の transcript には**その turn の event しか入らない**ので、
+turn ごとの値は**重複しない**。
+
+**この指標が数えるのは Read が親に返した payload であって、
+ファイルのサイズではない**（行番号接頭辞を含むので 1,595 B の
+ファイルが 1,979 B として出る）。A・B と同じ器具であり、
+§2.1 の表のバイト数とは一致しない。
 
 - 対 = 同一 slot の direct と auto
 - 検定 = **符号反転 permutation（両側）**、B と同じ
@@ -207,6 +214,7 @@ SD $0.015/turn と置いた模擬（`Random(20260918)`、400 反復）:
 
 1. **専用チェックアウト**を本記録と case 追加のコミットに固定、
    生成物を除いて `git status` が空。その中で `judge.py --selftest` 全項目 pass。
+   **`/tmp/ts-multiturn` を `cb8e8dd` に固定。clean。selftest 全項目 pass。**
 2. **calibration（唯一の有料 preflight、枠 $1.00、コーパスに触れない）。**
    小さな生成 fixture で 2 ターン走らせ、**次の 2 点を確定して本記録に書き足す**:
    - **C1**: `--resume` の turn transcript は**その turn の event だけか、
@@ -215,6 +223,18 @@ SD $0.015/turn と置いた模擬（`Random(20260918)`、400 反復）:
      → 費用の足し方と、`spend.py` が二重計上するかを決める。
    **どちらも器具の性質であって、腕でもコーパスでも結果でもない。**
    **走らせる前に決め、走らせた後に決め直さない。**
+
+   **実施済み（2026-09-18、実費 $0.0662、枠 $1.00 の内側）。**
+   corpus に触れない 1,595 B の生成 fixture で 2 ターン。
+   turn 1 が Read 1 回、turn 2 は「OK とだけ返せ」。
+   - **C1: その turn の event だけである。** turn 2 の transcript は 4 行
+     （`init` / `assistant` / `rate_limit_event` / `result`）で、
+     turn 1 の `tool_use` も `tool_result` も入っていない。
+     turn 1 が読んだ marker 文字列は turn 2 の transcript に 0 回しか出ない。
+     **→ turn ごとのバイトは足し合わせる。**
+   - **C2: その turn ぶんである。** turn 1 が $0.0598、turn 2 が $0.0064。
+     累計なら turn 2 は turn 1 を下回れない。
+     **→ 会話の費用は turn の総和。`spend.py` は二重計上しない。**
 3. **case はテストを先に書く。** RED を確認してから case を足す。
    とくに固定する:
    - `expect` が `django-subthreshold-cost` と**フィールド単位で同一**
@@ -224,11 +244,19 @@ SD $0.015/turn と置いた模擬（`Random(20260918)`、400 反復）:
      **turn 2〜4 はそれぞれ自分の新しい path を名指す**
    - `isolation` / `fixture_bytes` を**付けない**（B で決着済み）
    その中で `evals/compare` 全件・外側 `evals` 全件・`evals/run.sh` 全件 pass。
+   **実施済み。case が無いことを理由に 8 件 RED（`MultiturnContextCaseTests`）を
+   確認してから case を足した。`evals/compare` 717 tests OK、
+   外側 `evals` 319 tests OK（skip 3）、`evals/run.sh` 240 pass / 0 fail。**
 4. `DJANGO_ROOT` が `bc833e8`。**6 パスが解決し、
    `check-file-size` が 6 件とも deny しない**ことを $0 で確認
    （流用せず、このチェックアウトで引き直す）。
+   **引き直した: `DJANGO_ROOT` は `bc833e8`、6 件とも
+   `check-file-size` が空出力・exit 0（deny 無し）、
+   サイズも行数も §2.1 の表と一致。`ltrimstr` 後の 6 パスも全て存在。**
 5. **選択 jq を再現**し、planned がちょうど 2 スロット、
    `unknown_slots` が空であることを $0 で確認する。
+   **確認した。planned は `django-multiturn-context/direct` と
+   `.../auto` の 2 件、`unknown_slots` は空。**
 6. **機構確認は 3 点だけ**: `errors` が空 / 実費が枠内 /
    `pairs.py` が両 mode の列を出す。
    **どれも、どちらの腕が勝ったかを見ずに決まる。**
