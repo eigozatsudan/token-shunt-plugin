@@ -1,0 +1,81 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.56cdrFDG,django-plan-trace-bare,,0,,0.1466,,1,,1,
+run.56cdrFDG,django-plan-trace-plan,,0,,0.1398,,0,,0,accuracy: final answer missing: load_command_class
+run.6srq7FbN,django-plan-trace-bare,,0,,0.1451,,1,,1,
+run.6srq7FbN,django-plan-trace-plan,,0,,0.1907,,0,,0,accuracy: final answer missing: load_command_class
+run.7QcIJA5e,django-plan-trace-bare,,0,,0.1742,,1,,0,child_reads_once: Agent toolu_019h6yHLadygc72htCgHgNY4 must carry 1-3 explicit paths and stay within 6 Reads
+run.7QcIJA5e,django-plan-trace-plan,,0,,0.1825,,1,,0,child_msg_cap: agent result 5113 chars > 4000
+run.7tlkanMu,django-plan-trace-bare,,0,,0.1889,,0,,0,accuracy: final answer missing: load_command_class
+run.7tlkanMu,django-plan-trace-plan,,0,,0.1830,,1,,1,
+run.9fZEItiP,django-plan-trace-bare,,0,,0.1636,,1,,1,
+run.9fZEItiP,django-plan-trace-plan,,0,,0.1521,,0,,0,accuracy: final answer missing: load_command_class
+run.AexDNaId,django-plan-trace-bare,,0,,0.1351,,1,,1,
+run.AexDNaId,django-plan-trace-plan,,0,,0.1389,,1,,1,
+run.B9sK8wiP,django-plan-trace-bare,,0,,0.1572,,1,,0,child_reads_once: Agent toolu_01NN5EuJXWdK7GDURxxZkMTT must carry 1-3 explicit paths and stay within 6 Reads
+run.B9sK8wiP,django-plan-trace-plan,,0,,0.1492,,1,,1,
+run.DInmVM9d,django-plan-trace-bare,,0,,0.1424,,1,,1,
+run.DInmVM9d,django-plan-trace-plan,,0,,0.1998,,1,,1,
+run.Evwb3kuL,django-plan-trace-bare,,0,,0.1593,,1,,1,
+run.Evwb3kuL,django-plan-trace-plan,,0,,0.1438,,1,,1,
+run.FSuLJ0GD,django-plan-trace-bare,,0,,0.1517,,0,,0,accuracy: final answer missing: load_command_class
+run.FSuLJ0GD,django-plan-trace-plan,,0,,0.1987,,1,,1,
+run.HWCpOMGm,django-plan-trace-bare,,0,,0.1310,,1,,1,
+run.HWCpOMGm,django-plan-trace-plan,,0,,0.1425,,1,,1,
+run.ImDgcpXg,django-plan-trace-bare,,0,,0.1924,,1,,1,
+run.ImDgcpXg,django-plan-trace-plan,,0,,0.1467,,1,,0,child_msg_cap: agent result 4033 chars > 4000
+run.KJAiZe2r,django-plan-trace-bare,,0,,0.1626,,1,,0,child_reads_once: Agent toolu_01UaR9T4zDRqsrZzj6Wcofe9 must carry 1-3 explicit paths and stay within 6 Reads
+run.KJAiZe2r,django-plan-trace-plan,,0,,0.1372,,1,,1,
+run.LmYlVVq0,django-plan-trace-bare,,0,,0.1560,,0,,0,accuracy: final answer missing: load_command_class
+run.LmYlVVq0,django-plan-trace-plan,,0,,0.1430,,1,,1,
+run.MzUVynVw,django-plan-trace-bare,,0,,0.1395,,1,,1,
+run.MzUVynVw,django-plan-trace-plan,,0,,0.1463,,1,,1,
+run.NU26tYFa,django-plan-trace-bare,,0,,0.1539,,1,,1,
+run.NU26tYFa,django-plan-trace-plan,,0,,0.1767,,0,,0,accuracy: final answer missing: load_command_class
+run.Nmap48sT,django-plan-trace-bare,,0,,0.1715,,0,,0,accuracy: final answer missing: load_command_class
+run.Nmap48sT,django-plan-trace-plan,,0,,0.1541,,1,,1,
+run.O4vl1KIu,django-plan-trace-bare,,0,,0.1539,,0,,0,accuracy: final answer missing: load_command_class; child_reads_once: Agent toolu_019DgEBqugWocLmgRaFHcpxQ must carry 1-3 explicit paths and stay within 6 Reads
+run.O4vl1KIu,django-plan-trace-plan,,0,,0.1590,,1,,1,
+run.OcE4L3Qc,django-plan-trace-bare,,0,,0.1614,,0,,0,accuracy: final answer missing: load_command_class
+run.OcE4L3Qc,django-plan-trace-plan,,0,,0.1736,,1,,0,child_msg_cap: agent result 6356 chars > 4000; child_no_body: code fence in child message
+run.RhnlpoKK,django-plan-trace-bare,,0,,0.1596,,1,,1,
+run.RhnlpoKK,django-plan-trace-plan,,0,,0.1925,,1,,1,
+run.RqHAFDqz,django-plan-trace-bare,,0,,0.1496,,1,,0,child_reads_once: Agent toolu_01F8HmoQZSQfkjG8D1NMzGLr must carry 1-3 explicit paths and stay within 6 Reads
+run.RqHAFDqz,django-plan-trace-plan,,0,,0.1557,,1,,1,
+run.W4jQ2v0z,django-plan-trace-bare,,0,,0.1566,,0,,0,accuracy: final answer missing: load_command_class
+run.W4jQ2v0z,django-plan-trace-plan,,0,,0.1445,,1,,1,
+run.ZiZeiNDd,django-plan-trace-bare,,0,,0.1526,,1,,1,
+run.ZiZeiNDd,django-plan-trace-plan,,0,,0.1477,,1,,1,
+run.c14ShZ1T,django-plan-trace-bare,,0,,0.1590,,1,,1,
+run.c14ShZ1T,django-plan-trace-plan,,0,,0.2093,,0,,0,accuracy: final answer missing: load_command_class
+run.fexqK2Ad,django-plan-trace-bare,,0,,0.1898,,0,,0,accuracy: final answer missing: load_command_class; child_no_body: code fence in child message
+run.fexqK2Ad,django-plan-trace-plan,,0,,0.1352,,1,,1,
+run.fjyxjqch,django-plan-trace-bare,,0,,0.1627,,0,,0,accuracy: final answer missing: load_command_class
+run.fjyxjqch,django-plan-trace-plan,,0,,0.1380,,0,,0,accuracy: final answer missing: load_command_class
+run.hsQmJItO,django-plan-trace-bare,,0,,0.1504,,1,,1,
+run.hsQmJItO,django-plan-trace-plan,,0,,0.1475,,1,,1,
+run.i4gbCfnQ,django-plan-trace-bare,,0,,0.1376,,0,,0,accuracy: final answer missing: load_command_class
+run.i4gbCfnQ,django-plan-trace-plan,,0,,0.1804,,0,,0,accuracy: final answer missing: load_command_class
+run.kyw15acw,django-plan-trace-bare,,0,,0.1329,,0,,0,accuracy: final answer missing: load_command_class
+run.kyw15acw,django-plan-trace-plan,,0,,0.1775,,1,,0,child_msg_cap: agent result 6210 chars > 4000
+run.l4JSLoXj,django-plan-trace-bare,,0,,0.1362,,0,,0,accuracy: final answer missing: load_command_class
+run.l4JSLoXj,django-plan-trace-plan,,0,,0.1393,,1,,1,
+run.m0XGeBba,django-plan-trace-bare,,0,,0.1377,,1,,1,
+run.m0XGeBba,django-plan-trace-plan,,0,,0.1714,,1,,1,
+run.nyE6vJL5,django-plan-trace-bare,,0,,0.1364,,1,,1,
+run.nyE6vJL5,django-plan-trace-plan,,0,,0.1848,,1,,1,
+run.omoYmZrw,django-plan-trace-bare,,0,,0.1530,,1,,1,
+run.omoYmZrw,django-plan-trace-plan,,0,,0.1995,,1,,1,
+run.p5vvAqQi,django-plan-trace-bare,,0,,0.1446,,0,,0,accuracy: final answer missing: load_command_class
+run.p5vvAqQi,django-plan-trace-plan,,0,,0.1530,,1,,1,
+run.rIZx15ud,django-plan-trace-bare,,0,,0.1409,,1,,0,child_reads_once: Agent toolu_0191wHSvoq5GVDVUxsVjG1PY must carry 1-3 explicit paths and stay within 6 Reads
+run.rIZx15ud,django-plan-trace-plan,,0,,0.1642,,1,,0,child_reads_once: Agent toolu_012YHw3LCDukNyDrMpNZ4vkM must carry 1-3 explicit paths and stay within 6 Reads; child_msg_cap: agent result 4275 chars > 4000
+run.rQdU7wQ5,django-plan-trace-bare,,0,,0.1433,,0,,0,accuracy: final answer missing: load_command_class
+run.rQdU7wQ5,django-plan-trace-plan,,0,,0.2242,,1,,0,child_reads_once: Agent toolu_019SM4sc9vz7BMfbrmnFUq1u must carry 1-3 explicit paths and stay within 6 Reads
+run.tBqVecyF,django-plan-trace-bare,,0,,0.1448,,0,,0,accuracy: final answer missing: load_command_class; child_reads_once: Agent toolu_01KXT9cM2JiBDg58xG2QmD6A must carry 1-3 explicit paths and stay within 6 Reads
+run.tBqVecyF,django-plan-trace-plan,,0,,0.1534,,1,,1,
+run.uQgVobJE,django-plan-trace-bare,,0,,0.1580,,1,,1,
+run.uQgVobJE,django-plan-trace-plan,,0,,0.1443,,0,,0,accuracy: final answer missing: load_command_class
+run.w3lBPFq8,django-plan-trace-bare,,0,,0.1405,,1,,1,
+run.w3lBPFq8,django-plan-trace-plan,,0,,0.1702,,1,,1,
+run.wtAjDag9,django-plan-trace-bare,,0,,0.1626,,1,,1,
+run.wtAjDag9,django-plan-trace-plan,,0,,0.1454,,1,,1,
