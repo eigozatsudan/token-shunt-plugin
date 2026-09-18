@@ -138,3 +138,17 @@ barren 0 件、prompt の md5 は全 run 一致。
 - **「計画文書が効くか」には答えていない。** A は 1 腕である。
 - **`accuracy` から「委譲しても答えられる」とは言えない**（§5）。
 - **率の値そのものを主張できない。** CI は [0.008, 0.210] である。
+
+## 9. 残したもの
+
+**repo の中（25 KB、`reviews/data/subthreshold-routing-2026-09-18-meta.tar.gz`）**
+23 run 分の `summary.json` / `verdicts/` / `specs/` / `manifest.json`。
+sha256 `313227781aa17f013368490059a9d29a89c2911ab77a6acb6d7a76e92d000b28`。
+**corpus の本文を含まない。** 判定のやり直しはこれで足りる。
+
+**repo の外（1.0 MB、`~/measurements/token-shunt/subthreshold-routing-2026-09-18-transcripts.tar.gz`）**
+上に加えて transcript 本体（`.err` 込み、case 23 本）。
+sha256 `87459005963b09cc84e9696fc1ae434384489cc29b55481151dd555067587faa`。
+**Django の本文が入るため repo の外に置いた**（前ブロック §4.1 と同じ）。
+
+**中の絶対パスは `/tmp/ts-sub/...` である。** 再現時は読み替えが要る。
