@@ -1,6 +1,8 @@
 """Check the reader call contract source of truth and its deny rendering."""
+import atexit
 import json
 import os
+import pathlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +14,40 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / 'plugin/hooks'
 CONTRACT = HOOKS / 'reader-call-contract'
+
+# evals/compare/fixtures/gen/ is written per run by run.sh and gitignored,
+# so it is absent from a fresh checkout and stale wherever it survives.
+# Tests that judge those files build them the way the runner does.
+RUNNER = ROOT / 'evals/compare/run.sh'
+_BUILT = []
+
+
+def generated_fixtures():
+    """The gen/ tree run.sh writes, built into a temp dir once per process."""
+    if _BUILT:
+        return _BUILT[0]
+    lines = RUNNER.read_text(encoding='utf-8').splitlines()
+    opens = [i for i, line in enumerate(lines)
+             if line.strip().endswith('"$GEN" <<\'PY\'')]
+    if len(opens) != 1:
+        raise AssertionError('run.sh: expected one $GEN generator, found %d'
+                             % len(opens))
+    start = opens[0]
+    end = next(i for i in range(start + 1, len(lines))
+               if lines[i].strip() == 'PY')
+    source = '\n'.join(lines[start + 1:end])
+    root = pathlib.Path(tempfile.mkdtemp(prefix='ts-gen-'))
+    gen = root / 'gen'
+    for sub in ('bounds', 'small3', 'verify', 'collide'):
+        (gen / sub).mkdir(parents=True, exist_ok=True)
+    done = subprocess.run([sys.executable, '-c', source, str(gen)],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError('run.sh generator failed: %s' % done.stderr)
+    _BUILT.append(root)
+    atexit.register(shutil.rmtree, root, True)
+    return root
+
 
 # The rendered deny must carry the call spec; these markers identify it.
 MARKERS = ('Agent: subagent_type=token-shunt:bulk-reader',
@@ -649,6 +685,19 @@ class SkillDocumentTests(unittest.TestCase):
         body = ' '.join(self.SKILL.read_text(encoding='utf-8').split())
         self.assertIn('File count alone is not a trigger', body)
 
+    def test_the_generated_fixtures_are_built_not_found(self):
+        # The sizes this case is judged on belong to files run.sh writes
+        # per run; evals/compare/fixtures/gen/ is gitignored. A test that
+        # stats the source tree passes only where a previous run left its
+        # output behind, and errors in a fresh checkout -- which is where
+        # a measurement block is pinned. Asserting the four files exist
+        # under the built tree is what keeps the budget check from
+        # measuring an empty set.
+        built = generated_fixtures()
+        for rel in ('gen/small3/a.txt', 'gen/small3/b.txt',
+                    'gen/small3/c.txt', 'gen/collide/alpha.py'):
+            self.assertTrue((built / rel).is_file(), rel)
+
     def test_a_four_path_within_budget_case_exists_to_measure_it(self):
         # Both existing 4-path cases are over budget AND name the skill,
         # so neither can show whether count alone triggered a delegation.
@@ -661,7 +710,7 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertGreaterEqual(len(case['fixtures']), 4)
         total = 0
         for rel in case['fixtures']:
-            total += (ROOT / 'evals/compare/fixtures' / rel).stat().st_size
+            total += (generated_fixtures() / rel).stat().st_size
         self.assertLessEqual(total, 16384, total)
         for key in ('prompt_direct', 'prompt_delegate'):
             self.assertNotIn('bulk-reader', case[key])
