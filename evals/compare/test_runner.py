@@ -1436,3 +1436,97 @@ class SubthresholdCostCaseTests(unittest.TestCase):
         # would fail all forty runs and delete the accuracy secondary too.
         self.assertNotIn("isolation", self.case)
         self.assertNotIn("fixture_bytes", self.case)
+
+
+class MultiturnContextCaseTests(unittest.TestCase):
+    """The multi-turn case of reviews/multiturn-context-design-2026-09-18.md.
+
+    Every number the routing work has produced so far is one turn wide.
+    This case runs the cost case's turn again, unchanged, and then four
+    more turns that introduce one new file each, so the measurement is of
+    a slope rather than a level.
+
+    Two things have to hold or the slope is against something new. Turn
+    one must be the cost case byte for byte, since the first point of
+    every curve is that case's result. And the follow-up turns go to both
+    arms unchanged, so anything that names a mechanism would make the
+    later points a comparison of two prompts instead of two arms.
+
+    judge.py reads one transcript per case, so only turn one is scored;
+    the later turns are measured, not judged (design section 2.3).
+    """
+
+    CASE = "django-multiturn-context"
+    TURN_ONE = "django-subthreshold-cost"
+    LATER = ["django/django/db/migrations/migration.py",
+             "django/django/db/migrations/writer.py",
+             "django/django/db/migrations/operations/special.py"]
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        self.assertIn(self.CASE, self.by_id, "%s is not declared" % self.CASE)
+        self.case = self.by_id[self.CASE]
+        self.first = self.by_id[self.TURN_ONE]
+
+    # --- turn one is the cost case, unchanged ---
+
+    def test_turn_one_is_the_cost_case_field_for_field(self):
+        for key in ("gold", "gold_paths", "wm_hint", "external_root",
+                    "external_prefix", "prompt_direct", "prompt_delegate",
+                    "modes", "suite"):
+            with self.subTest(key=key):
+                self.assertEqual(self.first[key], self.case[key])
+        self.assertEqual(self.first["expect"], self.case["expect"])
+
+    def test_the_first_three_fixtures_are_the_cost_case_fixtures(self):
+        self.assertEqual(self.first["fixtures"],
+                         self.case["fixtures"][:len(self.first["fixtures"])])
+
+    def test_the_later_files_are_staged_and_are_new(self):
+        # run.sh stages exactly what `fixtures` lists, so a path a later
+        # turn names and `fixtures` omits would not exist on disk.
+        staged = self.case["fixtures"][len(self.first["fixtures"]):]
+        self.assertEqual(self.LATER, staged)
+        for path in self.LATER:
+            with self.subTest(path=path):
+                self.assertNotIn(path, self.first["fixtures"])
+
+    # --- the follow-up turns ---
+
+    def test_it_declares_four_follow_up_turns(self):
+        self.assertEqual(4, len(self.case["prompt_turns"]))
+
+    def test_no_follow_up_turn_names_the_mechanism(self):
+        # Both arms get these strings verbatim. Naming a mechanism in one
+        # of them would steer the arm that has it and nothing else.
+        for n, prompt in enumerate(self.case["prompt_turns"]):
+            with self.subTest(turn=n + 2):
+                lowered = prompt.lower()
+                for token in ("token-shunt", "bulk-reader", "agent",
+                              "delegate", "read tool", "subagent"):
+                    self.assertNotIn(token, lowered)
+
+    def test_each_of_the_first_three_turns_names_its_own_new_file(self):
+        for n, path in enumerate(self.LATER):
+            with self.subTest(turn=n + 2):
+                prompt = self.case["prompt_turns"][n]
+                self.assertIn("{FIX}/" + path, prompt)
+                for other in self.LATER:
+                    if other != path:
+                        self.assertNotIn("{FIX}/" + other, prompt)
+
+    def test_the_last_turn_introduces_no_new_file(self):
+        # Turn five is the re-reference turn: it must be answerable only
+        # from what the conversation already holds.
+        last = self.case["prompt_turns"][-1]
+        for path in self.LATER + self.first["fixtures"]:
+            with self.subTest(path=path):
+                self.assertNotIn("{FIX}/" + path, last)
+
+    # --- the contract this case must NOT carry ---
+
+    def test_it_declares_no_isolation_contract(self):
+        self.assertNotIn("isolation", self.case)
+        self.assertNotIn("fixture_bytes", self.case)

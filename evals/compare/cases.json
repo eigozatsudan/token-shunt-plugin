@@ -2305,6 +2305,80 @@
       "prompt_direct": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。 Use the Read tool to read all three specified files before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
       "prompt_delegate": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。{WMHINT}",
       "note": "The paired arm of reviews/subthreshold-cost-design-2026-09-18.md. Same three Django files, same gold and same prompt_delegate as django-subthreshold-bare -- byte for byte, because the cost difference is only against the arm A measured if it is that arm. What is new is direct, which run.sh launches without --plugin-dir at all, so no hook and no delegation: the baseline is the product being absent, not the product declining to route. The primary is the paired cost difference; the parent bytes and the wall clock are reported beside it and never alone. No isolation key on purpose: delegate_lt_direct_and_fixture thresholds on min(sizes), which is recorder.py at 3827 B, and A measured this arm at a 13259 B median, so the contract would fail all forty runs and judge.py would drop every mode of the case with it. SubthresholdCostCaseTests holds all of that. Deliberately billed by slot; never part of a release run."
+    },
+    {
+      "id": "django-multiturn-context",
+      "suite": "X",
+      "modes": [
+        "direct",
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/core/management/commands/showmigrations.py",
+        "django/django/db/migrations/recorder.py",
+        "django/django/db/migrations/graph.py",
+        "django/django/db/migrations/migration.py",
+        "django/django/db/migrations/writer.py",
+        "django/django/db/migrations/operations/special.py"
+      ],
+      "gold": [
+        "show_list",
+        "applied_migrations",
+        "forwards_plan"
+      ],
+      "gold_paths": {
+        "show_list": [
+          "django/django/core/management/commands/showmigrations.py"
+        ],
+        "applied_migrations": [
+          "django/django/db/migrations/recorder.py"
+        ],
+        "forwards_plan": [
+          "django/django/db/migrations/graph.py"
+        ]
+      },
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "direct": {
+          "parent_reads": [
+            "{FIX}/django/django/core/management/commands/showmigrations.py",
+            "{FIX}/django/django/db/migrations/recorder.py",
+            "{FIX}/django/django/db/migrations/graph.py"
+          ]
+        },
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "single_invocation_paths": [
+            "{FIX}/django/django/core/management/commands/showmigrations.py",
+            "{FIX}/django/django/db/migrations/recorder.py",
+            "{FIX}/django/django/db/migrations/graph.py"
+          ],
+          "child_reads_once": [
+            "{FIX}/django/django/core/management/commands/showmigrations.py",
+            "{FIX}/django/django/db/migrations/recorder.py",
+            "{FIX}/django/django/db/migrations/graph.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/core/management/commands/showmigrations.py",
+            "{FIX}/django/django/db/migrations/recorder.py",
+            "{FIX}/django/django/db/migrations/graph.py"
+          ]
+        }
+      },
+      "prompt_direct": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。 Use the Read tool to read all three specified files before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
+      "prompt_delegate": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。{WMHINT}",
+      "note": "The paired arm of reviews/subthreshold-cost-design-2026-09-18.md. Same three Django files, same gold and same prompt_delegate as django-subthreshold-bare -- byte for byte, because the cost difference is only against the arm A measured if it is that arm. What is new is direct, which run.sh launches without --plugin-dir at all, so no hook and no delegation: the baseline is the product being absent, not the product declining to route. The primary is the paired cost difference; the parent bytes and the wall clock are reported beside it and never alone. No isolation key on purpose: delegate_lt_direct_and_fixture thresholds on min(sizes), which is recorder.py at 3827 B, and A measured this arm at a 13259 B median, so the contract would fail all forty runs and judge.py would drop every mode of the case with it. SubthresholdCostCaseTests holds all of that. Deliberately billed by slot; never part of a release run.",
+      "prompt_turns": [
+        "In {FIX}/django/django/db/migrations/migration.py, which exception does Migration.unapply raise when it reaches an operation it cannot reverse, and which attribute of the operation does it inspect to decide that?",
+        "In {FIX}/django/django/db/migrations/writer.py, name the two module-level template strings that MigrationWriter relies on, and say which method of MigrationWriter returns the rendered migration file contents.",
+        "In {FIX}/django/django/db/migrations/operations/special.py, which operation class sets reduces_to_sql to False, and what does RunSQL inspect to decide whether it reports itself as reversible?",
+        "Using only the files already covered in this conversation, say what showmigrations prints for a migration that the recorder holds no row for but that the graph places in the forwards plan, and name which of the operation classes you have seen would still have to run for it."
+      ]
     }
   ]
 }
