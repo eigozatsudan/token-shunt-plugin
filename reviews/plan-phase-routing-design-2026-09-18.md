@@ -261,8 +261,15 @@ dose 測定の auto 腕は 88/88 で本文 0 バイトだった。
 **run ディレクトリを消す前に**
 
 ```
-python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv <runs>
+python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv \
+    --min-rows 80 <runs>
 ```
+
+**`--min-rows` を必ず付ける**（2026-09-18 追記、走行前）。
+`pairs.py` は **0 行でも exit 0** で、CSV にヘッダだけを書く。
+`pairs.py && rm -rf <runs>` と書けば、**1 行も保存できていないのに削除が走る。**
+枠で打ち切られて 80 対に届かなかった場合は **exit 3 で止まり、
+そこまでの行は書かれている**ので、期待値を下げて取り直す。
 
 （メモリ `keep-per-pair-rows`。88 対を一度失っている。）
 
@@ -281,6 +288,13 @@ python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv
 4. **`DJANGO_ROOT` が `bc833e8883db4a333a6485d91637b78c85e2b13b` の
    checkout を指していることを `git rev-parse HEAD` で確認する。**
 5. **`pairs.py` を 1 対の実データに掛けて、1 腕 case の行が出ることを確認する。**
+   **実施済み（2026-09-18、$0）。** 本物の summary
+   （`evals/compare/last-run.json`、`auto-small-files` の 1 腕 run）に
+   合成 transcript を添えて確認した:
+   **行は出る／走らなかった腕の列は空欄でゼロではない／親自身の Read は
+   数えられ（1,234 B）、worker の Read は数えられない（9,999 B）。**
+   **`0` を額面で信じないため、fixtures 配下と配下外の両方で確かめた。**
+   **transcript は合成なので、§10.1 の 4 は実走後にあらためて行う。**
 6. **駆動器に再試行の上限を入れる**（§7）。**実装済み: `evals/compare/progress.py`。**
    `spend.py` と同じ位置に置く:
 

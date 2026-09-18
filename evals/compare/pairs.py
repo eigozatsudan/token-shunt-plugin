@@ -25,6 +25,15 @@ because this tool used to drop every single-armed case
 blank in every column, never zero: zero bytes is what a correct auto arm
 reads, so a zero standing for "not run" would read as a finding.
 
+`--min-rows` is the stop half of keeping them. Zero rows also exits 0 --
+a header and nothing else -- so a driver writing `pairs.py -o rows.csv runs
+&& rm -rf runs` reads the loss as success. Pass the number of rows the
+measurement was expecting and it exits 3 when it has fewer, with the file
+still written so you can see how far it got:
+
+    python3 evals/compare/pairs.py -o reviews/data/<name>.csv \\
+        --min-rows 80 /path/to/evals/compare/tmp/runs
+
 `--root-base` scores run directories that were moved after the run. The
 transcripts hold absolute paths from where the run happened, so matching
 against the new location returns zero bytes for every arm -- which is
@@ -43,6 +52,9 @@ from parent_bytes import parent_read_bytes
 from spend import transcript_cost
 
 USAGE = 2
+TOO_FEW = 3
+USAGE_TEXT = ('usage: pairs.py [--root-base DIR] [-o FILE] '
+              '[--min-rows N] <runs-dir> [...]')
 MODES = ('direct', 'auto')
 COLUMNS = ['run', 'case', 'direct_read_bytes', 'auto_read_bytes',
            'direct_cost_usd', 'auto_cost_usd',
@@ -92,6 +104,23 @@ def accuracy(checks):
     if 'accuracy_any' in checks:
         return checks['accuracy_any']
     return checks.get('accuracy')
+
+
+def least(raw):
+    """A positive whole number, or None with the reason already printed.
+
+    Zero asserts nothing, so accepting it would leave a caller believing a
+    guard was on when it was not.
+    """
+    try:
+        value = int(raw)
+    except ValueError:
+        print('min-rows must be a whole number: %s' % raw, file=sys.stderr)
+        return None
+    if value < 1:
+        print('min-rows must be positive: %s' % raw, file=sys.stderr)
+        return None
+    return value
 
 
 def pair_rows(runs_root, root_base=None, warn=None):
@@ -147,20 +176,23 @@ def write(rows, stream):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    minimum = None
     root_base, out = None, None
-    while argv and argv[0] in ('--root-base', '-o'):
+    while argv and argv[0] in ('--root-base', '-o', '--min-rows'):
         if len(argv) < 2:
-            print('usage: pairs.py [--root-base DIR] [-o FILE] <runs-dir> [...]',
-                  file=sys.stderr)
+            print(USAGE_TEXT, file=sys.stderr)
             return USAGE
         if argv[0] == '--root-base':
             root_base = argv[1]
+        elif argv[0] == '--min-rows':
+            minimum = least(argv[1])
+            if minimum is None:
+                return USAGE
         else:
             out = argv[1]
         argv = argv[2:]
     if not argv:
-        print('usage: pairs.py [--root-base DIR] [-o FILE] <runs-dir> [...]',
-              file=sys.stderr)
+        print(USAGE_TEXT, file=sys.stderr)
         return USAGE
     for root in argv:
         if not os.path.isdir(root):
@@ -176,6 +208,11 @@ def main(argv=None):
         print('%d pairs -> %s' % (len(rows), out), file=sys.stderr)
     else:
         write(rows, sys.stdout)
+    if minimum is not None and len(rows) < minimum:
+        print('stop: %d rows, fewer than the %d expected; the run '
+              'directories still hold what is missing'
+              % (len(rows), minimum), file=sys.stderr)
+        return TOO_FEW
     return 0
 
 

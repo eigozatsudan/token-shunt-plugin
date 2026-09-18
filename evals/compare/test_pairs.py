@@ -379,3 +379,94 @@ class UsageTests(PairsFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MinimumRowsTests(PairsFixture):
+    """The stop half of "keep the rows".
+
+    The tool's own docstring says to run it before the run directories go,
+    and a driver that writes `pairs.py -o rows.csv runs && rm -rf runs`
+    reads exit 0 as "the rows are kept". Zero rows also exits 0: a header
+    and nothing else, which is what losing 88 pairs looked like the first
+    time (reviews/redmine-dose-2026-09-17.md). `--min-rows` is how a
+    caller says how many it was expecting.
+    """
+
+    TOO_FEW = 3
+
+    def one_pair(self, name, case="c1"):
+        d, fix = self.run_dir(name, case)
+        self.summary(d, case)
+        self.transcript(d, case, "direct", costs=[0.01])
+        self.transcript(d, case, "auto", costs=[0.02])
+        return d
+
+    def test_fewer_rows_than_expected_stops_the_caller(self):
+        self.one_pair("run.aaa")
+        got = self.pairs("--min-rows", "2", str(self.runs))
+        self.assertEqual(got.returncode, self.TOO_FEW, got.stderr)
+
+    def test_no_rows_at_all_stops_the_caller(self):
+        # The case the option exists for: everything was skipped and the
+        # file holds a header alone.
+        (self.runs / "run.junk").mkdir()
+        got = self.pairs("--min-rows", "1", str(self.runs))
+        self.assertEqual(got.returncode, self.TOO_FEW, got.stderr)
+
+    def test_exactly_the_expected_number_is_enough(self):
+        self.one_pair("run.aaa")
+        got = self.pairs("--min-rows", "1", str(self.runs))
+        self.assertEqual(got.returncode, 0, got.stderr)
+
+    def test_more_rows_than_expected_is_not_an_error(self):
+        self.one_pair("run.aaa")
+        self.one_pair("run.bbb")
+        got = self.pairs("--min-rows", "1", str(self.runs))
+        self.assertEqual(got.returncode, 0, got.stderr)
+
+    def test_the_rows_it_did_get_are_still_written(self):
+        # Stopping must not also destroy the evidence of how far it got.
+        self.one_pair("run.aaa")
+        out = self.root / "rows.csv"
+        got = self.pairs("--min-rows", "9", "-o", str(out), str(self.runs))
+        self.assertEqual(got.returncode, self.TOO_FEW, got.stderr)
+        self.assertEqual(len(self.rows(out.read_text())), 1)
+
+    def test_it_says_how_many_it_found_and_how_many_were_wanted(self):
+        self.one_pair("run.aaa")
+        got = self.pairs("--min-rows", "4", str(self.runs))
+        self.assertIn("1", got.stderr)
+        self.assertIn("4", got.stderr)
+
+    def test_without_the_option_zero_rows_is_still_success(self):
+        # The existing contract: two tests already depend on it.
+        (self.runs / "run.junk").mkdir()
+        got = self.pairs(str(self.runs))
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(self.rows(got.stdout), [])
+
+    def test_a_minimum_with_no_value_is_a_usage_error(self):
+        got = self.pairs("--min-rows")
+        self.assertEqual(got.returncode, 2, got.stdout)
+        self.assertIn("usage:", got.stderr)
+
+    def test_a_minimum_that_is_not_a_number_is_a_usage_error(self):
+        # A mistyped minimum must not be read as "no minimum".
+        got = self.pairs("--min-rows", "eighty", str(self.runs))
+        self.assertEqual(got.returncode, 2, got.stdout)
+        self.assertIn("whole number", got.stderr)
+
+    def test_a_minimum_of_zero_is_a_usage_error(self):
+        # Zero asserts nothing, so asking for it is asking for the default
+        # while believing a guard is on.
+        got = self.pairs("--min-rows", "0", str(self.runs))
+        self.assertEqual(got.returncode, 2, got.stdout)
+        self.assertIn("positive", got.stderr)
+
+    def test_too_few_is_not_the_usage_code(self):
+        self.one_pair("run.aaa")
+        short = self.pairs("--min-rows", "2", str(self.runs))
+        bad = self.pairs("--min-rows", "-2", str(self.runs))
+        self.assertEqual(short.returncode, self.TOO_FEW)
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("positive", bad.stderr)
