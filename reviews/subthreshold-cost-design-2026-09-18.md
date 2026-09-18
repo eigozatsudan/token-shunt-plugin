@@ -206,19 +206,29 @@ python3 evals/compare/pairs.py -o reviews/data/subthreshold-cost-2026-09-18.csv 
 
 ## 10. preflight
 
+**全項目、走らせる前に $0 で実施済み（2026-09-18）。**
+
 1. **専用チェックアウト**を本記録と case 追加のコミットに固定、
    生成物を除いて `git status` が空。
-2. その中で `judge.py --selftest` 全項目 pass。
+   **`/tmp/ts-cost` を `ca72a5e` に固定。clean。**
+2. その中で `judge.py --selftest` 全項目 pass。**全項目 pass。**
 3. **case はテストを先に書く。** その中で `evals/compare` 全件 pass。
+   **case が無いことを理由に 7 件 RED** を確認してから case を足した
+   （`SubthresholdCostCaseTests`）。`/tmp/ts-cost` の中で
+   **`evals/compare` 709 tests OK**、**外側 `evals` 319 tests OK**、
+   **`evals/run.sh` 240 pass / 0 fail**。
    **とくに `direct` 腕の契約（`parent_reads`）と、
    `isolation` キーを付けないことをテストで固定する。**
    A の case は 1 腕だったので、ここは新しい。
 4. `DJANGO_ROOT` が `bc833e8`。3 パスが解決し、
    **`check-file-size` で 3 件とも deny されない**ことを $0 で確認
-   （A で実施済み。fixture を動かしていないので流用する。
-   **動かしたらやり直す。**）。
+   **流用せず、このチェックアウトで引き直した: 3 件とも
+   `check-file-size` が空出力（deny 無し）、サイズも 6,847 / 3,827 /
+   13,055 B で §3.1 と一致。** `DJANGO_ROOT` も `bc833e8` のまま。
 5. **選択 jq を再現し、planned がちょうど 2 スロット
    （`direct` と `auto`）、`unknown_slots` 空であることを $0 で確認する。**
+   **確認した。planned は `django-subthreshold-cost/direct` と
+   `.../auto` の 2 件、`unknown_slots` は空。**
 6. 機構確認は**改訂後の 3 点だけ**:
    `errors` が空 / 実費が枠内 / `pairs.py` が両 mode の列を出す。
    **どれも、どちらの腕が勝ったかを見ずに決まる。**
