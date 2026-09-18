@@ -305,10 +305,43 @@ python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv
 
 1. **専用チェックアウト**を、本記録と case 追加のコミットに固定し、
    生成物を除いて `git status` が空であること。
+   **実施済み（2026-09-18、$0）。** `/tmp/ts-plan` を `git worktree` で
+   **`4f33e6f` に固定**（detached）。生成物（`__pycache__`、
+   `evals/compare/tmp/`、`token-shunt.zip`）を除いて `git status` は空。
+
+   `token-shunt.zip` について: `evals/run.sh` は末尾で
+   `scripts/build-zip.sh` を走らせるので、走らせた後は必ず差分が出る。
+   **中身の差ではない。** 33 entries すべてについて内容の SHA-256 と
+   実行ビットを HEAD の版と突き合わせ、**完全一致**を確認した。
+   差はエントリの mtime だけである（チェックアウトの時刻が違うため）。
+
 2. **その中で `python3 evals/compare/judge.py --selftest` 全項目 pass。**
+   **実施済み（2026-09-18、$0）。** 全項目 pass。
 3. **case を足すので、テストを case より先に書き、
    `evals/compare` を全件通してから走らせる。**
-   （現状: `evals/run.sh` 240 pass / 0 fail、`evals/compare` 642 tests OK。）
+   **実施済み（2026-09-18、$0）。** `/tmp/ts-plan` の中で
+   **`evals/compare` 694 tests OK**、**外側 `evals` 319 tests OK（skipped=3）**、
+   **`evals/run.sh` 240 pass / 0 fail**。
+
+   **この preflight は 1 件の欠陥を捕まえた。** 最初に `0f9ceca` で
+   worktree を切った時点では、worktree 側だけ **239 pass / 1 fail**
+   （`reader_call_contract-regressions`）だった。同じコミットで、
+   本ツリーでは 240 pass / 0 fail である。
+
+   原因は `evals/test_reader_call_contract.py` の 4 パス予算検査が
+   `evals/compare/fixtures/gen/` を**ソースツリーから stat していた**こと。
+   この木は `run.sh` が run ごとに生成し、`.gitignore` されている。
+   **本ツリーで通っていたのは、過去の run の出力が残っていたからに過ぎない。**
+   新しいチェックアウト（＝測定ブロックを固定する場所そのもの）では
+   `FileNotFoundError` になる。
+
+   修正（`4f33e6f`）は、サイズを**生成器そのものから採る**ようにした:
+   `run.sh` の `$GEN` ヒアドキュメントを 1 個だけ抜き出して temp dir で
+   実行し、そこを stat する。**モデルが実際に読むものを測る。**
+   併せて「4 ファイルがその木に存在すること」を主張するテストを足した。
+   抜き出しが黙って空振りすれば予算は空集合の和になって通ってしまう——
+   本リポジトリが繰り返し捕まえてきた形の pass だからである。
+   （元の値: `evals/compare` 642 → 694 tests、外側 318 → 319 tests。）
 4. **`DJANGO_ROOT` が `bc833e8883db4a333a6485d91637b78c85e2b13b` の
    checkout を指していることを `git rev-parse HEAD` で確認する。**
    **実施済み（2026-09-18、$0）。** corpus は **`~/corpora/django`**（repo 外）。
