@@ -108,6 +108,30 @@ Fisher p = 0.1374。**これは副次であって主要ではない。**
 打ち切りはどれも発火していない: barren 0 件、`--max-runs` 未到達、
 prompt の md5 は全 run 一致。
 
+## 4.1 残したもの（2026-09-18 追記）
+
+**`ab-live` で jsonl を失って case 単位の再判定ができなくなっている。**
+今回は分けて残した。
+
+**repo の中（125 KB、`reviews/data/plan-phase-routing-2026-09-18-meta.tar.gz`）**
+40 run 分の `summary.json` / `verdicts/` / `specs/` / `manifest.json`。
+sha256 `57c4499b6e48c1b6fcc9b058f98f24098d3ac3ef4a8dc1dfd22575318d100ddb`。
+**corpus の本文を含まない。** 判定のやり直しはこれで足りる。
+
+**repo の外（3.8 MB、`~/measurements/token-shunt/plan-phase-routing-2026-09-18-transcripts.tar.gz`）**
+上に加えて **80 本の case transcript と 80 本の probe transcript**（`.err` 込み）。
+sha256 `411a121da1219748dd4b4f82bf9ff336755d591f8ae4d832934c4d6e7a9b4c0c`。
+
+**外に置いた理由:** transcript には worker が読んだ
+**Django の 3 ファイルの本文がそのまま入っている**（1 run につき 3 turn）。
+40 run 分で同じ本文が 120 回入ることになる。Django は BSD-3 なので
+license 上は置けるが、**third-party の source を repo に増やす判断は
+別に要る**ので、既定では外に置いた。repo に入れたいなら
+上の tar を `reviews/data/` に足せばよい。
+
+**中の絶対パスは `/tmp/ts-plan/...` である。** worktree は消してよいが、
+**パスはそのまま残る**ので、再現時は読み替えが要る。
+
 ## 5. 言えること・言えないこと
 
 **言えること:**
