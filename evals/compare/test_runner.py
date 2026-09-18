@@ -1252,3 +1252,106 @@ class PlanPhaseRoutingCaseTests(unittest.TestCase):
         for name, case in self.both():
             with self.subTest(case=name):
                 self.assertEqual("X", case["suite"])
+
+
+class SubthresholdRoutingCaseTests(unittest.TestCase):
+    """The control arm of reviews/subthreshold-routing-design-2026-09-18.md.
+
+    The plan-phase block came back 0/40 in both arms: a floor. Its files
+    were 442, 707 and 508 lines, so each denied on its own, and the
+    post-hoc count found every control run sizing the files with wc before
+    delegating. Nothing was ever read, so nothing could leak.
+
+    This case changes one thing. The three files are all under both
+    thresholds, so the hook permits the parent to read them, while the
+    total still clears the 16 KiB delegation budget -- the advice to
+    delegate stays, the compulsion goes. Everything else is held to the
+    shape of django-plan-trace-bare, and the tests below are what holds it.
+    """
+
+    CASE = "django-subthreshold-bare"
+    SIBLING = "django-plan-trace-bare"
+
+    PATHS = [
+        "django/django/core/management/commands/showmigrations.py",
+        "django/django/db/migrations/recorder.py",
+        "django/django/db/migrations/graph.py",
+    ]
+    GOLD = ["show_list", "applied_migrations", "forwards_plan"]
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        self.assertIn(self.CASE, self.by_id, "%s is not declared" % self.CASE)
+        self.case = self.by_id[self.CASE]
+        self.sibling = self.by_id[self.SIBLING]
+
+    # --- the fixture is the whole point ---
+
+    def test_it_reads_three_files_none_of_which_is_the_old_fixture(self):
+        self.assertEqual("DJANGO_ROOT", self.case["external_root"])
+        self.assertEqual("django", self.case["external_prefix"])
+        self.assertEqual(self.PATHS, self.case["fixtures"])
+        self.assertFalse(set(self.PATHS) & set(self.sibling["fixtures"]),
+                         "the floor case and this one must not share a file")
+
+    def test_the_gold_requires_all_three_files(self):
+        # One token per file, so an answer cannot be assembled without
+        # having crossed all three.
+        self.assertEqual(self.GOLD, self.case["gold"])
+        self.assertNotIn("gold_any", self.case)
+        self.assertEqual(sorted(self.GOLD), sorted(self.case["gold_paths"]))
+        for token, paths in self.case["gold_paths"].items():
+            with self.subTest(token=token):
+                self.assertEqual(1, len(paths), token)
+                self.assertIn(paths[0], self.PATHS)
+        self.assertEqual(len(self.PATHS),
+                         len({p[0] for p in self.case["gold_paths"].values()}))
+
+    # --- one thing changes, and the rest is held to the sibling ---
+
+    def test_the_judged_contract_matches_the_sibling_except_for_the_paths(self):
+        # If the contract differed too, a rate that differs would have a
+        # second explanation.
+        mine = dict(self.case["expect"]["delegate"])
+        theirs = dict(self.sibling["expect"]["delegate"])
+        for body in (mine, theirs):
+            for key in ("single_invocation_paths", "child_reads_once",
+                        "parent_no_read"):
+                body.pop(key)
+        self.assertEqual(theirs, mine)
+
+    def test_the_primary_outcome_covers_every_path(self):
+        # parent_no_read on all three files IS the measurement. A path left
+        # out is a leak the run would score as clean.
+        self.assertEqual(["{FIX}/" + p for p in self.PATHS],
+                         self.case["expect"]["delegate"]["parent_no_read"])
+
+    def test_it_offers_a_worker_the_same_way_the_sibling_does(self):
+        self.assertEqual(self.sibling["wm_hint"], self.case["wm_hint"])
+        self.assertIn("{WMHINT}", self.case["prompt_delegate"])
+
+    def test_it_runs_auto_only_and_is_shelved(self):
+        self.assertEqual(["auto"], self.case["modes"])
+        self.assertEqual("X", self.case["suite"])
+        self.assertNotIn("isolation", self.case)
+        self.assertNotIn("direct", self.case["expect"])
+
+    # --- nothing may instruct the delegation being measured ---
+
+    def test_the_prompt_names_neither_the_mechanism_nor_a_plan(self):
+        # This is the control form: the paths and a conditional offer of a
+        # worker, nothing else. A prompt that names bulk-reader is obeyed,
+        # and the plan wording belongs to the arm this block does not run.
+        prompt = self.case["prompt_delegate"].lower()
+        for token in ("token-shunt", "bulk-reader", "agent"):
+            self.assertNotIn(token, prompt)
+        for phrase in ("goal:", "constraints:", "steps:"):
+            self.assertNotIn(phrase, prompt)
+
+    def test_the_prompt_names_the_three_paths_it_declares(self):
+        prompt = self.case["prompt_delegate"]
+        for path in self.PATHS:
+            with self.subTest(path=path):
+                self.assertIn("{FIX}/" + path, prompt)
