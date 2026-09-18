@@ -229,6 +229,8 @@ dose 測定の auto 腕は 88/88 で本文 0 バイトだった。
 - **駆動器に再試行の上限を入れてから走らせる**（§10 の 6）。
   django-dose では CLI が 1 時間落ちて空の run ディレクトリが 450 個できた
   （`django-dose-2026-09-17.md` §7.2）。**$0 で済んだのは運である。**
+  **上限は `evals/compare/progress.py --max-barren 10` で掛ける**
+  （2026-09-18 追記。道具を用意しただけで、解析・N・枠は変えていない）。
 
 ## 8. 事前に認めている弱点
 
@@ -271,7 +273,20 @@ python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv
 4. **`DJANGO_ROOT` が `bc833e8883db4a333a6485d91637b78c85e2b13b` の
    checkout を指していることを `git rev-parse HEAD` で確認する。**
 5. **`pairs.py` を 1 対の実データに掛けて、1 腕 case の行が出ることを確認する。**
-6. **駆動器に再試行の上限を入れる**（§7）。
+6. **駆動器に再試行の上限を入れる**（§7）。**実装済み: `evals/compare/progress.py`。**
+   `spend.py` と同じ位置に置く:
+
+   ```
+   for i in $(seq 1 80); do
+     python3 evals/compare/progress.py --max-barren 10 "$RUNS" || break
+     python3 evals/compare/spend.py --cap 21 --reserve 0.80 "$RUNS" || break
+     ...
+   done
+   ```
+
+   **summary.json を持たない run ディレクトリが 10 個に達したら exit 3 で抜ける。**
+   **連続数ではなく総数で数える**（3 回に 1 回失敗する駆動器も終わらないし、
+   連続数は成功 1 件でゼロに戻ってしまうため）。
 7. **run 計数は `summary.json` の `cases` から読む**（substring 一致はしない）。
 8. **両 case の prompt の md5 を driver が毎 run 照合し、
    走行中に変わっていないことを終了後にも確認する**
