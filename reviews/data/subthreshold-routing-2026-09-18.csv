@@ -1,0 +1,24 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.2k681EBS,django-subthreshold-bare,,0,,0.1708,,1,,1,
+run.3SjAVTka,django-subthreshold-bare,,0,,0.2746,,1,,1,
+run.4FD5dRmD,django-subthreshold-bare,,0,,0.2449,,1,,0,child_msg_cap: agent result 4846 chars > 4000
+run.4drZqU6H,django-subthreshold-bare,,0,,0.1712,,1,,1,
+run.4ndtvptJ,django-subthreshold-bare,,363,,0.1961,,1,,1,
+run.4ucMvt7i,django-subthreshold-bare,,0,,0.2989,,1,,0,child_msg_cap: agent result 4925 chars > 4000; child_msg_cap: agent result 7045 chars > 4000
+run.A8oEHBW4,django-subthreshold-bare,,0,,0.1303,,1,,1,
+run.B8fdHRZY,django-subthreshold-bare,,25901,,0.1108,,1,,0,"agent_type: no Agent with subagent_type=token-shunt:bulk-reader (saw []); agent_calls: 0 Agent calls, want 1..4; single_invocation: no Agent prompt contains all 3 paths; child_reads_once: no successful carrier Read: /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/core/management/commands/showmigrations.py; child_reads_once: no successful carrier Read: /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/db/migrations/recorder.py; child_reads_once: no successful carrier Read: /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/db/migrations/graph.py; parent_no_read: parent Read succeeded on /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/core/management/commands/showmigrations.py; parent_no_read: parent Read succeeded on /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/db/migrations/recorder.py; parent_no_read: parent Read succeeded on /tmp/ts-sub/evals/compare/tmp/runs/run.B8fdHRZY/work/fixtures/django/django/db/migrations/graph.py"
+run.F9M7UqMM,django-subthreshold-bare,,0,,0.1812,,1,,0,child_msg_cap: agent result 4022 chars > 4000
+run.H2Tb4HZd,django-subthreshold-bare,,0,,0.1396,,1,,1,
+run.LyPvg1O4,django-subthreshold-bare,,0,,0.1429,,1,,1,
+run.MJwU4U6p,django-subthreshold-bare,,0,,0.1276,,1,,1,
+run.OUL0HsIv,django-subthreshold-bare,,0,,0.1648,,1,,0,child_msg_cap: agent result 7670 chars > 4000
+run.OvjiBFTm,django-subthreshold-bare,,0,,0.2032,,1,,1,
+run.WKr2eljs,django-subthreshold-bare,,0,,0.1939,,1,,1,
+run.ZuwQmcMy,django-subthreshold-bare,,0,,0.1223,,1,,1,
+run.bAXzQ86T,django-subthreshold-bare,,0,,0.1803,,1,,0,child_msg_cap: agent result 4960 chars > 4000
+run.bubPWFuP,django-subthreshold-bare,,0,,0.1485,,1,,0,child_reads_once: Agent toolu_01FrRDrTVLydXAteUWBRnC7G must carry 1-3 explicit paths and stay within 6 Reads; child_msg_cap: agent result 4698 chars > 4000
+run.ciSHFxLR,django-subthreshold-bare,,0,,0.1696,,1,,1,
+run.dPZQ1Dfr,django-subthreshold-bare,,0,,0.2262,,1,,1,
+run.rNzVa22H,django-subthreshold-bare,,0,,0.1675,,1,,0,child_reads_once: Agent toolu_01D6K7oYQPB2BsxpcKkRgDzW must carry 1-3 explicit paths and stay within 6 Reads; child_msg_cap: agent result 6018 chars > 4000
+run.wI5lhAvX,django-subthreshold-bare,,0,,0.1308,,1,,1,
+run.xdVgDJO0,django-subthreshold-bare,,0,,0.1950,,1,,1,
