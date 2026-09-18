@@ -166,14 +166,28 @@ control を 0.286（22/77）と置いた模擬（`Random(20260918)`、3,000 反�
    `plugin/agents/bulk-reader.md` を編集する。
    その中で `evals/compare` 全件・外側 `evals` 全件・`evals/run.sh` 全件 pass、
    `judge.py --selftest` 全項目 pass。**両方の worktree で走らせる。**
+   **実施済み。** treated（`362ef72`）で
+   `evals/compare` 717 OK / 外側 `evals` 320 OK（skip 3）/
+   `evals/run.sh` 240 pass 0 fail / selftest 全項目 pass。
+   control（`3256947`）で `evals/compare` 717 OK / selftest 全項目 pass。
 2. **既存の文を削っていないこと**を機械的に確認する
    （変更前の全行が変更後にも存在する）。
+   **確認した。削除 0 行、6,653 → 7,025 B。**
 3. **2 つの worktree の diff が `plugin/agents/bulk-reader.md` 1 ファイル**
    であることを `git diff --name-only` で確認する。
+   **逸脱（走らせる前に記録）: diff は 2 ファイルである。**
+   `plugin/agents/bulk-reader.md` と `evals/test_reader_call_contract.py`。
+   契約変更をテスト先行でやると決めている以上、テストは変更と同じ commit に
+   載る。**`plugin/` 以下の diff はちょうど 1 ファイル**であり、
+   テストファイルは runtime に読み込まれないので測定には入らない。
+   **設計の文言のほうが実際より厳しかった。そう書いておく。**
 4. `DJANGO_ROOT` が `bc833e8`、3 パスが解決し `check-file-size` が deny しない
    ことを**両方の worktree で**引き直す。
+   **引き直した。`bc833e8`、両 worktree とも 3 件すべて空出力・exit 0。**
 5. **選択 jq を再現**し、planned が各 worktree でちょうど 1 スロット
    （`django-subthreshold-bare/auto`）、`unknown_slots` 空であることを確認する。
+   **確認した。両 worktree とも planned は
+   `django-subthreshold-bare/auto` 1 件、`unknown_slots` 空。**
 6. **機構確認は 3 点だけ**: `errors` が空 / 実費が枠内 /
    verdict が両腕とも出ている。
    **どれも、どちらの腕が勝ったかを見ずに決まる。**
