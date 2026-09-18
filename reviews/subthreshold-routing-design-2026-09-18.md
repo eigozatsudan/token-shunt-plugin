@@ -186,9 +186,21 @@ n=25 の CI は広い（率 0.30 なら概ね [0.15, 0.51]）。
 
 1. **専用チェックアウト**を本記録と case 追加のコミットに固定し、
    生成物を除いて `git status` が空。
+   **実施済み（2026-09-18、$0）。** `/tmp/ts-sub` を **`1e83f6b` に固定**。
+   （`token-shunt.zip` は `evals/run.sh` が再ビルドするので走らせた後は
+   差分が出る。前ブロック §4.1 と同じ、mtime だけの差である。）
 2. その中で `python3 evals/compare/judge.py --selftest` 全項目 pass。
+   **実施済み。全項目 pass。**
 3. **case はテストを先に書く。** その中で `evals/compare` 全件 pass。
+   **実施済み。** テストを先に書き、**case が無いことを理由に 8 件 RED**
+   を確認してから case を足した（`SubthresholdRoutingCaseTests`）。
+   `/tmp/ts-sub` の中で **`evals/compare` 702 tests OK**、
+   **外側 `evals` 319 tests OK**、**`evals/run.sh` 240 pass / 0 fail**。
 4. `DJANGO_ROOT` が `bc833e8` を指すことを `git rev-parse HEAD` で確認。
+   **実施済み。** 一致。`run.sh` の `external_ready` と `ltrimstr` の経路を
+   そのまま辿り、**3 パスすべてが解決して実在することを確認**
+   （6,847 / 3,827 / 13,055 B、合計 23,729 B）。
+   **選択 jq を再現し、planned がちょうど 1 スロット、`unknown_slots` 空。**
    **3 件が `check-file-size` で deny されないことを $0 で確認**
    （2026-09-18 実施済み。§3）。**fixture か閾値を動かしたらやり直す。**
 5. **`--allowedTools` が実際に効いているかを確かめる**（新規）。
