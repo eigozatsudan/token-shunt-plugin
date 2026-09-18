@@ -103,11 +103,30 @@
 
 ## 5. 副次（すべて事前に決める）
 
-1. **親の文脈に入った corpus のバイト**、両腕。
-   **`isolation: delegate_lt_direct_and_fixture` の合格率**で見る。
-   **書き捨ての採点器を作らず、既存の契約を使う。**
-   **ほぼ決まりきった結果になるはずである**（`direct` は 23,729 B 前後、
-   `auto` は 0）。**決まりきったものを主要にしない**、というのが §2 である。
+1. **親の文脈に入ったバイト `parent_added_utf8_bytes` の中央値**、両腕。
+   **併せて「corpus 合計 23,729 B を下回った run 数」を両腕で数える。**
+
+   **訂正（2026-09-18、走らせる前、$0）。** 当初ここには
+   **`isolation: delegate_lt_direct_and_fixture` の合格率**と書いていた。
+   **その契約はこの case では使えない。**
+
+   `judge.py:2320` は閾値に **`min(sizes)`＝最小の fixture** を使う。
+   本 case の最小は `recorder.py` の **3,827 B** である。
+   A の実測（23 run）では `auto` の `parent_added_utf8_bytes` は
+   **中央値 13,259 B、最小 8,554 B** であり、
+   **3,827 B を下回る run は 0 件**だった。
+   この契約を付ければ **23/23 が fail になり、しかも
+   `judge.py:2338` は全 mode の verdict を fail に落とすので、
+   §5 の 2（`accuracy`）まで道連れになる。**
+
+   **したがって `isolation` キーは付けない。**
+   代わりに上の 2 つを記述統計として報告する。
+   **`parent_added_utf8_bytes` も「corpus 合計」も `judge.py` と
+   `pairs.py` が既に出している値であって、新しい採点器は作らない。**
+
+   なお A では **23,729 B を下回った run が 21/23** だった。
+   **これは事前に決めた比較ではなく、訂正の根拠として挙げた実測である。**
+   **本ブロックの数はあらためて数える。**
 2. **`accuracy`（`gold` 3 件すべて）を両腕で。** Wilson 95% CI 併記。
    **検定はしない。** A で 23/23 だったので**天井が近い**。
    **「委譲しても落ちない」ことの確認であって、優劣の主張ではない。**
@@ -191,8 +210,9 @@ python3 evals/compare/pairs.py -o reviews/data/subthreshold-cost-2026-09-18.csv 
    生成物を除いて `git status` が空。
 2. その中で `judge.py --selftest` 全項目 pass。
 3. **case はテストを先に書く。** その中で `evals/compare` 全件 pass。
-   **とくに `direct` 腕の契約（`parent_reads`、`isolation`）を
-   テストで固定する。** A の case は 1 腕だったので、ここは新しい。
+   **とくに `direct` 腕の契約（`parent_reads`）と、
+   `isolation` キーを付けないことをテストで固定する。**
+   A の case は 1 腕だったので、ここは新しい。
 4. `DJANGO_ROOT` が `bc833e8`。3 パスが解決し、
    **`check-file-size` で 3 件とも deny されない**ことを $0 で確認
    （A で実施済み。fixture を動かしていないので流用する。
