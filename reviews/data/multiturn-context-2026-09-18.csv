@@ -1,0 +1,15 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.2gXhO3lK,django-multiturn-context,25901,0,0.1045,0.1462,1,1,1,1,
+run.BlFx27pa,django-multiturn-context,25901,0,0.0886,0.1247,1,1,1,1,
+run.FUjNlKA7,django-multiturn-context,25901,0,0.1126,0.1676,1,1,1,1,
+run.L1DqGoOV,django-multiturn-context,25901,0,0.1050,0.1324,1,1,1,1,
+run.UWDv1roq,django-multiturn-context,25901,0,0.0973,0.2463,1,1,1,0,child_msg_cap: agent result 10642 chars > 4000
+run.Uj6yO7We,django-multiturn-context,25901,0,0.1071,0.1470,1,1,1,1,
+run.VwFxLSdp,django-multiturn-context,25901,0,0.1061,0.1411,1,1,1,1,
+run.evObSvPG,django-multiturn-context,25901,0,0.0903,0.3135,1,1,1,0,child_msg_cap: agent result 5770 chars > 4000
+run.gyiPA7Zl,django-multiturn-context,25901,0,0.1008,0.1514,1,1,1,1,
+run.hiusl6C9,django-multiturn-context,25901,0,0.1023,0.2026,1,1,1,0,child_msg_cap: agent result 5660 chars > 4000
+run.mbEyjHmy,django-multiturn-context,25901,0,0.1019,0.1736,1,1,1,1,
+run.p917Mmnp,django-multiturn-context,25901,0,0.0989,0.1510,1,1,1,0,child_msg_cap: agent result 5537 chars > 4000
+run.qNK33FOQ,django-multiturn-context,25901,0,0.1061,0.1350,1,1,1,1,
+run.sM7k6XGD,django-multiturn-context,25901,0,0.1110,0.1880,1,1,1,0,child_msg_cap: agent result 6378 chars > 4000
