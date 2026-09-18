@@ -1355,3 +1355,84 @@ class SubthresholdRoutingCaseTests(unittest.TestCase):
         for path in self.PATHS:
             with self.subTest(path=path):
                 self.assertIn("{FIX}/" + path, prompt)
+
+
+class SubthresholdCostCaseTests(unittest.TestCase):
+    """The paired case of reviews/subthreshold-cost-design-2026-09-18.md.
+
+    Two blocks and sixty-three runs have shown the parent delegates almost
+    always, so the rate is a dead end and the open question is the one the
+    plan-phase design admitted it could not answer: what delegating costs.
+    This case answers it by running direct and auto over the same three
+    files in one invocation, direct without the plugin at all.
+
+    The auto arm has to be the arm A already measured, byte for byte, or
+    the cost difference is against something new. The tests below hold
+    that, and hold the case away from the isolation contract, whose
+    threshold is the smallest fixture (3827 B) against an auto arm A
+    measured at a median of 13259 -- it would fail every run and take the
+    accuracy secondary down with it.
+    """
+
+    CASE = "django-subthreshold-cost"
+    SIBLING = "django-subthreshold-bare"
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        self.assertIn(self.CASE, self.by_id, "%s is not declared" % self.CASE)
+        self.case = self.by_id[self.CASE]
+        self.sibling = self.by_id[self.SIBLING]
+
+    # --- the auto arm must be the arm A measured ---
+
+    def test_the_auto_arm_is_identical_to_the_case_a_measured(self):
+        # Same prompt, same files, same gold, same judged contract. A cost
+        # difference is only against A's arm if this is A's arm.
+        for key in ("fixtures", "gold", "gold_paths", "wm_hint",
+                    "external_root", "external_prefix", "prompt_delegate"):
+            with self.subTest(key=key):
+                self.assertEqual(self.sibling[key], self.case[key])
+        self.assertEqual(self.sibling["expect"]["delegate"],
+                         self.case["expect"]["delegate"])
+
+    # --- the direct arm is what is new ---
+
+    def test_it_runs_direct_and_auto_and_nothing_else(self):
+        self.assertEqual(["direct", "auto"], self.case["modes"])
+        self.assertEqual("X", self.case["suite"])
+
+    def test_the_direct_arm_is_judged_on_reading_every_file(self):
+        # Without this the direct arm could answer from memory and still
+        # pass, and its cost would be the cost of not reading.
+        self.assertEqual(["{FIX}/" + p for p in self.case["fixtures"]],
+                         self.case["expect"]["direct"]["parent_reads"])
+
+    def test_the_direct_prompt_names_every_path_and_asks_for_a_read(self):
+        prompt = self.case["prompt_direct"]
+        for path in self.case["fixtures"]:
+            with self.subTest(path=path):
+                self.assertIn("{FIX}/" + path, prompt)
+        self.assertIn("Read", prompt)
+
+    def test_neither_prompt_names_the_mechanism(self):
+        for key in ("prompt_direct", "prompt_delegate"):
+            with self.subTest(key=key):
+                prompt = self.case[key].lower()
+                for token in ("token-shunt", "bulk-reader", "agent"):
+                    self.assertNotIn(token, prompt)
+
+    def test_the_two_prompts_are_not_the_same_string(self):
+        self.assertNotEqual(self.case["prompt_direct"],
+                            self.case["prompt_delegate"])
+
+    # --- the contract this case must NOT carry ---
+
+    def test_it_declares_no_isolation_contract(self):
+        # delegate_lt_direct_and_fixture thresholds on min(sizes) = 3827 B
+        # here, and judge.py fails every mode of a case whose isolation
+        # fails. A measured this arm at a 13259 B median, so the contract
+        # would fail all forty runs and delete the accuracy secondary too.
+        self.assertNotIn("isolation", self.case)
+        self.assertNotIn("fixture_bytes", self.case)
