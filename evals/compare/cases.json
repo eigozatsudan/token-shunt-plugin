@@ -2070,6 +2070,120 @@
         "update_join_types"
       ],
       "note": "Dose point for reviews/django-dose-design-2026-09-17.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The file is 119129 bytes, but the dose is whatever the direct arm actually reads: on Redmine the largest file produced the smallest dose because the parent used Bash instead of Read. Same forcing question as the Redmine cases, so a difference between the blocks is a difference of corpus."
+    },
+    {
+      "id": "django-plan-trace-bare",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/core/management/__init__.py",
+        "django/django/core/management/base.py",
+        "django/django/core/management/commands/migrate.py"
+      ],
+      "gold": [
+        "load_command_class",
+        "run_from_argv",
+        "MigrationExecutor"
+      ],
+      "gold_paths": {
+        "load_command_class": [
+          "django/django/core/management/__init__.py"
+        ],
+        "run_from_argv": [
+          "django/django/core/management/base.py",
+          "django/django/core/management/__init__.py"
+        ],
+        "MigrationExecutor": [
+          "django/django/core/management/commands/migrate.py"
+        ]
+      },
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "single_invocation_paths": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ],
+          "child_reads_once": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ]
+        }
+      },
+      "prompt_delegate": "`manage.py migrate` が実行されてから `MigrationExecutor` が生成されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/__init__.py、{FIX}/django/django/core/management/base.py、{FIX}/django/django/core/management/commands/migrate.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。{WMHINT}",
+      "note": "Control. Arm of reviews/plan-phase-routing-design-2026-09-18.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The three files are 442, 707 and 508 lines, so each one denies on the line threshold on its own: this measures the world where the deny fires, which reviews/parent-no-read-shape-2026-09-17.md found the 21.7% did not. Its sibling case differs in prompt_delegate and in nothing else; PlanPhaseRoutingCaseTests holds that. No deny_route key, so run.sh's static mechanism guard does not apply here -- the test carries it, because the treatment only means something if neither prompt names the tool. Deliberately billed by slot; never part of a release run. Suite B's own form: the paths, and a conditional offer of a worker through wm_hint. Nothing instructs delegation, which is what suite B measures."
+    },
+    {
+      "id": "django-plan-trace-plan",
+      "suite": "X",
+      "modes": [
+        "auto"
+      ],
+      "external_root": "DJANGO_ROOT",
+      "external_prefix": "django",
+      "fixtures": [
+        "django/django/core/management/__init__.py",
+        "django/django/core/management/base.py",
+        "django/django/core/management/commands/migrate.py"
+      ],
+      "gold": [
+        "load_command_class",
+        "run_from_argv",
+        "MigrationExecutor"
+      ],
+      "gold_paths": {
+        "load_command_class": [
+          "django/django/core/management/__init__.py"
+        ],
+        "run_from_argv": [
+          "django/django/core/management/base.py",
+          "django/django/core/management/__init__.py"
+        ],
+        "MigrationExecutor": [
+          "django/django/core/management/commands/migrate.py"
+        ]
+      },
+      "wm_hint": " If you delegate reading to a worker, use --worker-model {WM}.",
+      "expect": {
+        "delegate": {
+          "agent_type": "token-shunt:bulk-reader",
+          "single_invocation_paths": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ],
+          "child_reads_once": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ],
+          "agent_calls_max": 4,
+          "child_msg_max": 4000,
+          "child_no_body": true,
+          "parent_no_read": [
+            "{FIX}/django/django/core/management/__init__.py",
+            "{FIX}/django/django/core/management/base.py",
+            "{FIX}/django/django/core/management/commands/migrate.py"
+          ]
+        }
+      },
+      "prompt_delegate": "Goal: `manage.py migrate` が実行されてから `MigrationExecutor` が生成されるまでの呼び出し経路を、実装計画を書ける粒度で明らかにする。対象は {FIX}/django/django/core/management/__init__.py、{FIX}/django/django/core/management/base.py、{FIX}/django/django/core/management/commands/migrate.py の 3 件である。\nConstraints: これは計画フェーズであり、編集はしない。ソースの本文を自分の context に入れないこと。読み取りは worker に委譲し、手元には結論だけを残す。\nSteps: (1) 3 件の読み取りを委譲する (2) 返ってきた事実から経路を組み立てる (3) 各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げる{WMHINT}",
+      "note": "Treatment. Arm of reviews/plan-phase-routing-design-2026-09-18.md, on Django 5.2.1 (bc833e8883db4a333a6485d91637b78c85e2b13b). The three files are 442, 707 and 508 lines, so each one denies on the line threshold on its own: this measures the world where the deny fires, which reviews/parent-no-read-shape-2026-09-17.md found the 21.7% did not. Its sibling case differs in prompt_delegate and in nothing else; PlanPhaseRoutingCaseTests holds that. No deny_route key, so run.sh's static mechanism guard does not apply here -- the test carries it, because the treatment only means something if neither prompt names the tool. Deliberately billed by slot; never part of a release run. A plan document: goal, constraints, steps, and the constraint that the body must not enter the parent's own context. It does not name bulk-reader, because a prompt that names the tool is obeyed and 88/88 already says so."
     }
   ]
 }

@@ -1120,3 +1120,135 @@ class ReadOnlyDelegationTests(unittest.TestCase):
             with self.subTest(case=case["id"]):
                 self.assertEqual(set(), forbidden & set(
                     delegate.get("parent_reads") or []))
+
+
+class PlanPhaseRoutingCaseTests(unittest.TestCase):
+    """The two arms of reviews/plan-phase-routing-design-2026-09-18.md.
+
+    The 21.7% leak came from a prompt that never told the parent to delegate:
+    suite B measures whether the product routes on its own. The plan-phase
+    question is a different one, so its control runs in the same cycle rather
+    than borrowing a rate from a case whose fixture no longer denies. The two
+    cases therefore differ in the prompt and in nothing else -- same files,
+    same question, same judged contract.
+    """
+
+    CONTROL = "django-plan-trace-bare"
+    TREATMENT = "django-plan-trace-plan"
+
+    PATHS = [
+        "django/django/core/management/__init__.py",
+        "django/django/core/management/base.py",
+        "django/django/core/management/commands/migrate.py",
+    ]
+    GOLD = ["load_command_class", "run_from_argv", "MigrationExecutor"]
+
+    def setUp(self):
+        cases = json.loads(
+            (Path(__file__).parent / "cases.json").read_text())["cases"]
+        self.by_id = {c["id"]: c for c in cases}
+        for case in (self.CONTROL, self.TREATMENT):
+            self.assertIn(case, self.by_id, "%s is not declared" % case)
+        self.control = self.by_id[self.CONTROL]
+        self.treatment = self.by_id[self.TREATMENT]
+
+    def both(self):
+        return ((self.CONTROL, self.control), (self.TREATMENT, self.treatment))
+
+    # --- the two arms differ in the prompt and in nothing else ---
+
+    def test_the_arms_differ_only_in_the_prompt(self):
+        # The whole design rests on this: anything else that differs is a
+        # second explanation for whatever the rates show.
+        mine, theirs = dict(self.control), dict(self.treatment)
+        for body in (mine, theirs):
+            for key in ("id", "prompt_delegate", "note"):
+                body.pop(key, None)
+        self.assertEqual(theirs, mine)
+
+    def test_both_arms_read_the_same_three_files(self):
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertEqual("DJANGO_ROOT", case["external_root"])
+                self.assertEqual("django", case["external_prefix"])
+                self.assertEqual(self.PATHS, case["fixtures"])
+
+    def test_both_arms_run_auto_only(self):
+        # There is no direct arm, so no cost comparison against direct and no
+        # isolation contract to assert (section 8 of the pre-registration).
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertEqual(["auto"], case["modes"])
+                self.assertNotIn("isolation", case)
+                self.assertNotIn("direct", case["expect"])
+
+    def test_the_judged_contract_is_identical(self):
+        self.assertEqual(self.control["expect"], self.treatment["expect"])
+
+    # --- the primary outcome must actually be judged ---
+
+    def test_the_primary_outcome_covers_every_path(self):
+        # parent_no_read on all three files IS the measurement. A path left
+        # out is a leak the run would score as clean.
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertEqual(["{FIX}/" + p for p in self.PATHS],
+                                 case["expect"]["delegate"]["parent_no_read"])
+
+    def test_the_gold_requires_all_three_files(self):
+        # gold, not gold_any: one token per file, so an answer cannot be
+        # assembled without having crossed all three.
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertEqual(self.GOLD, case["gold"])
+                self.assertNotIn("gold_any", case)
+
+    # --- neither prompt may name the mechanism ---
+
+    def test_neither_prompt_names_the_mechanism(self):
+        # A prompt that names bulk-reader is obeyed, and 88/88 already says
+        # so. The treatment has to earn its rate from constraints alone.
+        for name, case in self.both():
+            with self.subTest(case=name):
+                prompt = case["prompt_delegate"].lower()
+                for token in ("token-shunt", "bulk-reader", "agent"):
+                    self.assertNotIn(token, prompt)
+
+    def test_the_worker_model_reaches_both_arms_the_same_way(self):
+        # Same hint text through the same {WMHINT} slot, so the arms cannot
+        # differ by how the model was named.
+        self.assertEqual(self.control["wm_hint"], self.treatment["wm_hint"])
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertIn("{WMHINT}", case["prompt_delegate"])
+
+    # --- what makes each prompt the thing it is ---
+
+    def test_the_control_only_offers_delegation(self):
+        # Suite B's form: the paths, and a conditional mention of a worker.
+        hint = self.control["wm_hint"]
+        self.assertIn("If you delegate", hint)
+        for phrase in ("Goal:", "Constraints:", "Steps:"):
+            self.assertNotIn(phrase, self.control["prompt_delegate"])
+
+    def test_the_treatment_is_a_plan_document_that_forbids_self_reading(self):
+        prompt = self.treatment["prompt_delegate"]
+        for phrase in ("Goal:", "Constraints:", "Steps:"):
+            self.assertIn(phrase, prompt)
+        self.assertIn("本文を自分の context に入れない", prompt)
+        self.assertIn("委譲", prompt)
+
+    def test_both_prompts_ask_the_same_question(self):
+        # Only the framing differs; the thing to be answered is one string.
+        question = ("`manage.py migrate` が実行されてから `MigrationExecutor` "
+                    "が生成されるまでの呼び出し経路")
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertIn(question, case["prompt_delegate"])
+
+    # --- shelved like every other corpus case ---
+
+    def test_they_are_shelved_so_an_absent_corpus_cannot_gate_a_release(self):
+        for name, case in self.both():
+            with self.subTest(case=name):
+                self.assertEqual("X", case["suite"])
