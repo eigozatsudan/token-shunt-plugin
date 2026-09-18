@@ -132,3 +132,19 @@ prompt の md5 は全 run 一致。barren は §0 の 1 件のみ。
 ## 6. 残高
 
 上限 $200 に対し累計 **約 $162.3**（$149.4 + $12.86）。**残り 約 $37.7。**
+
+## 7. 残したもの
+
+**repo の中（136 KB、`reviews/data/subthreshold-cost-2026-09-18-meta.tar.gz`）**
+40 run 分の `summary.json` / `verdicts/` / `specs/` / `manifest.json`。
+sha256 `6ce512b7c0ec1dfcc88e3ba8bae3593bf917dd8a23c6b6960ea9a613c1d27b45`。
+**corpus の本文を含まない。** 判定のやり直しはこれで足りる。
+
+**repo の外（2.4 MB、`~/measurements/token-shunt/subthreshold-cost-2026-09-18-transcripts.tar.gz`）**
+上に加えて transcript 本体（`.err` 込み）。**case transcript は 82 本**
+——40 対の `direct` と `auto` に、§0 の中断で残った run の 2 本を足した数である。
+sha256 `878eb91b28de1bf7312b64a64f42d3a8d9f0296fe549ca361276ef9b2b9c10a2`。
+**`direct` 腕は 3 ファイルの本文を親の文脈に読み込んでいるため、
+repo の外に置く**（前 2 ブロックと同じ扱い）。
+
+**中の絶対パスは `/tmp/ts-cost/...` である。** 再現時は読み替えが要る。
