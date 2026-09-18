@@ -287,6 +287,17 @@ python3 evals/compare/pairs.py -o reviews/data/plan-phase-routing-2026-09-18.csv
    （現状: `evals/run.sh` 240 pass / 0 fail、`evals/compare` 642 tests OK。）
 4. **`DJANGO_ROOT` が `bc833e8883db4a333a6485d91637b78c85e2b13b` の
    checkout を指していることを `git rev-parse HEAD` で確認する。**
+   **実施済み（2026-09-18、$0）。** corpus は **`~/corpora/django`**（repo 外）。
+   `git rev-parse HEAD` が固定コミットに一致、`git status` 空。
+   3 件のサイズは §3.1 の表と実測一致（17,407 / 24,771 / 21,349 B）。
+   `run.sh` の `external_ready` と `ltrimstr` の経路をそのまま辿り、
+   **両 case の 3 パスが解決することを確認した。**
+
+   **§3.2 の前提も課金ゼロで確かめた。** `check-file-size` に直接入力し、
+   **3 件とも `lines=351/350` で deny**（走査は 351 行目で止まる）。
+   `agent_type=token-shunt:bulk-reader` では 3 件とも pass、
+   それ以外の agent では deny。
+   **「deny が出る世界を測る」は、走らせる前に成立している。**
 5. **`pairs.py` を 1 対の実データに掛けて、1 腕 case の行が出ることを確認する。**
    **実施済み（2026-09-18、$0）。** 本物の summary
    （`evals/compare/last-run.json`、`auto-small-files` の 1 腕 run）に
