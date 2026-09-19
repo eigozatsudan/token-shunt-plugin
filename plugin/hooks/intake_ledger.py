@@ -171,7 +171,15 @@ def _bash_bytes(response):
 
 
 def charge(event, root=None):
-    """Add what a finished parent read returned. Returns the bytes added."""
+    """Add what a finished parent read returned. Returns the bytes added.
+
+    Off means inert: with no budget set, nothing is written anywhere. A
+    ledger kept on every Read of every session would be a change to v0.1's
+    runtime, and the control arm of spec section 5 is counted after the
+    fact by `parent_turn_reads.py`, which needs nothing at run time.
+    """
+    if budget() <= 0:
+        return 0
     if not isinstance(event, dict) or not _parents_own(event):
         return 0
     if event.get('hook_event_name') == 'PostToolUseFailure':
@@ -206,6 +214,8 @@ def charge(event, root=None):
 
 def mark_reader(event, root=None):
     """Note that this Bash call is a reader, so its output gets charged."""
+    if budget() <= 0:
+        return False
     if not isinstance(event, dict) or not _parents_own(event):
         return False
     session, call = event.get('session_id'), event.get('tool_use_id')

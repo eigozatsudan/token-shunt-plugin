@@ -184,8 +184,8 @@ class DenyTests(LedgerFixture):
         self.assertIsNotNone(self.deny(self.read_event()))
 
     def test_zero_disables_the_lock(self):
-        os.environ['TOKEN_SHUNT_SESSION_BUDGET_BYTES'] = '0'
         self.fill(99999)
+        os.environ['TOKEN_SHUNT_SESSION_BUDGET_BYTES'] = '0'
         self.assertIsNone(self.deny(self.read_event()))
 
     def test_a_malformed_budget_falls_back_to_the_default(self):
@@ -211,13 +211,27 @@ class ShippedDefaultTests(LedgerFixture):
         self.assertEqual(0, il.budget())
 
     def test_nothing_is_denied_however_much_the_session_took(self):
+        os.environ['TOKEN_SHUNT_SESSION_BUDGET_BYTES'] = str(
+            il.MEASURED_BUDGET_BYTES)
         self.fill(99999)
+        os.environ.pop('TOKEN_SHUNT_SESSION_BUDGET_BYTES')
         self.assertIsNone(self.deny(self.read_event()))
 
-    def test_the_ledger_still_records_what_was_taken(self):
-        # The measurement in section 5 reads this even in the control arm.
-        self.fill(99999)
-        self.assertEqual(99999, self.total())
+    def test_off_writes_no_state_at_all(self):
+        # Off has to mean the plugin behaves as it did before Lock B. A
+        # ledger written on every Read of every session is a change to
+        # v0.1's runtime, and design 1 says v0.1 does not move. The control
+        # arm of section 5 is counted after the fact by
+        # parent_turn_reads.py, which needs nothing at run time.
+        self.assertEqual(0, self.charge(self.done('x' * 99999)))
+        self.assertEqual([], sorted(self.root.glob('*.json'))
+                         if self.root.exists() else [])
+
+    def test_off_marks_no_bash_call(self):
+        event = {'session_id': 's1', 'tool_name': 'Bash',
+                 'tool_use_id': 'call_1', 'tool_input': {'command': 'cat m.py'}}
+        self.assertIsNone(il.bash_deny_reason(event, root=self.root))
+        self.assertEqual([], il.ledger('s1', root=self.root)['pending'])
 
 
 class DenyWordingTests(LedgerFixture):
