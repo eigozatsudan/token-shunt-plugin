@@ -16,12 +16,19 @@ Not part of the release gate. Bills nothing.
 import csv
 import json
 import os
+import re
 import sys
 
-COLUMNS = ('source', 'session_id', 'parent', 'agent_id', 'agent_type',
-           'file_path', 'reads', 'covered', 'total', 'coverage', 'overlap',
-           'segments', 'bytes', 'full_file_reads', 'total_changed',
-           'impossible')
+COLUMNS = ('run', 'conversation', 'source', 'sources', 'session_id', 'parent',
+           'agent_id', 'agent_type', 'file_path', 'reads', 'covered', 'total',
+           'coverage', 'overlap', 'segments', 'bytes', 'full_file_reads',
+           'total_changed', 'impossible')
+
+# `run_followups` writes `$first.turn<N>.jsonl` beside the first turn's
+# transcript, and `_claude_call` appends `.hooklog` to whichever it was
+# handed. Stripping the suffix leaves `<case>.<mode>.jsonl`, which names one
+# conversation across all of its turns.
+TURN = re.compile(r'\.turn\d+\.jsonl$')
 
 
 def load(path):
@@ -34,8 +41,13 @@ def load(path):
     run, mode and case into one CSV, and the run directories are deleted
     right afterwards: `<case>.<mode>.jsonl[.turnN.jsonl].hooklog` is the
     only surviving record of which arm and which case a row came from.
+
+    The conversation and the run come with it, because one conversation
+    writes one hooklog per turn and one case may appear in several runs:
+    the basename alone can neither join the turns nor keep the runs apart.
     """
     name = os.path.basename(path)
+    where = _run(path)
     found = []
     with open(path, encoding='utf-8', errors='replace') as source:
         for entry in source:
@@ -44,8 +56,36 @@ def load(path):
             except ValueError:
                 continue
             if isinstance(row, dict) and row.get('hook') == 'record-coverage':
-                found.append(dict(row, source=name))
+                found.append(dict(row, source=name, run=where,
+                                  conversation=_conversation(name)))
     return found
+
+
+def _conversation(name):
+    """The one conversation a hooklog belongs to, from its basename.
+
+    `deep-read.plugin.jsonl.hooklog` and
+    `deep-read.plugin.jsonl.turn2.jsonl.hooklog` are turn 1 and turn 2 of
+    one conversation, so both answer `deep-read.plugin.jsonl`. A name that
+    fits neither shape is its own conversation, whole: guessing at an
+    unknown layout would merge rows that have nothing to do with each other.
+    """
+    stem = name[:-len('.hooklog')] if name.endswith('.hooklog') else name
+    stem = TURN.sub('', stem)
+    return stem or name
+
+
+def _run(path):
+    """The `run.*` component of an input path, or '' if it has none.
+
+    Section 9 salvages with `.../run.*/transcripts/*.hooklog`, so one CSV
+    can hold several runs of the same case under the same basename. Without
+    this they would union into one row and read as one parent's recovery.
+    """
+    for part in os.path.normpath(path).split(os.sep):
+        if part.startswith('run.'):
+            return part
+    return ''
 
 
 def _parent(row):
@@ -69,15 +109,29 @@ def sessions(records):
 
 
 def rows(records):
-    """One row per (session, reader, file): the union of the lines taken."""
+    """One row per (run, conversation, session, reader, file).
+
+    The key holds the conversation, never the raw hooklog name: run.sh
+    exports `TOKEN_SHUNT_HOOK_LOG=$out.hooklog` per CLI invocation and
+    `run_followups` gives every follow-up turn its own `$first.turnN.jsonl`,
+    so one conversation writes several logs under one session id. Keying on
+    the basename splits a parent that took lines 1-30 in turn 1 and 31-60 in
+    turn 2 into two rows of 0.30 and hides the 0.60 it actually recovered --
+    and sequential recovery across turns is what this instrument is for.
+
+    `source` stays reported, as every log that fed the row, sorted and
+    `;`-joined, with `sources` counting them: one name would be a silent
+    choice among several.
+    """
     groups = {}
     for row in records:
-        key = (row.get('source'), row.get('session_id'), _parent(row),
-               row.get('agent_id'), row.get('agent_type'),
+        key = (row.get('run'), row.get('conversation'), row.get('session_id'),
+               _parent(row), row.get('agent_id'), row.get('agent_type'),
                row.get('file_path'))
         groups.setdefault(key, []).append(row)
     out = []
-    for (source, session, parent, agent, agent_type, path), taken in groups.items():
+    for key, taken in groups.items():
+        where, talk, session, parent, agent, agent_type, path = key
         spans = [(r['start'], r['start'] + r['lines'] - 1) for r in taken
                  if type(r.get('start')) is int and type(r.get('lines')) is int
                  and r['lines'] > 0]
@@ -89,8 +143,10 @@ def rows(records):
         # A read past the end of the file means the event was wrong, not
         # that the parent recovered 140% of it.
         impossible = bool(total) and covered > total
+        names = sorted({r.get('source') for r in taken if r.get('source')})
         out.append({
-            'source': source,
+            'run': where or '', 'conversation': talk,
+            'source': ';'.join(names), 'sources': len(names),
             'session_id': session, 'parent': parent, 'agent_id': agent,
             'agent_type': agent_type, 'file_path': path,
             'reads': len(taken), 'covered': covered, 'total': total,
@@ -107,8 +163,9 @@ def rows(records):
             'full_file_reads': sum(1 for r in taken if r.get('offset') is None
                                    and r.get('limit') is None),
             'total_changed': changed, 'impossible': impossible})
-    return sorted(out, key=lambda r: (r['source'] or '', r['session_id'] or '',
-                                      not r['parent'], r['agent_id'] or '',
+    return sorted(out, key=lambda r: (r['run'], r['conversation'] or '',
+                                      r['session_id'] or '', not r['parent'],
+                                      r['agent_id'] or '',
                                       r['agent_type'] or '', r['file_path']))
 
 
@@ -219,16 +276,22 @@ def main(argv=None):
         writer.writerow(row)
     for note in header:
         print(note, file=sys.stderr)
-    # One log is one turn of one conversation, so two session ids inside one
-    # file is the `--resume` split of section 8.7. Counting across the whole
-    # input would fire on every multi-case run and mean nothing.
-    for path, rows_of in loaded:
-        found = sessions(rows_of)
+    # One `(run, conversation)` is one conversation, so two session ids
+    # inside one is the `--resume` split of section 8.7. Counting per input
+    # file would miss it (the split lands in two turn logs); counting across
+    # the whole input would fire on every multi-case, multi-run invocation
+    # and mean nothing.
+    talks = {}
+    for row in records:
+        talks.setdefault((row.get('run'), row.get('conversation')),
+                         []).append(row)
+    for (where, talk), mine in sorted(talks.items()):
+        found = sessions(mine)
         if len(found) > 1:
             print('# WARNING: %d session ids in %s (%s): one conversation'
                   ' split across sessions reads as a lower rate'
-                  % (len(found), os.path.basename(path), ','.join(found)),
-                  file=sys.stderr)
+                  % (len(found), os.path.join(where or '', talk or ''),
+                     ','.join(found)), file=sys.stderr)
     if counted and not any(row['parent'] for row in counted):
         print('# WARNING: no parent rows at all: if the parent test stopped'
               ' matching, what remains is worker rows, which sit near 1.0',

@@ -31,6 +31,18 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(1, len(got), got)
         return got[0]
 
+    def logs(self, *named):
+        """Records loaded from real files, so the path and name are real."""
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        records = []
+        for name, *entries in named:
+            path = Path(temp.name) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(''.join(json.dumps(e) + '\n' for e in entries))
+            records.extend(read_coverage.load(str(path)))
+        return records
+
     def test_two_overlapping_reads_count_the_shared_lines_once(self):
         got = self.only(line(start=1, lines=10), line(start=6, lines=10))
         self.assertEqual(15, got['covered'])
@@ -159,21 +171,65 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(0, self.only(line(offset=1, limit=10))['full_file_reads'])
         self.assertEqual(1, self.only(line(offset=None, limit=None))['full_file_reads'])
 
-    def test_the_hooklog_name_becomes_a_column_and_a_grouping_key(self):
+    def test_two_turns_of_one_conversation_are_one_row(self):
+        # run.sh exports TOKEN_SHUNT_HOOK_LOG=$out.hooklog per CLI call and
+        # run_followups gives every follow-up turn its own $first.turnN.jsonl,
+        # so ONE conversation writes several hooklogs under one session id.
+        # Sequential recovery across turns is the phenomenon this instrument
+        # was built for: grouping on the raw basename reports 0.30 twice
+        # where the parent actually recovered 0.60 of the file.
+        records = self.logs(
+            ('deep-read.plugin.jsonl.hooklog', line(start=1, lines=30, total=100)),
+            ('deep-read.plugin.jsonl.turn2.jsonl.hooklog',
+             line(start=31, lines=30, total=100)))
+        got = read_coverage.rows(records)
+        self.assertEqual(1, len(got), got)
+        self.assertEqual(60, got[0]['covered'])
+        self.assertEqual(0.60, got[0]['coverage'])
+        self.assertEqual('deep-read.plugin.jsonl', got[0]['conversation'])
+        self.assertEqual(0.60, read_coverage.rollup(got)['coverage'])
+
+    def test_every_hooklog_that_fed_a_row_is_named_in_it(self):
+        # The row now merges several logs, so one basename would be a
+        # silent choice among them. All of them ride, sorted.
+        got = read_coverage.rows(self.logs(
+            ('deep-read.plugin.jsonl.turn2.jsonl.hooklog', line(start=31, lines=30)),
+            ('deep-read.plugin.jsonl.hooklog', line(start=1, lines=30))))
+        self.assertEqual(1, len(got), got)
+        self.assertEqual('deep-read.plugin.jsonl.hooklog;'
+                         'deep-read.plugin.jsonl.turn2.jsonl.hooklog',
+                         got[0]['source'])
+        self.assertEqual(2, got[0]['sources'])
+
+    def test_the_two_arms_of_one_case_stay_apart(self):
         # The section 9 salvage glob pours every run, mode and case into one
         # CSV, and the run directories are deleted right after. Without the
         # basename the arm and the case can never be recovered.
-        temp = tempfile.TemporaryDirectory()
-        self.addCleanup(temp.cleanup)
         names = ('deep-read.plugin.jsonl.hooklog', 'deep-read.direct.jsonl.hooklog')
-        records = []
-        for name in names:
-            path = Path(temp.name) / name
-            path.write_text(json.dumps(line(start=1, lines=10)) + '\n')
-            records.extend(read_coverage.load(str(path)))
-        got = read_coverage.rows(records)
+        got = read_coverage.rows(self.logs(*((n, line(start=1, lines=10))
+                                             for n in names)))
         self.assertEqual([names[1], names[0]], [r['source'] for r in got])
-        self.assertEqual(sorted(names), sorted(r['source'] for r in got))
+        self.assertEqual(['deep-read.direct.jsonl', 'deep-read.plugin.jsonl'],
+                         [r['conversation'] for r in got])
+
+    def test_the_same_case_in_two_runs_stays_apart(self):
+        # The documented glob is run.*/transcripts/*.hooklog: two runs of one
+        # case share every other key field, and merging them would union two
+        # different parents' reads into one impossible row.
+        got = read_coverage.rows(self.logs(
+            ('run.aaaa/transcripts/deep-read.plugin.jsonl.hooklog',
+             line(start=1, lines=30)),
+            ('run.bbbb/transcripts/deep-read.plugin.jsonl.hooklog',
+             line(start=31, lines=30))))
+        self.assertEqual(2, len(got), got)
+        self.assertEqual(['run.aaaa', 'run.bbbb'], [r['run'] for r in got])
+        self.assertEqual([30, 30], [r['covered'] for r in got])
+
+    def test_a_name_that_matches_no_pattern_is_its_own_conversation(self):
+        got = read_coverage.rows(self.logs(('hooklog', line())))
+        self.assertEqual('hooklog', got[0]['conversation'])
+        self.assertEqual('', got[0]['run'])
+
 
 class LoadTests(unittest.TestCase):
     def test_other_hooks_lines_are_ignored(self):
@@ -249,6 +305,7 @@ class MainTests(unittest.TestCase):
 
     def log(self, name, *records):
         path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(''.join(json.dumps(r) + '\n' for r in records))
         return str(path)
 
@@ -289,15 +346,40 @@ class MainTests(unittest.TestCase):
         self.assertIn('source,', out)
         self.assertIn('full_file_reads', out)
 
-    def test_two_sessions_warn_only_when_they_share_one_input_file(self):
-        # Forty cases are forty files and forty session ids, so counting
-        # across the whole input fires every time and can never point at
-        # what section 8.7 wants: one conversation split by `--resume`.
-        one = self.log('d.hooklog', line(session='s1'))
-        two = self.log('e.hooklog', line(session='s2'))
+    def test_two_sessions_warn_only_when_they_share_one_conversation(self):
+        # Forty cases in two arms across several runs are hundreds of files
+        # and hundreds of session ids, so counting across the whole input
+        # fires every time and can never point at what section 8.7 wants:
+        # one conversation split by `--resume`.
+        one = self.log('d.plugin.jsonl.hooklog', line(session='s1'))
+        two = self.log('e.plugin.jsonl.hooklog', line(session='s2'))
         self.assertNotIn('WARNING', self.run_main(one, two)[2])
-        split = self.log('f.hooklog', line(session='s1'), line(session='s2'))
+        # The same case in two runs is two conversations, not a split one.
+        a = self.log('run.aaaa/transcripts/d.plugin.jsonl.hooklog',
+                     line(session='s1'))
+        b = self.log('run.bbbb/transcripts/d.plugin.jsonl.hooklog',
+                     line(session='s9'))
+        self.assertNotIn('WARNING', self.run_main(a, b)[2])
+        # Two turns of ONE conversation under two session ids: the `--resume`
+        # split, and the only thing this warning is for.
+        first = self.log('g.plugin.jsonl.hooklog', line(session='s1'))
+        turn = self.log('g.plugin.jsonl.turn2.jsonl.hooklog', line(session='s2'))
+        err = self.run_main(first, turn)[2]
+        self.assertIn('WARNING', err)
+        self.assertIn('g.plugin.jsonl', err)
+        # One log holding two ids is still the same fault.
+        split = self.log('f.plugin.jsonl.hooklog', line(session='s1'),
+                         line(session='s2'))
         self.assertIn('WARNING', self.run_main(split)[2])
+
+    def test_the_csv_names_the_run_and_the_conversation(self):
+        path = self.log('run.aaaa/transcripts/h.plugin.jsonl.hooklog',
+                        line(start=1, lines=30, total=100))
+        out = self.run_main(path)[1]
+        header = [l for l in out.splitlines() if l.startswith('run,')]
+        self.assertEqual(1, len(header), out)
+        self.assertIn('run,conversation,source,', header[0])
+        self.assertIn('run.aaaa,h.plugin.jsonl,h.plugin.jsonl.hooklog,', out)
 
     def test_a_log_with_no_parent_row_at_all_warns(self):
         # If the parent test ever stops matching, the parent vanishes from
