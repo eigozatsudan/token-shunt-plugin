@@ -799,6 +799,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - フックは通過時に `permissionDecision: "allow"` を出さない（権限確認を省略しない）
 - doctor: フック stdin に `agent_type` が出ること、`FORCE` が立っていたら警告、jq の有無
 - 環境変数 `TOKEN_SHUNT_MIN_LINES` / `TOKEN_SHUNT_MIN_BYTES` / `TOKEN_SHUNT_SCAN_BUDGET_BYTES` / `TOKEN_SHUNT_SCAN_BUDGET_MS`。`TOKEN_SHUNT_HOOK_LOG` は古い CLI の eval フォールバック
+- `TOKEN_SHUNT_SESSION_BUDGET_BYTES` は**既定で無効**であること、設定すると会話累積で全文読みを拒否すること、**その効果は実機未検証**であることを併記する。効くとは書かない
 - 画像 / PDF / `.ipynb` の Read はサイズゲートしない
 - 単一の巨大ファイルは親が行分割せず 1 ワーカーに渡す。均等行分割はしない
 - 比較 eval（`evals/compare/`）は空 `--setting-sources`＋`.claude` の無い一時 cwd＋`--add-dir` と共通フラグ。直接は `--plugin-dir` なし、委譲は `--plugin-dir <plugin-abs>`。`--bare` は agent 登録を妨げるため使わない。`CLAUDE_CONFIG_DIR` だけでは足りない。経路・正確性・代表ケースの親コンテキスト削減（isolation_ok、UTF-8 バイト同士）が合格条件。親子合計の推定費用と再試行は §26.5 で記録し回帰する。code-writer は親が検証コマンドを実行し、eval ランナーが生成テスト＋ mutation に成功することがリリース必須
@@ -822,6 +823,7 @@ Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用に
 - **全文 reader カタログ（2026-09-16）:** `cat`/`less`/`more` に加えて `nl`・`od`・`xxd`・`base64`・`strings`・`rev`・`tac`・`fold`・`expand`・`unexpand`・`pr`・`shuf`・`cut`・`paste`・`column`・`diff`・`sdiff`・`comm` を同じ閾値で判定する。`od -N` / `xxd -l` の出力側上限は解釈しないので fail-closed 側に倒れる。`grep`/`egrep`/`fgrep`/`rg` は `-l`/`-L`/`-c`/`-q`（長形式含む）がある場合のみ pass。カタログに無い reader は依然として穴であり、許可ではない
 - **ドル展開・ANSI-C引用:** コマンド名・対応 reader のオペランドにある引用外／二重引用内の有効な `$` は未解決として扱う。`cat $'large.txt'` も既存の出力隔離・バイト制限例外を除いて deny。単一引用内・エスケープされた `$` はリテラルとして保持する。
 - **逐次 targeted Read:** 成功条件 6 が実測 lines/bytes が両閾値以下の targeted Read を許すため、親は `limit=350` を offset ずらしで繰り返し全文を回収できる。1 行が `MIN_BYTES` 以下なら `limit=1` の繰り返しでも回収できる（巨大行の `limit=1` は §9.7 で deny）。フックは呼び出しをまたぐ回収を検出しない。比較 eval の直接モードでは観測し、委譲側では §26.5 に従い deny 後の連続 Read / パイプ回収を path_ok fail にする。isolation_ok の量的判定も別途適用する
+- **多ターン会話の累積取り込み（実測 2026-09-19）:** 1 ターンに 1 つずつ閾値以下のファイルを求められると、個々の Read は常に閾値以下でフックが掛からず、§26.2 の 16,384 バイト予算はターンごとの判断なので会話をまたいで累積しない。5 ターン会話 14 本で **turn 1 は 0 件、turn 2 以降で 21 件・14 本中 10 本**、最大の 1 本は **32,098 バイト**を親が取り込み、**プラグイン無しの最小 25,901 バイトを上回った**。ワーカーが既読のパスへの再 Read は 5/5 とも拒否されており、取りこぼすのは**後続ターンが新しく求める閾値以下のファイル**だけである。機械強制（Lock B、`plugin/hooks/intake_ledger.py`）は実装済みだが **既定は無効**で、`TOKEN_SHUNT_SESSION_BUDGET_BYTES` を設定したときだけ効く。**実機検証は未了**（spec §5 未実行、§7.4）。会話全体を数える計器は `evals/compare/parent_turn_reads.py`
 - code-writer の Write フック強制はしない。完了は §11 の検証段階と受入条件の確認に依存する。最小・構文チェックだけなら生成済み・内容未検証と報告する。検証を省略した利用は製品手順違反であり、eval では fail
 - 子の最終メッセージが契約を破れば、そのテキストは親に入る。キャップと eval で抑えるが script 境界（Spotify）ではない
 - 複数 PreToolUse は deny が勝つ。Spotify shunt 併用で子が死ぬ
