@@ -113,6 +113,14 @@ Fisher 両側 p = 1.00000。
 A（23）・B（40）・multiturn（14）と合算して
 **累計 155/155、Wilson 95% [0.9758, 1.0000]。**
 
+**この数字は turn 1 の判定である。**「親は corpus を読んでいない」とは読めない。
+`judge.py` は 1 ケース 1 transcript しか採点せず、**follow-up ターンは判定対象外**で
+ある。multiturn の 14 会話を `parent_bytes.py` で数え直すと、
+**12 会話で turn 2 以降に親が corpus を読んでいる**
+（`reviews/multiturn-context-2026-09-18.md` §4-2 の訂正、2026-09-19）。
+本ブロックは turn 1 のみなので **78/78 に影響は無い**が、
+**累計 155 の中の multiturn 14 は会話全体の主張には使えない。**
+
 ### 3.5 他の判定項目（§5-5）
 
 | 判定 | control | treated | Fisher |
