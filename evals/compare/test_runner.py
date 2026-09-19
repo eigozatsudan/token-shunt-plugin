@@ -493,6 +493,52 @@ ONLY=auto-small-files; SUITE=B; setup_run || exit 1
         self.assertNotEqual(0, result.returncode)
         self.assertIn('SESSION_BUDGET_BYTES', result.stdout + result.stderr)
 
+    def test_the_hook_log_lands_beside_the_transcript(self):
+        # _claude_call unsets every TOKEN_SHUNT_* name, so without this
+        # pass-through the coverage instrument records nothing in a
+        # measurement run -- the same hole the arm variable had.
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+printf '%s' "${TOKEN_SHUNT_HOOK_LOG-unset}"
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH"
+run_claude prompt "$TRD/base"
+cat "$TRD/base"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.endswith('/base.hooklog'), result.stdout)
+
+    def test_each_call_gets_its_own_hook_log(self):
+        # Not "a caller's export cannot escape": _claude_call unsets every
+        # TOKEN_SHUNT_* name before this line runs, so a buggy
+        # ${TOKEN_SHUNT_HOOK_LOG:-$out.hooklog} would pass that test too. What
+        # can actually break is pinning one path for the whole run, which
+        # would pour five follow-up turns into one file and make a turn
+        # impossible to tell from its successor.
+        result = self.shell('''
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+printf '%s\n' "${TOKEN_SHUNT_HOOK_LOG-unset}"
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH"
+run_claude prompt "$TRD/one"
+run_claude prompt "$TRD/two"
+cat "$TRD/one" "$TRD/two"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        got = result.stdout.split()
+        self.assertEqual(2, len(got), result.stdout)
+        self.assertTrue(got[0].endswith('/one.hooklog'), got)
+        self.assertTrue(got[1].endswith('/two.hooklog'), got)
+        self.assertNotEqual(got[0], got[1])
+
     def test_modes_restricts_planned_pairs_and_unset_keeps_every_mode(self):
         result = self.shell('''
 ONLY=auto-small-files; SUITE=B; setup_run || exit 1

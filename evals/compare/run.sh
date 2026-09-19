@@ -399,6 +399,10 @@ _claude_call() { # prompt transcript extra-args...
     # baseline run. The treated arm of the cumulative-intake block sets
     # SESSION_BUDGET_BYTES; nothing else does.
     export TOKEN_SHUNT_SESSION_BUDGET_BYTES=${SESSION_BUDGET_BYTES:-0}
+    # The coverage instrument records only when this is set, and it is set
+    # per run: a caller's exported path would mix two runs' telemetry into
+    # one file. Costs nothing and rides along on whatever run happens next.
+    export TOKEN_SHUNT_HOOK_LOG=$out.hooklog
     # The trial log is opt-in: the baseline must not write one, even if the
     # caller exported a path. SENDBACK=on pins it next to this transcript.
     if [[ ${SENDBACK:-off} == on ]]; then
