@@ -283,9 +283,9 @@ Lock B の腕変数テストと同じヘルパを再利用する。
 
 **テスト件数（最終レビュー修正を反映した現在値）:**
 `evals/test_record_coverage.py` **23 件**（16 + 7）、
-`evals/compare/test_read_coverage.py` **29 件**（グループ化キー修正で +5）、
+`evals/compare/test_read_coverage.py` **30 件**（グループ化キー修正で +5、run.sh の命名との結び付け +1）、
 `evals/compare/test_runner.py` に 2 件追加。リポジトリ全体は
-`evals` **398 件**（3 skip）、`evals/compare` **814 件**、いずれも green
+`evals` **398 件**（3 skip）、`evals/compare` **815 件**、いずれも green
 （`python3 -m unittest discover`。この環境に pytest は無い）。
 CSV は **19 列**（§6）。**これらの数字は最終レビュー修正が全部入った後に
 数え直したもの。** 途中の数字（Task 2 直後の 783 件、修正前の 16/13・391/798 件）を
@@ -305,7 +305,7 @@ CSV は **19 列**（§6）。**これらの数字は最終レビュー修正が
 
 **この「12 件」は mutation を当てた当時（最終レビュー修正時点）の
 `test_read_coverage.py` の単体テスト件数であって、現在値ではない。**
-その後この節の下の修正でテストが増えている（現在 29 件）。mutation の結論
+その後この節の下の修正でテストが増えている（現在 30 件）。mutation の結論
 （「単体だけでは配線の断線を捉えられない」）は変わらないが、**数字は履歴である。**
 
 **最終レビュー（通常・敵対）の真陽性修正:** フック 4 件（stdin を先に読む /

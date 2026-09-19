@@ -7,6 +7,7 @@ reads what `plugin/hooks/record-coverage` wrote and never parses a
 transcript. It reports what the parent did; it does not score it.
 """
 import json
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -396,3 +397,37 @@ class MainTests(unittest.TestCase):
                             for l in err.splitlines()), err)
         self.assertTrue(any(l.startswith('# worker') and 'coverage=1.0000' in l
                             for l in err.splitlines()), err)
+
+
+class RunnerNamingTests(unittest.TestCase):
+    """`conversation` is a claim about run.sh's file names. Pin them together.
+
+    `_conversation` strips `.turnN.jsonl` because that is how
+    `run_followups` names a follow-up turn and how `_claude_call` names the
+    hook log beside it. Nothing else asserts those two agree, so a rename in
+    run.sh would silently split one conversation's turns into a row each and
+    halve the rate -- which is the defect this test exists to stop from
+    coming back.
+    """
+    RUN_SH = Path(__file__).resolve().parent / 'run.sh'
+
+    def setUp(self):
+        self.source = self.RUN_SH.read_text(encoding='utf-8')
+
+    def literal(self, pattern, what):
+        found = re.search(pattern, self.source)
+        self.assertIsNotNone(
+            found, '%s no longer matches run.sh; read_coverage._conversation '
+                   'is guessing at a layout that changed' % what)
+        return found.group('suffix')
+
+    def test_a_follow_up_turns_hooklog_is_the_same_conversation(self):
+        turn = self.literal(r'run_claude_resume\s+"\$prompt"\s+'
+                            r'"\$first(?P<suffix>[^"]*)"', 'the follow-up name')
+        log = self.literal(r'export TOKEN_SHUNT_HOOK_LOG=\$out(?P<suffix>\S*)',
+                           'the hook log name')
+        first = 'django-multiturn-context.auto.jsonl'
+        second = first + turn.replace('$((n + 2))', '2')
+        self.assertEqual(read_coverage._conversation(first + log),
+                         read_coverage._conversation(second + log))
+        self.assertEqual(first, read_coverage._conversation(second + log))
