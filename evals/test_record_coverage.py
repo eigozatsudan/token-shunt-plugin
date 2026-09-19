@@ -109,6 +109,50 @@ class RecordTests(unittest.TestCase):
         self.assertIsNone(hook.record(dict(event(), tool_input='junk')))
 
 
+    def test_a_non_string_agent_id_still_reads_as_a_worker(self):
+        # intake_ledger.py:134 looks at the raw truthiness, so `agent_id: 7`
+        # is a worker to the ledger. Dropping it to None here files that
+        # worker's full-file reads as the parent's, and worker rows stick at
+        # 1.0 by design -- the parent rate would swell toward 1.0 with it.
+        self.assertEqual('7', hook.record(event(agent_id=7))['agent_id'])
+        self.assertEqual('True', hook.record(event(agent_id=True))['agent_id'])
+        self.assertEqual('9', hook.record(event(agent_type=9))['agent_type'])
+
+    def test_a_falsy_agent_field_still_reads_as_the_parent(self):
+        # `str(False)` is truthy, so coercing every non-string would turn the
+        # parent into a worker: the same error mirrored.
+        for value in (False, 0, '', None):
+            with self.subTest(value=value):
+                self.assertIsNone(hook.record(event(agent_id=value))['agent_id'])
+                self.assertIsNone(hook.record(event(agent_type=value))['agent_type'])
+
+    def test_the_other_fields_keep_the_string_only_rule(self):
+        # Only the two agent fields are read for their truthiness; widening
+        # the rest would invent session ids that never existed.
+        self.assertIsNone(hook.record(dict(event(), session_id=7))['session_id'])
+
+    def test_the_recorded_path_is_the_real_path(self):
+        # judge.py:646-656 normalises for this reason: one file reached
+        # through a symlink or `..` splits into two rows, so the same lines
+        # taken twice look like two healthy partial reads of two files.
+        # The run directory is gone by aggregation time, so it happens here.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            real = root / 'real.py'
+            real.write_text('x\n')
+            link = root / 'link.py'
+            link.symlink_to(real)
+            self.assertEqual(str(real),
+                             hook.record(event(path=str(link)))['file_path'])
+            dotted = root / 'sub' / '..' / 'real.py'
+            self.assertEqual(str(real),
+                             hook.record(event(path=str(dotted)))['file_path'])
+
+    def test_the_response_path_wins_over_the_requested_path(self):
+        # `tool_response.file.filePath` is what the tool actually opened.
+        got = hook.record(dict(event(), tool_input={'file_path': '/c/asked.py'}))
+        self.assertEqual('/corpus/migration.py', got['file_path'])
+
 class EntryPointTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -178,6 +222,42 @@ class EntryPointTests(unittest.TestCase):
         result = self.run_hook(event(), self.root / 'hooklog')
         self.assertEqual('', result.stdout)
 
+
+    def test_it_drains_stdin_before_it_looks_at_the_environment(self):
+        # Every other hook reads stdin unconditionally. A large Read event
+        # exceeds the pipe buffer, so returning on the default-off path
+        # before reading breaks the writer's pipe instead of exiting quietly.
+        payload = self.root / 'payload.json'
+        payload.write_text(json.dumps(event(content='x' * 2_000_000)))
+        producer = self.root / 'producer.py'
+        producer.write_text('import sys\n'
+                            'sys.stdout.write(open(sys.argv[1]).read())\n')
+        result = subprocess.run(
+            ['bash', '-c', '"$1" "$2" "$3" | "$1" "$4"; echo "${PIPESTATUS[0]}"',
+             'bash', sys.executable, str(producer), str(payload), str(SOURCE)],
+            text=True, timeout=30, capture_output=True, env=self.env)
+        self.assertEqual('0', result.stdout.strip(), result.stderr)
+
+    def test_a_noisy_write_hook_log_cannot_reach_the_parents_streams(self):
+        # The child inherits fd 1 and fd 2 unless they are closed off. The
+        # two other callers block them with `3>&2 2>/dev/null`; here the
+        # structural "cannot deny" of spec section 4 must not depend on
+        # today's write-hook-log happening to stay silent.
+        stage = self.root / 'stage'
+        stage.mkdir()
+        copy = stage / 'record-coverage'
+        copy.write_bytes(SOURCE.read_bytes())
+        (stage / 'write-hook-log').write_text(
+            'import sys\n'
+            'sys.stdin.read()\n'
+            'sys.stdout.write("{\"hookSpecificOutput\": 1}")\n'
+            'sys.stderr.write("noise")\n')
+        result = subprocess.run(
+            [sys.executable, str(copy)], input=json.dumps(event()), text=True,
+            timeout=10, capture_output=True,
+            env=dict(self.env, TOKEN_SHUNT_HOOK_LOG=str(self.root / 'quiet')))
+        self.assertEqual((0, '', ''),
+                         (result.returncode, result.stdout, result.stderr))
 
 class WiringTests(unittest.TestCase):
     def test_the_hook_is_registered_after_record_intake_on_post_read(self):

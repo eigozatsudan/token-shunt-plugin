@@ -33,6 +33,10 @@ def record(event):
     response = response if isinstance(response, dict) else {}
     file = response.get('file')
     file = file if isinstance(file, dict) else {}
+    # What the tool actually opened, when it says so.
+    opened = file.get('filePath')
+    if isinstance(opened, str) and opened:
+        path = opened
     # A failed read makes no claim about which lines arrived; the row stays
     # so the count of attempts is not quietly lowered.
     failed = bool(response.get('is_error') or response.get('error')
@@ -41,11 +45,15 @@ def record(event):
     return {
         'hook': 'record-coverage',
         'session_id': _str(event.get('session_id')),
-        'agent_id': _str(event.get('agent_id')),
+        'agent_id': _agent(event.get('agent_id')),
         # Both fields, because intake_ledger.py:134 needs both to tell a
         # parent from a worker sharing the session.
-        'agent_type': _str(event.get('agent_type')),
-        'file_path': path,
+        'agent_type': _agent(event.get('agent_type')),
+        # Aliases (symlink, `..`) split one file into two rows, so the same
+        # lines taken twice would read as two healthy partial reads of two
+        # files. judge.py:646-656 normalises for the same reason. It happens
+        # here and not in the aggregator: the run directory is gone by then.
+        'file_path': os.path.realpath(path),
         'start': None if failed else _int(file.get('startLine')),
         'lines': None if failed else _int(file.get('numLines')),
         'total': None if failed else _int(file.get('totalLines')),
@@ -65,11 +73,28 @@ def _str(value):
     return value if isinstance(value, str) and value else None
 
 
+def _agent(value):
+    """An agent field as intake_ledger.py:134 reads it: truthy means worker.
+
+    That line tests the raw value, so an `agent_id` of 7 is a worker to the
+    ledger. Dropping a non-string to None would file that worker's reads as
+    the parent's, and worker rows sit at 1.0 by design. Falsiness is kept
+    because `str(False)` is truthy: that would be the same error mirrored.
+    """
+    if isinstance(value, str):
+        return value or None
+    return None if not value else str(value)
+
+
 def main():
     """Read one PostToolUse event and, if telemetry is on, log one line."""
+    # Drained first, as every other hook does: a large Read event can fill
+    # the pipe buffer, and returning before reading would break the CLI's
+    # write instead of exiting quietly on the default-off path.
+    event = sys.stdin.read()
     if not os.environ.get('TOKEN_SHUNT_HOOK_LOG'):
         return
-    row = record(json.load(sys.stdin))
+    row = record(json.loads(event))
     if row is None:
         return
     # write-hook-log owns the refusal to write to FIFOs, symlinks and the
@@ -77,7 +102,11 @@ def main():
     # to keep right.
     subprocess.run([sys.executable, str(Path(__file__).resolve().parent
                                         / 'write-hook-log')],
-                   input=json.dumps(row), text=True, timeout=5)
+                   input=json.dumps(row), text=True, timeout=5,
+                   # The child inherits fd 1 and fd 2 otherwise, so the
+                   # structural inability to deny (spec section 4) would
+                   # rest on write-hook-log happening to stay silent.
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == '__main__':
