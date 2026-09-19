@@ -953,8 +953,25 @@ check_shell_program() { # program text
   return 0
 }
 
+# Lock B (spec 2026-09-19-cumulative-intake-design.md 1). `cat big` puts the
+# same bytes in the parent that a Read does, so a reader call is charged to
+# the session ledger and refused once the session is already over budget.
+# This is the one place a command has been recognised as a reader with file
+# operands; the ledger parses no command line of its own, and a missing or
+# failing python3 leaves the call judged exactly as before.
+intake_gate() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  local out
+  out=$(printf '%s' "$input" | python3 "$HOOK_DIR/check-intake-budget" --bash 2>/dev/null) || return 0
+  [[ -n $out ]] || return 0
+  hook_log deny 'session intake budget'
+  printf '%s\n' "$out"
+  exit 0
+}
+
 check_files_full() { # toolname; deny on first exceeding/undetermined target
   local tool=$1 f v nl rb rd el
+  ((${#FILES[@]})) && intake_gate
   for f in ${FILES[@]+"${FILES[@]}"}; do
     check_parse_budget
     read -r v nl rb rd el <<<"$(full_file_verdict "$f")"

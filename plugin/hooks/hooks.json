@@ -33,6 +33,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-delegated-read",
             "args": [],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-intake-budget",
+            "args": [],
+            "timeout": 10
           }
         ]
       },
@@ -107,6 +113,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-reader-contract",
             "args": [],
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/record-intake",
+            "args": [],
+            "timeout": 10
           }
         ]
       },
@@ -118,6 +130,12 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-grep-bounds",
             "args": [],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/record-intake",
+            "args": [],
+            "timeout": 10
           }
         ]
       }

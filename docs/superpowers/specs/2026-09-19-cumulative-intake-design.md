@@ -326,3 +326,48 @@ auto 会話 1 本の実費は平均 **$0.3724**（`reviews/multiturn-context-202
 3. **試した設計は 1 通りである。** cap-overflow §8-4 と同じ限界がここにもある。
 4. **多ターン以外の形は見ていない。** 5 ターン・1 ケース・auto のみの実測から
    閾値を引いた。他の課題形で 16,384 が正しい線かは分からない。
+
+## 7. 実装の記録と、設計からの逸脱（2026-09-19、$0）
+
+実装は `plugin/hooks/intake_ledger.py`、入口は `check-intake-budget`
+（PreToolUse / Read、`--bash` で Bash）と `record-intake`
+（PostToolUse / Read・Bash）。テストは `evals/test_intake_ledger.py`（50 件）。
+TDD（RED を先に見た）。`state_file` は §2 の通り `delegated_paths` のものを
+名前空間だけ替えて再利用しており、所有者・パーミッション・`O_NOFOLLOW` の
+検査は 1 か所のままである。**実機では 1 度も動かしていない**（§5 は未実行）。
+
+### 逸脱 1 —— 台帳の `turns` を `reads` に替えた
+
+§2 は `{"bytes": N, "turns": M}` と書いた。**フック入力にターン境界が無い。**
+ターン数を実行時に持つには `UserPromptSubmit` フックを新しく登録するしかなく、
+**強制に使わない記録のためにフック面を広げることになる**（§1 の非拡大方針）。
+実装は `{"bytes": N, "reads": M, "pending": [...]}` とし、
+`reads` は**課金された読み取りの件数**である。ターンごとの内訳は従来どおり
+事後に `parent_turn_reads.py` が出す。**数えているものの名前を合わせただけで、
+強制の挙動は §2 のままである。**
+
+### 逸脱 2 —— Bash の「既知 reader」判定を再実装しなかった
+
+§1 は Read と既知 reader の Bash の両方を数えると書いたが、**どこで
+reader と判定するかは書いていない。** 判定は `check-bash-read`（1,500 行）に
+あり、そのリスト自身が「ここに無い reader は穴であって許可ではない」と
+書いている。**Python 側に 2 つ目の写しを作らない。**
+
+`check-bash-read` が reader をファイル操作対象つきで認識した 1 点
+（`check_files_full` の入口）から `check-intake-budget --bash` を呼ぶ。
+そこで (i) 既に超過なら deny、(ii) そうでなければ `tool_use_id` を
+`pending` に記録する。PostToolUse の `record-intake` は
+**`pending` にある `tool_use_id` の Bash だけ**を stdout のバイト数で課金し、
+マークは 1 回で消える。**マークされていない Bash は課金しない** ——
+`npm test` の出力は台帳に載らない。python3 が無い・落ちた場合は
+`return 0` で**従来どおりの判定に戻る**（fail-open、§2）。
+
+### 既定で有効である —— 未測定の変更が v0.1 の挙動に入る
+
+§3.1 の通り既定 16,384 バイトで実装した。**登録した時点で、v0.1 の
+必須スイートも Lock B が有効な状態で走る。** §1 は「v0.1 の出荷条件を
+動かさない」と書いており、**予算が戻るまで Lock B の効果は未測定である。**
+`TOKEN_SHUNT_SESSION_BUDGET_BYTES=0` で完全に無効にできる（§3.1）ので、
+**control 腕はこの環境変数で作る。**
+既定を 0 に倒すかどうかは**文書の既定値を静かに反転させない**ため
+実装では動かしていない。判断が要る項目としてここに残す。
