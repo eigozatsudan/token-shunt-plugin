@@ -218,8 +218,10 @@ Lock B の腕変数テストと同じヘルパを再利用する。
 
 **テスト件数:** `evals/test_record_coverage.py` 16 件、
 `evals/compare/test_read_coverage.py` 13 件、`evals/compare/test_runner.py` に
-2 件追加。リポジトリ全体は `evals` 391 件（3 skip）、`evals/compare` 783 件、
-いずれも green。
+2 件追加。リポジトリ全体は `evals` 391 件（3 skip）、`evals/compare` 798 件、
+いずれも green。**この 2 つの数字は Task 5（本節の直前のタスク）が着地した後に
+数え直したもの。** 途中の数字（Task 2 直後に取った 783 件）を最終値として
+使い回さないこと —— それが今回、一度そのまま spec に書かれて古くなった。
 
 **mutation で確かめたこと:**
 - 行から `agent_type` を落とす → 自分のテスト 1 件だけが落ちる
