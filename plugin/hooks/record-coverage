@@ -13,6 +13,11 @@ protocol output at all: there is no code path here that can refuse a call.
 transcript reader -- a transcript carries only `cat -n` text, so the
 denominator is available here and nowhere else.
 """
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 
 def record(event):
@@ -58,3 +63,26 @@ def _int(value):
 
 def _str(value):
     return value if isinstance(value, str) and value else None
+
+
+def main():
+    """Read one PostToolUse event and, if telemetry is on, log one line."""
+    if not os.environ.get('TOKEN_SHUNT_HOOK_LOG'):
+        return
+    row = record(json.load(sys.stdin))
+    if row is None:
+        return
+    # write-hook-log owns the refusal to write to FIFOs, symlinks and the
+    # protocol streams; duplicating those checks here would mean two copies
+    # to keep right.
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parent
+                                        / 'write-hook-log')],
+                   input=json.dumps(row), text=True, timeout=5)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        pass  # Telemetry must never reach the tool call it is watching.
+    sys.exit(0)

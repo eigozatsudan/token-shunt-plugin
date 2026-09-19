@@ -107,3 +107,86 @@ class RecordTests(unittest.TestCase):
     def test_an_event_without_a_path_records_nothing(self):
         self.assertIsNone(hook.record(dict(event(), tool_input={})))
         self.assertIsNone(hook.record(dict(event(), tool_input='junk')))
+
+
+class EntryPointTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith('TOKEN_SHUNT_')}
+        self.env['TMPDIR'] = str(self.root / 'tmp')
+        os.mkdir(self.env['TMPDIR'])
+
+    def run_hook(self, body, log=None):
+        env = dict(self.env)
+        if log is not None:
+            env['TOKEN_SHUNT_HOOK_LOG'] = str(log)
+        return subprocess.run([sys.executable, str(SOURCE)],
+                              input=json.dumps(body), text=True, timeout=10,
+                              capture_output=True, env=env)
+
+    def test_a_read_appends_one_line_to_the_hook_log(self):
+        log = self.root / 'hooklog'
+        result = self.run_hook(event(), log)
+        self.assertEqual((0, '', ''), (result.returncode, result.stdout, result.stderr))
+        rows = [json.loads(l) for l in log.read_text().splitlines()]
+        self.assertEqual(1, len(rows))
+        self.assertEqual(('record-coverage', 139, 50, 316),
+                         (rows[0]['hook'], rows[0]['start'], rows[0]['lines'],
+                          rows[0]['total']))
+
+    def test_without_a_log_path_it_writes_nothing_at_all(self):
+        # Fails if the instrument is ever switched on by default: an
+        # unmeasured mechanism ships off.
+        result = self.run_hook(event())
+        self.assertEqual((0, '', ''), (result.returncode, result.stdout, result.stderr))
+        self.assertEqual([], list(self.root.rglob('*hooklog*')))
+
+    def test_it_creates_no_state_directory(self):
+        # Fails if this is ever rewritten as a ledger: Lock A and Lock B are
+        # two state files already, and a third would be a third way to break.
+        self.run_hook(event(), self.root / 'hooklog')
+        self.assertEqual([], sorted(Path(self.env['TMPDIR']).glob('token-shunt-*')))
+
+    def test_junk_on_stdin_exits_zero_and_says_nothing(self):
+        for junk in ('', 'not json', '[]', 'null'):
+            with self.subTest(junk=junk):
+                result = subprocess.run(
+                    [sys.executable, str(SOURCE)], input=junk, text=True,
+                    timeout=10, capture_output=True,
+                    env=dict(self.env, TOKEN_SHUNT_HOOK_LOG=str(self.root / 'j')))
+                self.assertEqual((0, '', ''),
+                                 (result.returncode, result.stdout, result.stderr))
+
+    def test_the_hook_has_no_way_to_deny_anything(self):
+        # The safety property is structural, not behavioural: if a decision
+        # path is ever added, this fails before any test of its behaviour.
+        source = SOURCE.read_text()
+        for forbidden in ('hookSpecificOutput', 'permissionDecision'):
+            self.assertNotIn(forbidden, source)
+
+    def test_the_hook_does_not_import_lock_b(self):
+        # Lock B is inert at budget 0, which is the shipped default. Sharing
+        # a module with it would make this instrument inert too. A comment
+        # may cite intake_ledger.py:134 -- only an import is forbidden.
+        self.assertIsNone(re.search(r'(?m)^\s*(import|from)\s+intake_ledger',
+                                    SOURCE.read_text()))
+
+    def test_stdout_stays_empty_even_for_a_read_it_records(self):
+        result = self.run_hook(event(), self.root / 'hooklog')
+        self.assertEqual('', result.stdout)
+
+
+class WiringTests(unittest.TestCase):
+    def test_the_hook_is_registered_after_record_intake_on_post_read(self):
+        config = json.loads((HOOKS / 'hooks.json').read_text())
+        post = [g for g in config['hooks']['PostToolUse']
+                if g.get('matcher') == 'Read'][0]['hooks']
+        names = [h['command'].rsplit('/', 1)[-1] for h in post]
+        self.assertEqual(['check-reader-contract', 'record-intake',
+                          'record-coverage'], names)
+
+    def test_the_hook_is_executable(self):
+        self.assertTrue(os.access(str(SOURCE), os.X_OK))
