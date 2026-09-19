@@ -10,6 +10,39 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-14-reader-protocol-reduction-design.md`
 
+## 状態: 実行済み・マージ済み（2026-09-14）。追加作業なし（2026-09-20 確認）
+
+**下のチェックボックスは記録ではない。** 実行中に一度も更新されなかったので、
+64 個すべてが未チェックのまま残っている。**未着手という意味ではない。**
+2026-09-20 に現物を当たって確認した内容:
+
+| 確認したこと | 証拠 |
+|---|---|
+| 正本が出荷されている | `plugin/hooks/reader-call-contract`（942 B、固定本文 900 B 以下の制約内）、`0f99da5` |
+| 両フックが読んでいる | `check-file-size:158`、`check-bash-read:172` |
+| Task 8 の計測が入っている | `cost_probe.py:94` `metrics()`（Skill 読み込み・deny 回数） |
+| Task 9 の実機 3 回が回っている | `reviews/reader-protocol-reduction-2026-09-14.md` §「rep1-3」 |
+| 全体レビューが通っている | `reviews/reader-protocol-reduction-final-review-2026-09-14.md`（Critical 0 / Important 3） |
+| Important 3 件が直っている | I1 → `check-file-size:271-272` が `file_size` を呼び直す + `test_reader_call_contract.py:143,248`。I2 → `CONTRACT_RAW` による生パス比較（`check-file-size:160,167-169`）+ `test_reader_call_contract.py:374` |
+| 現在も緑 | `./evals/run.sh` 240 pass / 0 fail、`evals/compare` 815 tests OK |
+
+**ゲートは通っていない。** §8.3 の終了条件のうち 2 つが未達である
+（`reviews/reader-protocol-reduction-2026-09-14.md` の判定表）:
+
+- Skill 読み込みターン **9 回中 1 回**（目標 0 回）= ×
+- `gold_confirmed` **`auto-explicit-multifile` の 6 実行すべてで 3 件欠落**
+  （目標 0 件）= ×。**原因が本計画由来かは未確定**と同レビューが記している。
+
+**リリースゲートの合格ではなく、deny プロトコルの改善としてマージされた**
+（final review の Assessment 末尾）。
+
+**目標の書き方について。** 冒頭の Goal は「direct 比の**料金**を下げる」と
+書いてあるが、**このリポジトリの主要指標は親コンテキストの汚染量であって
+費用ではない。** 費用の判定自体は ○ だった（skill − direct が 3 周とも負、
+中央値 -$0.0393）が、**それは成果の言い方として採らない。** 同じ表で
+主要指標側に当たるのは親ターン数で、**10.5〜11.5 から 6.5** に下がっている。
+以後この計画を引くときは、こちらを引くこと。
+
 ## Global Constraints
 
 - 固定本文（`{REASON}` / `{PATHS}` を除く）は **900 バイト以下**。§4.1 の実測は 860 バイト。
