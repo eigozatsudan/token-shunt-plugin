@@ -934,7 +934,7 @@ according to --worker-model. auto starts with haiku.
   アーカイブ 14 会話では **direct 42/42・auto 42/42** が gold 全一致
   （`reviews/multiturn-turn-accuracy-2026-09-19.md`）。**天井であり、
   検出できるのは「下がったこと」である。**
-- **v0.2 の手段を設計だけ先に置いた（2026-09-19）。**
+- **v0.2 の手段を実装した。既定は無効である（2026-09-19）。**
   `docs/superpowers/specs/2026-09-19-cumulative-intake-design.md`（Lock B）。
   セッション単位の取り込み台帳を `delegated_paths` と同じ機構で持ち、
   `PostToolUse` で加算・`PreToolUse` で超過後の全文読みを deny する。
@@ -942,7 +942,13 @@ according to --worker-model. auto starts with haiku.
   **16,384 で掛かるのは 1 本、32,768 では 0 本**で、
   **32,768 は動機になった当の 1 本（32,098 バイト）を取り逃がす。**
   targeted Read は加算するが deny しない（§26.5 の編集経路を殺さないため）。
-  **設計のみで、実装も実機検証も行っていない。効くとは書かない。**
+  実装は `plugin/hooks/intake_ledger.py`、入口は `check-intake-budget` /
+  `record-intake`。**出荷既定は 0（無効）で、16,384 は
+  `TOKEN_SHUNT_SESSION_BUDGET_BYTES` を設定したときだけ効く** ——
+  既定で有効にすると `auto-routing-boundary-16k-{minus,equal}` の
+  正常な Read 1 回が累積を超えさせ、**未測定の機構が必須スイートを
+  落とし得る**（spec §7.4）。**v0.1 の出荷条件も既定の挙動も動いていない。**
+  **実機検証は行っていない。効くとは書かない。**
 - **`evals/compare/parent_turn_reads.py` は観測必須・出荷ゲートにしない。**
   多ターンケースを走らせたときの記録を必須とし、欠測は fail とするが、
   **件数 >0 それ自体は出荷を止めず、多ターンケースを必須スイートにも加えない。**

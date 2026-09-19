@@ -432,6 +432,40 @@ cat "$TRD/on.jsonl"
         self.assertTrue(result.stdout.endswith('on.jsonl.sendback.jsonl'),
                         result.stdout)
 
+    def _claude_prints_session_budget(self):
+        return """
+ONLY=''; SUITE=''; setup_run || exit 1
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/claude" <<'CLI'
+#!/bin/bash
+printf '%s' "${TOKEN_SHUNT_SESSION_BUDGET_BYTES-unset}"
+CLI
+chmod +x "$TMP/bin/claude"
+export PATH="$TMP/bin:$PATH"
+"""
+
+    def test_the_session_budget_is_pinned_off_on_the_baseline(self):
+        # Lock B ships off (cumulative-intake spec 3.1). _claude_call unsets
+        # every TOKEN_SHUNT_* name, so without a pass-through the treated
+        # arm could not exist; without a pin, a caller's export could turn
+        # the lock on in a baseline run.
+        result = self.shell(self._claude_prints_session_budget() + '''
+export TOKEN_SHUNT_SESSION_BUDGET_BYTES=99999
+run_claude prompt "$TRD/base"
+cat "$TRD/base"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '0')
+
+    def test_the_treated_arm_reaches_the_hooks(self):
+        result = self.shell(self._claude_prints_session_budget() + '''
+SESSION_BUDGET_BYTES=16384
+run_claude prompt "$TRD/on"
+cat "$TRD/on"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '16384')
+
     def test_modes_restricts_planned_pairs_and_unset_keeps_every_mode(self):
         result = self.shell('''
 ONLY=auto-small-files; SUITE=B; setup_run || exit 1

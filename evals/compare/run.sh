@@ -382,6 +382,11 @@ _claude_call() { # prompt transcript extra-args...
     # The baseline measures the skills, not the send-back: off unless a run
     # is deliberately measuring the hook itself (registration decision 3.4).
     export TOKEN_SHUNT_SENDBACK=${SENDBACK:-off}
+    # Lock B is off in the plugin's own default and pinned off here, so a
+    # caller's export cannot turn an unmeasured mechanism on inside a
+    # baseline run. The treated arm of the cumulative-intake block sets
+    # SESSION_BUDGET_BYTES; nothing else does.
+    export TOKEN_SHUNT_SESSION_BUDGET_BYTES=${SESSION_BUDGET_BYTES:-0}
     # The trial log is opt-in: the baseline must not write one, even if the
     # caller exported a path. SENDBACK=on pins it next to this transcript.
     if [[ ${SENDBACK:-off} == on ]]; then

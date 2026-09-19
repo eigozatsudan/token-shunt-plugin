@@ -36,9 +36,12 @@ class LedgerFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.root = self.tmp / 'state'
-        for name in ('TOKEN_SHUNT_SESSION_BUDGET_BYTES',):
-            self.addCleanup(os.environ.pop, name, None)
-            os.environ.pop(name, None)
+        self.addCleanup(os.environ.pop, 'TOKEN_SHUNT_SESSION_BUDGET_BYTES',
+                        None)
+        # Shipped off (spec 3.1, revised): every test that wants the lock to
+        # act asks for the budget section 5 will measure.
+        os.environ['TOKEN_SHUNT_SESSION_BUDGET_BYTES'] = str(
+            il.MEASURED_BUDGET_BYTES)
 
     def read_event(self, path='/work/fixtures/m.py', **kw):
         event = {'session_id': kw.get('session', 's1'), 'tool_name': 'Read',
@@ -187,7 +190,34 @@ class DenyTests(LedgerFixture):
 
     def test_a_malformed_budget_falls_back_to_the_default(self):
         os.environ['TOKEN_SHUNT_SESSION_BUDGET_BYTES'] = 'plenty'
-        self.assertEqual(16384, il.budget())
+        self.assertEqual(0, il.budget())
+
+
+class ShippedDefaultTests(LedgerFixture):
+    """Off until section 5 has been run.
+
+    Registered and enabled, the required suite would run with an unmeasured
+    mechanism able to fail it: auto-routing-boundary-16k-minus and -equal
+    expect `agent_zero` on a ~16 KB file, so one ordinary Read of the case's
+    own fixture puts the session over 16,384. Nothing here is measured yet,
+    and design 1 says v0.1's ship conditions do not move.
+    """
+
+    def setUp(self):
+        super().setUp()
+        os.environ.pop('TOKEN_SHUNT_SESSION_BUDGET_BYTES', None)
+
+    def test_no_budget_set_means_no_budget(self):
+        self.assertEqual(0, il.budget())
+
+    def test_nothing_is_denied_however_much_the_session_took(self):
+        self.fill(99999)
+        self.assertIsNone(self.deny(self.read_event()))
+
+    def test_the_ledger_still_records_what_was_taken(self):
+        # The measurement in section 5 reads this even in the control arm.
+        self.fill(99999)
+        self.assertEqual(99999, self.total())
 
 
 class DenyWordingTests(LedgerFixture):
@@ -381,8 +411,9 @@ class EndToEndTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.env = dict(os.environ, TMPDIR=str(self.tmp))
-        self.env.pop('TOKEN_SHUNT_SESSION_BUDGET_BYTES', None)
+        self.env = dict(os.environ, TMPDIR=str(self.tmp),
+                        TOKEN_SHUNT_SESSION_BUDGET_BYTES=str(
+                            il.MEASURED_BUDGET_BYTES))
 
     def run_hook(self, name, event, *args):
         return subprocess.run([str(HOOKS / name)] + list(args),
@@ -436,6 +467,15 @@ class EndToEndTests(unittest.TestCase):
         got = self.run_hook('check-bash-read', {
             'session_id': 's1', 'tool_name': 'Bash', 'tool_use_id': 'call_2',
             'tool_input': {'command': 'echo hello'}})
+        self.assertEqual(0, got.returncode, got.stderr)
+        self.assertEqual('', got.stdout)
+
+    def test_the_shipped_default_denies_nothing(self):
+        # Off unless asked for: with no budget in the environment the lock
+        # is inert, and the required suite runs as it did before Lock B.
+        self.env.pop('TOKEN_SHUNT_SESSION_BUDGET_BYTES')
+        self.fill(23392)
+        got = self.run_hook('check-intake-budget', self.read_event())
         self.assertEqual(0, got.returncode, got.stderr)
         self.assertEqual('', got.stdout)
 

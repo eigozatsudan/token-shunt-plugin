@@ -31,7 +31,17 @@ import tempfile
 
 import delegated_paths
 
-BUDGET_BYTES = 16384
+# What section 5 will measure, and what the env var is set to in order to
+# turn the lock on. It is not the shipped default.
+MEASURED_BUDGET_BYTES = 16384
+
+# Shipped off (spec 3.1, revised 2026-09-19). Registered and on by default,
+# an unmeasured mechanism would be able to fail the required suite from
+# inside: auto-routing-boundary-16k-minus and -equal expect `agent_zero` on
+# a ~16 KB fixture, so one ordinary Read of it puts the session over 16,384.
+# Design 1 says v0.1's ship conditions do not move; promoting this default
+# is a v0.2 change that section 5 has to earn.
+BUDGET_BYTES = 0
 BUDGET_ENV = 'TOKEN_SHUNT_SESSION_BUDGET_BYTES'
 
 # The same set check-file-size passes on sight (design 9): what the ledger
@@ -63,7 +73,11 @@ def state_file(session, root=None):
 
 
 def budget(env=None):
-    """Bytes a session may take before full reads are refused. 0 disables."""
+    """Bytes a session may take before full reads are refused.
+
+    0 disables, and 0 is the default: the lock acts only where something
+    asked for it.
+    """
     raw = (os.environ if env is None else env).get(BUDGET_ENV)
     if raw is None:
         return BUDGET_BYTES
