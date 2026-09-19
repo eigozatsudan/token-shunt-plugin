@@ -7,8 +7,9 @@
 
 上限 $200 に対し累計 **約 $172.0**。**残り 約 $28.0。**
 
-**本ブロックの枠 $20、reserve $1.50、見込み $12〜15。**
-`spend.py --cap 20 --reserve 1.50` で止める。
+**本ブロックの枠 $19.50（$9.75 × 2 腕）、reserve $0.75 / 腕、見込み $12〜15。**
+**当初 $20。§7.1 の逸脱で $0.50 下げた。**
+`drive.sh --cap 9.75 --reserve 0.75` を腕ごとに掛けて止める。
 **これで残高はほぼ尽きる。上限を超える予定は無い。**
 
 ## 1. 直そうとしているもの
@@ -139,6 +140,69 @@ control を 0.286（22/77）と置いた模擬（`Random(20260918)`、3,000 反�
    切り捨てて揃えない（捨てるほうが情報を失う）。
 4. `errors` が空でない run は解析から除き、**除外数を報告する。**
 
+## 7.1 逸脱 — 1 回目の起動は再起動で消えた（2026-09-19）
+
+**1 回目は `/tmp` に worktree と run ディレクトリを置いて起動し、
+マシンの再起動で全部消えた。** 2 本の worktree、run ディレクトリ、
+ログ、交互実行のスクリプト、すべて残っていない。
+
+- **走ったのは control 1 run まで**（消える直前の確認で control 1 / treated 0）。
+- **その run の実費は分からない。** transcript が無いので数えられない。
+  **$0.2 前後と見込まれるが、これは推定であって測定ではない。**
+- **対処**: 枠を $20 から **$19.50** に下げる（$9.75 × 2 腕）。
+  失った分を上限で吸収する。
+- **再発防止**: worktree・run ディレクトリ・ログ・スクリプトを
+  **すべて `/tmp` の外**（`~/wt/`, `~/measurements/token-shunt/`）に置いた。
+- **preflight は張り直した。** `bc833e8`、両 worktree とも 3 件 deny 無し、
+  `plugin/` 以下の diff は 1 ファイル、selftest 両方 pass。
+
+**消えた 1 run は解析に入らない。** 新しい run ディレクトリは空から始まる。
+
+## 7.2 逸脱 — `--runs` が 2 つのガードを盲目にした（2026-09-19）
+
+**`drive.sh --runs DIR` は drive.sh が数える場所を変えるだけで、
+`run.sh` の書き込み先は変えない。** run.sh は自分の
+`evals/compare/tmp/runs` に書く。結果:
+
+- `completed()` は**常に 0** を返し、drive.sh は回し続けた。
+- **`spend.py --cap` も空ディレクトリを見ていた。$0 しか使っていないと
+  判定するので、cap は永遠に発火しない。**
+- **実際に止めたのは `--max-runs`（既定 = 目標 × 2 = 10）だけである。**
+
+**課金は 20 run（control 10 / treated 10）、実費 $4.8259。**
+データは健全（両腕とも `errors=0`、run ディレクトリ 20 件すべて残存）。
+
+**修正は 0 行**: `--runs` を渡さない。
+worktree が腕ごとに分かれているので、既定の
+`evals/compare/tmp/runs` がそのまま腕ごとの隔離になる。
+
+### 7.2.1 順序の逸脱
+
+§3.1 は 5 run ずつ交互と書いたが、**最初の 20 run は
+control 10 → treated 10 である。** 交互ではない。
+継続分（各腕 +30）は 5/5 交互に戻すが、
+**最初の 10/腕は時刻と腕が相関している。** 解析でそう書く。
+
+### 7.2.2 盲検は失われた
+
+**止まった理由を調べる過程で、driver のログにある
+`FAIL ... child_msg_cap: agent result NNNN chars > 4000` を読んだ。**
+control 4 件・treated 2 件の失敗と、その文字数を見ている。
+**これは主要指標そのものである。**
+
+**隠さない。** plan-phase ブロックで同じことが起きたときと同じ扱いにする:
+**§0 に書き、以降の判断が盲検下で行われたと主張しない。**
+
+### 7.2.3 cap の見込み
+
+control は $0.2472/run、treated は $0.2354/run（実測 10 run）。
+各腕 40 run なら control 約 $9.89、treated 約 $9.41。
+**control 側は cap $9.75 に 39 run 付近で当たる可能性がある。**
+
+**cap は動かさない。** §7-3 が既に「n が揃わなければ揃うところまでで
+検定し、両腕の n を併記する」と決めている。
+**n を丸めるために上限を動かすのは、上限を置いた意味を消す。**
+
 ## 8. 事前に認めている弱点
 
 1. **対応が無い。** 同一 run ディレクトリの 2 腕ではないので、
@@ -166,14 +230,28 @@ control を 0.286（22/77）と置いた模擬（`Random(20260918)`、3,000 反�
    `plugin/agents/bulk-reader.md` を編集する。
    その中で `evals/compare` 全件・外側 `evals` 全件・`evals/run.sh` 全件 pass、
    `judge.py --selftest` 全項目 pass。**両方の worktree で走らせる。**
+   **実施済み。** treated（`362ef72`）で
+   `evals/compare` 717 OK / 外側 `evals` 320 OK（skip 3）/
+   `evals/run.sh` 240 pass 0 fail / selftest 全項目 pass。
+   control（`3256947`）で `evals/compare` 717 OK / selftest 全項目 pass。
 2. **既存の文を削っていないこと**を機械的に確認する
    （変更前の全行が変更後にも存在する）。
+   **確認した。削除 0 行、6,653 → 7,025 B。**
 3. **2 つの worktree の diff が `plugin/agents/bulk-reader.md` 1 ファイル**
    であることを `git diff --name-only` で確認する。
+   **逸脱（走らせる前に記録）: diff は 2 ファイルである。**
+   `plugin/agents/bulk-reader.md` と `evals/test_reader_call_contract.py`。
+   契約変更をテスト先行でやると決めている以上、テストは変更と同じ commit に
+   載る。**`plugin/` 以下の diff はちょうど 1 ファイル**であり、
+   テストファイルは runtime に読み込まれないので測定には入らない。
+   **設計の文言のほうが実際より厳しかった。そう書いておく。**
 4. `DJANGO_ROOT` が `bc833e8`、3 パスが解決し `check-file-size` が deny しない
    ことを**両方の worktree で**引き直す。
+   **引き直した。`bc833e8`、両 worktree とも 3 件すべて空出力・exit 0。**
 5. **選択 jq を再現**し、planned が各 worktree でちょうど 1 スロット
    （`django-subthreshold-bare/auto`）、`unknown_slots` 空であることを確認する。
+   **確認した。両 worktree とも planned は
+   `django-subthreshold-bare/auto` 1 件、`unknown_slots` 空。**
 6. **機構確認は 3 点だけ**: `errors` が空 / 実費が枠内 /
    verdict が両腕とも出ている。
    **どれも、どちらの腕が勝ったかを見ずに決まる。**

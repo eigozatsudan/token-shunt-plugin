@@ -510,6 +510,20 @@ class SkillDocumentTests(unittest.TestCase):
         self.assertIn('Explicit delegation (no hook deny)', body)
         self.assertIn('16384', body)   # multi-small-file note stays
 
+    def test_the_contract_says_what_to_do_when_the_answer_does_not_fit(self):
+        # The cap is stated twice and the introduction is forbidden, yet
+        # 22 of 77 sub-threshold runs returned more than 4000 characters
+        # (reviews/child-msg-cap-2026-09-18.md). What the contract never
+        # defined is the legal move when the complete evidence is longer
+        # than the cap: `partial` is spelled out for unreadable ranges and
+        # missing dependencies, not for length. Without a sanctioned way
+        # to stop, a worker asked to list every stage has no compliant
+        # answer at all.
+        body = self.AGENT.read_text(encoding='utf-8')
+        self.assertIn('cap_reached', body)
+        self.assertIn('Truncating is the contract; exceeding the cap is not',
+                      body)
+
     def test_launch_surfaces_name_the_concrete_model_rule(self):
         # A parent that delegates straight from the descriptions — no Skill
         # open, no contract Read — has only these two strings in context.

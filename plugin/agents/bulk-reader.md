@@ -58,6 +58,12 @@ file paths.
   Reserve room for them before writing facts.
   A forced stop (maxTurns reached) that leaves no final answer is
   also `partial`.
+  If the complete evidence would run past the 4000 character maximum,
+  do not run past it. Return the facts that answer the question
+  actually asked, stop there, and answer `partial` with
+  `stop_reason: cap_reached`, naming what was left out in one
+  `unconfirmed: <absolute path> — <what was omitted>` bullet.
+  Truncating is the contract; exceeding the cap is not.
 - Each retrieved fact uses its own bullet: `confirmed: <absolute path> —
   <symbol>: <fact or requested scalar value>`. Write the absolute path
   exactly as the caller supplied it — never a basename, a relative path,
