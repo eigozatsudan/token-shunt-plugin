@@ -197,7 +197,7 @@ token-shunt自体のデスクトップ実機検証は未実施です。プラグ
 | `TOKEN_SHUNT_MIN_BYTES` | `65536` | 読み取りのバイト数しきい値 |
 | `TOKEN_SHUNT_SCAN_BUDGET_BYTES` | `8388608` | 走査のバイト予算。`offset` までの読み飛ばしも含む |
 | `TOKEN_SHUNT_SCAN_BUDGET_MS` | `2000` | 走査後に確認する経過時間の上限（ミリ秒） |
-| `TOKEN_SHUNT_HOOK_LOG` | 未設定 | 評価補助用。フック名・判定・理由・帰属情報を1行のJSONで追記 |
+| `TOKEN_SHUNT_HOOK_LOG` | 未設定 | 評価補助用。フック名・判定・理由・帰属情報を1行のJSONで追記。2026-09-19以降、`record-coverage`がRead 1回ごとの被覆行（開始行・行数・ファイル総行数・バイト数）も同じファイルに追記する。**判定には一切影響しない** |
 | `TOKEN_SHUNT_SENDBACK` | 未設定（有効） | `off` / `0` / `false` / `no` で `check-final-answer` の差し戻しを無効化 |
 | `TOKEN_SHUNT_SESSION_BUDGET_BYTES` | 未設定（無効） | 会話累積の取り込み予算。設定すると、そのセッションで親が取り込んだ本文バイトの合計が値を超えた後の全文 `Read`（と既知 reader の `Bash`）を拒否する。**既定では何もしません。効果は実機未検証です** |
 | `TOKEN_SHUNT_SESSION_MAX_BYTES` | `67108864` | 差し戻し判定が読むセッションファイルの上限。超過時は何もしない |
@@ -293,7 +293,7 @@ reader の子返答には `status: complete|partial` と空でない `stop_reaso
 
 `scripts/doctor.sh` はソースツリーのプローブです。`--plugin-dir "$ROOT/plugin"` と `--setting-sources ""` で隔離ロードし、ユーザースコープのキャッシュは見ません。`jq`、CLIバージョン、プラグインとエージェントの登録、Haiku / Sonnet の指定モデルと実際のモデル、観測可能な `effort` や終了状態を確認します。`plugin + agent registration: confirmed` はソース側の登録確認であり、導入済みコピーの有無・新旧・フック実行ビットの確認ではありません。`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` の場合はモデル比較を無効として報告します。認証などにより実機確認できない項目は `unconfirmed` とし、診断項目のうち `jq` 不足を失敗として扱います。終了コード0だけで全項目の確認済みとは判断しないでください。
 
-プラグインと両エージェントの登録を確認できると、CLIバージョンなどを [doctor-last-probe.txt](docs/distribution/doctor-last-probe.txt) に記録します。これは診断の記録であり、最低バージョンや全機能の動作保証ではありません。フック入力のトップレベル `agent_type` は別途実際の入力で確認する必要があります。`TOKEN_SHUNT_HOOK_LOG` は判定・理由と、帰属用の session_id / tool_use_id・対象パスまたはコマンドを保存します。入力JSON全体や Read 結果は保存しません。コマンド文字列が残るためログは診断用として管理してください。
+プラグインと両エージェントの登録を確認できると、CLIバージョンなどを [doctor-last-probe.txt](docs/distribution/doctor-last-probe.txt) に記録します。これは診断の記録であり、最低バージョンや全機能の動作保証ではありません。フック入力のトップレベル `agent_type` は別途実際の入力で確認する必要があります。`TOKEN_SHUNT_HOOK_LOG` は判定・理由と、帰属用の session_id / tool_use_id・対象パスまたはコマンドを保存します。2026-09-19以降、`record-coverage`がRead 1回ごとの開始行・行数・ファイル総行数・バイト数も保存します。**メタデータは保存しますが、Read本文（入力JSON全体やファイルの中身）は保存しません。**コマンド文字列が残るためログは診断用として管理してください。
 
 Bulk-reader の Read 契約は Python 3（Unix の `fcntl` が必要）のフックで強制します。起動ごとに6試行、同時Readの拒否、実返却行によるカーソル更新、拒否後の切り捨て半減を管理します。状態はユーザー専用の一時ディレクトリにメタデータだけを保存します。識別子・返却範囲が確認できない場合は継続を拒否します。`maxTurns` はRead回数の保証ではありません。
 

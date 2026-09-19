@@ -206,3 +206,68 @@ Lock B の腕変数テストと同じヘルパを再利用する。
    同じでなければ 1 会話の被覆が turn ごとに分かれ、**被覆率は系統的に低く出る。**
    実機でしか確かめられないので、**前提として書き、集計器に警告を出させる**
    （§6）。分かるのは最初の 1 run である。
+
+## 9. 実装記録
+
+**書いたファイル:**
+- 新規: `plugin/hooks/record-coverage`（755）、`evals/test_record_coverage.py`、
+  `evals/compare/read_coverage.py`、`evals/compare/test_read_coverage.py`
+- 変更: `plugin/hooks/hooks.json`（PostToolUse/Read に `record-intake` の直後に
+  6 行）、`evals/compare/run.sh`（`_claude_call` に export 1 行）、
+  `evals/compare/test_runner.py`（テスト 2 件追加）
+
+**テスト件数:** `evals/test_record_coverage.py` 16 件、
+`evals/compare/test_read_coverage.py` 13 件、`evals/compare/test_runner.py` に
+2 件追加。リポジトリ全体は `evals` 391 件（3 skip）、`evals/compare` 783 件、
+いずれも green。
+
+**mutation で確かめたこと:**
+- 行から `agent_type` を落とす → 自分のテスト 1 件だけが落ちる
+- エラー行そのものを落とす → 自分のテスト 1 件だけが落ちる
+- int 型チェックを緩める → 自分のテスト 1 件だけが落ちる
+- hooklog を run 単位 1 本に固定する（call 単位をやめる）→ call 単位のテスト
+  1 件だけが落ちる
+- フックが書く行のタグ名を変える → エンドツーエンドだけが落ち、単体テスト 12 件は
+  green のまま
+- フックの `main()` を即 return させる → エンドツーエンドだけが落ち、単体テスト
+  12 件は green のまま
+
+**まだ 1 行もデータが無い。** 実機を回した run は 1 本も無く、`reviews/data/`
+に read-coverage の CSV は存在しない。今回の作業に課金は発生していない
+（§7 のテストは全部合成イベントで、実機 CLI を呼んでいない）。
+
+**訂正（設計と実装の食い違い）:** `docs/superpowers/plans/2026-09-19-targeted-read-coverage.md`
+の Task 5 は、`_merge` の隣接結合則を壊す mutation が
+エンドツーエンドと `test_adjacent_reads_make_one_segment` の**両方**を落とすと予測し
+「両方落ちるのが正しい」と書いていたが、これは誤りだった。実際に mutation を当てて
+確認すると、落ちるのは `test_adjacent_reads_make_one_segment` だけで、
+エンドツーエンドは PASS したままである。理由はエンドツーエンドのフィクスチャの
+区間が 1-40、31-70、120-139 であり、31 <= 40 は重なり、120 > 70+1 は空隙で、
+隣接（`start == 前区間の終端 + 1`）を一度も踏まないため。訂正はプラン側にも
+入れ、両方の記述を直した（本節と併せて commit）。
+
+**未検証の 2 つの境界:**
+- エンドツーエンドは 1 セッション・`agent_id` が終始 null という構成でしか
+  親/worker の区別を通していない。単体レベルの分岐は緑だが、
+  worker 行が実配線で `parent=False` になるという**配線としての確認はまだ無い**。
+- Bash 経由の逐次 targeted Read は依然として観測対象外である（§8.3）。
+  `totalLines` が Bash の出力には存在せず、分母が取れないため。
+
+**最初の実機 run が確かめる 2 点:**
+(a) `--resume` をまたいで `session_id` が同じか（§8.7）。違えば集計器が
+    stderr に警告を出す。
+(b) worker の Read が `agent_id`／`agent_type` のどちらを載せて来るか。
+    両方を記録しているので、最初に出す CSV の `parent` 列を見れば分かる。
+
+**退避の手順（run ディレクトリが消える前に）:**
+
+```bash
+# run ディレクトリを消す前に。腕ごとに 1 ファイル。
+python3 evals/compare/read_coverage.py \
+    evals/compare/tmp/runs/run.*/transcripts/*.hooklog \
+    > reviews/data/read-coverage-$(date +%Y-%m-%d).csv
+sha256sum reviews/data/read-coverage-*.csv
+```
+
+CSV は commit する。hooklog 本体はリポジトリに入れない（transcript と同じ
+扱いで `~/measurements/` へ、sha256 つきで）。

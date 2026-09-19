@@ -1037,8 +1037,12 @@ python3 -m pytest evals/compare/test_read_coverage.py -v   # fail を確認
 git checkout evals/compare/read_coverage.py
 ```
 
-（この mutation は `test_adjacent_reads_make_one_segment` も落とす。**両方落ちるのが正しい** —— 
-エンドツーエンドは単体テストの代わりではなく、配線が生きている証拠である。）
+（**訂正（Task 6 実装時）：この予測「両方落ちるのが正しい」は誤りだった。**
+実際に mutation を当てて確かめると、落ちるのは `test_adjacent_reads_make_one_segment`
+だけで、エンドツーエンドは PASS したままである。理由はエンドツーエンドのフィクスチャの
+区間が 1-40、31-70、120-139 で、31 <= 40 は重なり、120 > 70+1 は空隙であり、
+隣接（`start == 前区間の終端 + 1`）を一度も踏まないからである。エンドツーエンドは
+単体テストの代わりにはならない —— 隣接結合則はこの単体テストしか検査していない。）
 
 - [ ] **Step 3: Run the whole suite**
 
