@@ -759,6 +759,11 @@ eval ランナーが判定する。本文を親へ渡さない。
 | models | 実際に動いたモデル | 親: assistant の model。子: Agent 結果の `resolvedModel` と `modelsUsed`。エイリアス `sonnet` ではなく実 ID を優先。`effort` が取れれば記録 |
 | wall_ms | 所要時間 | 質問から最終 result まで |
 
+後続ターンを宣言したケースは、`.turns[]` に turn ごとの
+`gold` / `missing` / `unscored` / `worker_reply_chars` を**記録する**
+（2026-09-19、§26.2 の改訂）。**この列は合否に入らない。**
+欠測（`transcript missing`）と誤答（`missing` が非空）は別フィールドに置く。
+
 `last-run.json` にケースごと・モードごとに上を書く。取れない項目は `null` と理由（§26.5 の必須親トークン測定の欠測は出荷 fail）。この節では accuracy / path_ok / 対象ケースの isolation_ok を判定する。費用の null や USD 不合格は記録し §26.5 の回帰チェックに回す。出荷 fail にはしない。
 
 Agent 結果の `totalTokens` は記録してよいが `usage_tree` の代用にしない（公式: 最終リクエストであり全実行合計ではない）。
@@ -919,6 +924,16 @@ according to --worker-model. auto starts with haiku.
   採点しない（§5.1）ため、`parent_no_read` は **turn 1 だけの判定**である。
   そして turn 1 は、上の測定で**唯一 0 件だったターン**である。
   会話全体を見る計器は `evals/compare/parent_turn_reads.py` である。
+- **後続ターンの accuracy は採点するようになった（2026-09-19、§5.1 の改訂）。**
+  `docs/superpowers/specs/2026-09-19-multiturn-accuracy-design.md`。
+  `judge_turn` / `judge_turns` が `gold_turns` を宣言した turn の gold を
+  **`judge()` と同じ部分文字列判定**で採点し、worker 返答長を併記する。
+  **記録のみで、ケースの verdict には入らない**（`.turns[]` は合否判定コードを
+  通らない）。**`parent_no_read` と経路契約は turn 1 だけの判定のままである**
+  —— 2 回目の委譲は正常な振る舞いなので、turn 1 の契約はそのまま持ち越せない。
+  アーカイブ 14 会話では **direct 42/42・auto 42/42** が gold 全一致
+  （`reviews/multiturn-turn-accuracy-2026-09-19.md`）。**天井であり、
+  検出できるのは「下がったこと」である。**
 - **v0.2 の手段を設計だけ先に置いた（2026-09-19）。**
   `docs/superpowers/specs/2026-09-19-cumulative-intake-design.md`（Lock B）。
   セッション単位の取り込み台帳を `delegated_paths` と同じ機構で持ち、
