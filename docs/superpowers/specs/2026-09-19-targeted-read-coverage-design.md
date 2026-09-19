@@ -124,14 +124,22 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 `json.loads` 以上のことをしない。**transcript は読まない**（読むと §2 で
 捨てた分母の問題が戻ってくる）。
 
-`(session_id, 親か否か, agent_id, file_path)` ごとに `[start, start+lines-1]`
-の閉区間を集める。**親判定は `agent_id` と `agent_type` の両方から取る**（§3）。
+`(run, conversation, session_id, 親か否か, agent_id, agent_type, file_path)`
+ごとに `[start, start+lines-1]` の閉区間を集める。**親判定は `agent_id` と
+`agent_type` の両方から取る**（§3）。
 
-**hooklog は turn ごとに別ファイルである**（`run_claude_resume` は turn ごとに
-別の `$out` を使う）。5 ターンの会話は 5 本の hooklog に散る。集計は
-`session_id` で束ね直すので正しく合流する —— **`--resume` でも `session_id` が
-同じなら。これは未検証の前提である**（§8.7）。集計器は 1 会話で複数の
-`session_id` を見たら stderr に警告を出す。
+**hooklog は turn ごとに別ファイルである**（`_claude_call` が CLI 呼び出しごとに
+`TOKEN_SHUNT_HOOK_LOG=$out.hooklog` を export し、`run_followups` は turn ごとに
+`$first.turn<N>.jsonl` を使う）。5 ターンの会話は 5 本の hooklog に散る。
+**だからグループ化キーに hooklog の basename そのものを入れてはいけない** ——
+turn 1 で 1-30 行、turn 2 で 31-60 行を取った親が 0.30 の行 2 本になり、実際に
+回収した 0.60 が消える。**ターンをまたぐ逐次回収こそこの計器が測る対象である。**
+キーに入るのは `conversation`（basename から末尾の `.hooklog` と
+`.turn<N>.jsonl` を剥いだ `<case>.<mode>.jsonl`。どちらの形にも当てはまらない
+名前はそのまま 1 会話として扱う）と `run`（入力パスに `run.*` 成分があれば
+それ、無ければ空。§9 の glob は複数 run を 1 本の CSV に混ぜるので、同じケースの
+別 run が合流しないように）。`session_id` は**キーに残る** —— 同じなら turn が
+合流し、`--resume` で割れていれば警告が出る（§8.7、これは未検証の前提）。
 
 | 列 | 定義 | なぜ要るか |
 |---|---|---|
@@ -143,11 +151,14 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 | `segments` | 和集合の互いに素な区間の数 | 1 なら連続回収、多いなら飛び石 |
 | `bytes` | `Σbytes` | `parent_bytes.py` と突き合わせる先 |
 | `full_file_reads` | `offset` も `limit` も無い Read の本数 | **行上限で切られた全文 Read** と刻み読みを見分ける唯一の手掛かり（§8.10）。**件数であって閾値ではない。** |
-| `source` | hooklog の basename | §9 の glob は全 run・全 mode・全 case を 1 本の CSV に混ぜる。`<case>.<mode>.jsonl[.turnN.jsonl].hooklog` から**腕とケースが読める**。run ディレクトリは直後に消えるので、ここに残さないと永久に復元できない |
+| `run` | 入力パスの `run.*` 成分（無ければ空） | §9 の glob は複数 run を 1 本の CSV に混ぜる。同じケースの別 run を合流させない |
+| `conversation` | hooklog の basename から `.hooklog` と `.turn<N>.jsonl` を剥いだもの | §9 の glob は全 run・全 mode・全 case を 1 本の CSV に混ぜる。ここから**腕とケースが読める**。run ディレクトリは直後に消えるので、ここに残さないと永久に復元できない |
+| `source` | その行に寄与した hooklog basename を全部、ソートして `;` 連結 | 1 行は複数 turn の log から作られる。1 本だけ載せるのは**黙った取捨選択**になる |
+| `sources` | `source` の本数 | 何ターン分が合流したか。**件数であって閾値ではない。** |
 
-CSV 全体の列は 16 列（上の表のほか `source` / `session_id` / `parent` /
-`agent_id` / `agent_type` / `file_path` / `total_changed` / `impossible`）。
-`source` は**グループ化キーにも入る。**
+CSV 全体の列は 19 列（上の表のほか `session_id` / `parent` / `agent_id` /
+`agent_type` / `file_path` / `total_changed` / `impossible`）。
+`run` と `conversation` は**グループ化キーにも入る**（`source` は入らない）。
 
 - **親と worker を混ぜない。** 別行として出し、合算しない。
   **rollup も別々に取る**（`rollup(rows, parent=True|False)`）。stderr にも
@@ -169,9 +180,11 @@ CSV 全体の列は 16 列（上の表のほか `source` / `session_id` / `paren
   途中で落ちると、run ディレクトリが消える直前に「データ無し」に見える
   空ファイルが commit される。coverage 行が 0 件なら、ヘッダだけを黙って
   出さず先頭に `# NO COVERAGE ROWS` を刻む。
-- **多セッション警告は入力ファイル 1 本の中でだけ数える。** 1 hooklog = 1 turn
-  なので、入力全体で数えると 40 ケース流すたびに必ず出て、§8.7 が見たい
-  「1 会話が `--resume` で 2 つに割れた」を永久に見分けられない。
+- **多セッション警告は `(run, conversation)` 1 つの中でだけ数える。**
+  入力全体で数えると 40 ケース × 2 腕 × 複数 run を流すたびに必ず出て、§8.7 が
+  見たい「1 会話が `--resume` で 2 つに割れた」を永久に見分けられない。
+  入力ファイル 1 本ごとに数えるのも同じく駄目で、**割れ目は turn 1 の log と
+  turn 2 の log のあいだに落ちる**ので 1 本の中では見えない。
 - **親行が 1 件も無ければ stderr に警告を出す。** `_parent` の前提が外れると
   CSV から親が消え、worker だけの 1.0 近い率が無警告で出る。
 - **`coverage` は「親が何をしたか」であって、成果でも費用でもない。**
@@ -248,7 +261,7 @@ Lock B の腕変数テストと同じヘルパを再利用する。
    direct にだけ `--plugin-dir` を渡さないので、**direct ではこのフックが
    1 度も走らない。** したがって **「direct の coverage が 0」はプラグインの
    成果ではなく、計器がそこに無いという事実である。** 腕の比較に使ってはいけない
-   （`source` 列の `<case>.direct.…` は原理的に行を持たない）。
+   （`conversation` 列の `<case>.direct.jsonl` は原理的に行を持たない）。
 9. **行数が変わらない Edit は見えない。** `total_changed` は `totalLines` の
    変化しか捉えないので、**Read → 同行数 Edit → Read** の並びでは旗が立たない。
    親が「現在の内容」を見ていない行があっても、被覆率は無印で 0.63 などと出る。
@@ -270,11 +283,11 @@ Lock B の腕変数テストと同じヘルパを再利用する。
 
 **テスト件数（最終レビュー修正を反映した現在値）:**
 `evals/test_record_coverage.py` **23 件**（16 + 7）、
-`evals/compare/test_read_coverage.py` **24 件**（13 + 11）、
+`evals/compare/test_read_coverage.py` **29 件**（グループ化キー修正で +5）、
 `evals/compare/test_runner.py` に 2 件追加。リポジトリ全体は
-`evals` **398 件**（3 skip）、`evals/compare` **809 件**、いずれも green
+`evals` **398 件**（3 skip）、`evals/compare` **814 件**、いずれも green
 （`python3 -m unittest discover`。この環境に pytest は無い）。
-CSV は **16 列**（§6）。**これらの数字は最終レビュー修正が全部入った後に
+CSV は **19 列**（§6）。**これらの数字は最終レビュー修正が全部入った後に
 数え直したもの。** 途中の数字（Task 2 直後の 783 件、修正前の 16/13・391/798 件）を
 最終値として使い回さないこと —— それが今回、一度そのまま spec に書かれて古くなった。
 数字を直すときは**リポジトリ全体を grep する**（プラン側の期待値にも同じ数字が居た）。
@@ -290,6 +303,11 @@ CSV は **16 列**（§6）。**これらの数字は最終レビュー修正が
 - フックの `main()` を即 return させる → エンドツーエンドだけが落ち、単体テスト
   12 件は green のまま
 
+**この「12 件」は mutation を当てた当時（最終レビュー修正時点）の
+`test_read_coverage.py` の単体テスト件数であって、現在値ではない。**
+その後この節の下の修正でテストが増えている（現在 29 件）。mutation の結論
+（「単体だけでは配線の断線を捉えられない」）は変わらないが、**数字は履歴である。**
+
 **最終レビュー（通常・敵対）の真陽性修正:** フック 4 件（stdin を先に読む /
 子の fd1・fd2 を塞ぐ / agent 2 フィールドの非文字列を `str()` で残す /
 `file_path` を realpath で記録）、集計器 9 件（親と worker の rollup 分離 /
@@ -302,6 +320,19 @@ rollup の `overlap`・`bytes` / CSV 先頭への rollup と但し書き）、
 **まだ 1 行もデータが無い。** 実機を回した run は 1 本も無く、`reviews/data/`
 に read-coverage の CSV は存在しない。今回の作業に課金は発生していない
 （§7 のテストは全部合成イベントで、実機 CLI を呼んでいない）。
+
+**訂正（グループ化キー、2026-09-20）:** `rows()` のキーに hooklog の basename
+（`source`）をそのまま入れていた。これは前の回の**指示そのものが誤っていて**、
+その通りに実装されたものである。`_claude_call` は CLI 呼び出しごとに
+`TOKEN_SHUNT_HOOK_LOG=$out.hooklog` を export し、`run_followups` は turn ごとに
+`$first.turn<N>.jsonl` を使うので、**1 会話が複数の hooklog に分かれる**。
+再現: 100 行のファイルを turn 1 で 1-30 行、turn 2 で 31-60 行 → **修正前は
+0.30 の行が 2 本、rollup も 0.30。修正後は 0.60 の行 1 本、rollup 0.60**
+（真値）。**ターンをまたぐ逐次回収はこの計器が測る当のものなので、課金 run の
+前に直した。** キーは `(run, conversation, session_id, 親, agent_id,
+agent_type, file_path)` になり、`source` は「寄与した全 log を `;` 連結」した
+報告列（＋本数の `sources`）に変わり、多セッション警告は
+`(run, conversation)` 単位になった。**閾値も判定列も足していない。**
 
 **訂正（設計と実装の食い違い）:** `docs/superpowers/plans/2026-09-19-targeted-read-coverage.md`
 の Task 5 は、`_merge` の隣接結合則を壊す mutation が

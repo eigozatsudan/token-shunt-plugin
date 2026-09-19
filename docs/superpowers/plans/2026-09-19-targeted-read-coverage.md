@@ -510,6 +510,9 @@ EOF
   - `rows(records) -> list[dict]` —— キーは
     `session_id, parent, agent_id, agent_type, file_path, reads, covered,
     total, coverage, overlap, segments, bytes, total_changed, impossible`。
+    **本行は計画当時の列であり、現在の列とグループ化キーは spec §6 を見ること**
+    （最終レビューで `source` / `full_file_reads` が、2026-09-20 の訂正で
+    `run` / `conversation` / `sources` が加わっている）。
     `parent` は `bool`（`not (agent_id or agent_type)`）。
     `coverage` は `float | None`（`total_changed` / `impossible` / `total` が
     無い・0 のとき `None`）
