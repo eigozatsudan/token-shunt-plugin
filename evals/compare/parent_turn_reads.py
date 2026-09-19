@@ -3,11 +3,15 @@
 
 `judge.py` reads one transcript per case (design 5.1), so `parent_no_read`
 judges turn 1 only. In the multi-turn block turn 1 is the one turn where the
-parent never reads the corpus: 0 parent corpus Reads at turn 1 against 26
-across turns 2-5, in 12 of 14 conversations
+parent never reads the corpus: 0 parent corpus Reads at turn 1 against 21
+across turns 2-5, in 10 of 14 conversations
 (reviews/multiturn-context-2026-09-18.md section 4-2, corrected 2026-09-19).
 A conversation can therefore pass `parent_no_read` and still end up holding
 most of the files it was supposed to delegate.
+
+The first count written here was 26 in 12 of 14: it charged the parent for
+Reads the hook had denied. Those are the numbers this module exists to stop
+producing, so it must not quote them.
 
 This walks the follow-up transcripts `run_followups()` already writes and
 reports, per turn, the Reads the parent itself issued against the corpus.
