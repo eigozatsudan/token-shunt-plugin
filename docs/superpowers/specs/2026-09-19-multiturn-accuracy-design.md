@@ -80,6 +80,46 @@ cumulative-intake spec §5.8 で分けると決めた区別が最初から壊れ
 `{turn: 5, scored: false}` が残る。**採点していないことを明示的に記録する**
 ほうが、緩い gold を作って通すより正直である。
 
+### 1.5 走査契約
+
+**turn の列挙は `prompt_turns` の宣言から導く。** ディスク上の turn ファイルを
+数えない —— 落ちたターンがあれば**列挙そのものが縮み、欠測が消えてしまう。**
+宣言が権威で、ディスクはそれに対する観測である。
+
+| 状態 | 記録 |
+|---|---|
+| 宣言あり・ファイルあり・`gold_turns` あり | `{turn, gold, missing, unscored}` |
+| 宣言あり・ファイルあり・`gold_turns` 無し | `{turn, scored: false}` |
+| **宣言あり・ファイル無し** | `{turn, error: "transcript missing"}` |
+| **宣言に無い turn ファイルがある** | `{turn, error: "undeclared turn file"}` |
+
+最後の 1 行は、`run_followups` が宣言外のファイルを書いた場合に気付くための
+ものである。**黙って無視すると、会話が宣言より長かったことが記録から消える。**
+
+ファイル探索は `parent_turn_reads.turn_files` を再利用する（同じ命名規約
+`<case>.<mode>.jsonl.turn<N>.jsonl` を 2 箇所で実装しない）。
+
+### 1.6 契約違反を accuracy から分離する
+
+**gold が当たったこと自体は、答えが健全だったことを意味しない。** auto の
+turn で gold が当たっても、その根拠が `child_msg_cap` を超えた worker 返答
+（同ブロックの turn 1 で **5/14** が超過）であれば、**「答えが薄いか」という
+問いに「薄くない」と答える数字が、理由を区別していない。**
+
+各 turn の記録に worker 返答長を併記する。抽出は `judge.child_model_text` を
+使う（新しい抽出規則を作らない）。**判定には使わず、記録だけに使う** ——
+§1.2 の「記録のみ」を壊さないためである。
+
+```
+{"turn": 3, "gold": [...], "missing": [], "unscored": [],
+ "worker_reply_chars": [5770], "cap": 4000}
+```
+
+`missing` が空で `worker_reply_chars` に 4,000 超が並ぶ turn は、
+**accuracy が通ったが契約は破れている**と読める。2 つを別の列に置くことで、
+どちらか一方で他方を相殺できなくする（§26.5「ゴールド正答や安い費用で
+経路違反を相殺しない」と同じ構え）。
+
 ## 2. gold の固定手順とアーカイブ検証
 
 ### 2.1 `gold_turns` の形
@@ -89,18 +129,51 @@ cumulative-intake spec §5.8 で分けると決めた区別が最初から壊れ
 
 ```json
 "gold_turns": {
-  "2": ["IrreversibleError", "reversible"],
+  "2": ["IrreversibleError"],
   "3": ["MIGRATION_TEMPLATE", "MIGRATION_HEADER_TEMPLATE", "as_string"],
   "4": ["RunPython", "reverse_sql"]
 }
 ```
 
-turn 5 は**キーが無い＝採点しない**。`spec_evidence_error` に形の検証を足す
-（キーが数字文字列、値が非空文字列の非空リスト）。
+turn 5 は**キーが無い＝採点しない**。
+
+**turn 2 の属性側（`reversible`）は採点しない。** `"reversible" in
+"IrreversibleError"` は True なので、例外名だけを答えた回答でも
+`missing` が空になり、**設問の半分が採点できているように見えて
+できていない。** 設問は 2 つ（例外と属性）を問うており、採点するのは
+例外だけである。記録に `unscored: ["operation.reversible"]` として残す。
+
+**語境界一致へ規則を変えない。** 判定を 1 本（`g in final`）に保つことが
+本書の骨子で、そこを緩めれば §2 案 3（別採点器）を斥けた理由が消える。
+**包含されないトークンへの差し替えもしない** —— 既知の偽陽性を、
+**大きさの分からない偽陰性と交換する**ことになり、その率を見積もるには
+アーカイブの最終回答を読む必要がある。それは gold の盲検を壊す行為である。
+
+### 2.1.1 `spec_evidence_error` が拒むもの
+
+形だけでなく、**宣言が証拠に結びつくか**を検証する。
+「宣言したのに黙って採点されない」を防ぐのがこの関数の役目である。
+
+| 拒む条件 | 理由 |
+|---|---|
+| キーが数字文字列でない / 値が非空文字列の非空リストでない | 形 |
+| **キーが実在ターンを指さない** | `"1"`（turn 1 は `judge()` の領分）、`"6"`（`prompt_turns` は 4 件）、`"02"`（正規化されず一致しない）は**通ってしまうが何も採点しない** |
+| **同一 turn 内で、ある gold が別の gold に包含される** | turn 2 の `reversible` / `IrreversibleError` がこれである。**包含された側は独立に採点できない** |
+
+実在ターンの範囲は `prompt_turns` の宣言数から導く —— turn 2 から
+`len(prompt_turns) + 1` まで。キーは `str(int(key)) == key` を満たすこと。
 
 ### 2.2 順序 —— ここが手続きの要
 
-**gold は本書の作成時点で確定しており、まだ 1 本の transcript も見ていない。**
+**gold は本書の作成時点で確定しており、アーカイブの最終回答テキストを
+一度も読んでいない。** 字義に気をつけて書く —— §4-2 の訂正（同日）は
+アーカイブの turn transcript を `parent_turn_reads.py` に通しているので、
+「transcript を見ていない」は**反証できてしまう。**
+`parent_turn_reads.turn_reads` が読むのは Read の `tool_use` /
+`tool_result` ブロックだけで（`parent_turn_reads.py:120-140`）、
+**最終 assistant テキストには触れない。** gold が答えから逆算されて
+いないという主張は、そこまでに限って成立する。
+
 この順序を壊さないために、作業を次の順に固定する。
 
 1. **gold を commit する**（Django ソースから導出済み。§2.4 の出典つき）
@@ -131,8 +204,10 @@ direct 14 × auto 14 × 5 turn = 140 transcript。**$0。**
 - **Lock B の影響は測れない。** アーカイブは Lock B 以前の実行であり、
   これは**ベースラインであって比較ではない。**
 - **部分文字列一致の限界。** 正答を別の言い方で書いた答えは落ちる。
-  `as_string` のようなシンボル名は頑健だが、**`reversible` は散文にも現れうる**
-  ので、偽陽性側に緩い。**緩い方向の誤りであることを記録に書く。**
+  `as_string` のようなシンボル名は頑健だが、**散文に現れうる語は偽陽性側に
+  緩い。** 採点される 6 語はいずれもシンボル名だが、**緩い方向の誤りで
+  あることを記録に書く。**（turn 2 の属性側はこの理由で §2.1 の通り
+  採点から外した。）
 - **n=14 である。** 差が出ても出なくても、それが最終的な精度になる。
 
 ### 2.4 gold の出典
@@ -142,7 +217,7 @@ Django 5.2.1 / `bc833e8`（`~/corpora/django`）。
 
 | turn | gold | 出典 |
 |---|---|---|
-| 2 | `IrreversibleError`, `reversible` | `django/db/migrations/migration.py:158-159` |
+| 2 | `IrreversibleError`（採点）／ `operation.reversible`（**採点しない**、§2.1） | `django/db/migrations/migration.py:158-159` |
 | 3 | `MIGRATION_TEMPLATE`, `MIGRATION_HEADER_TEMPLATE`, `as_string` | `django/db/migrations/writer.py:304, 298, 129` |
 | 4 | `RunPython`, `reverse_sql` | `django/db/migrations/operations/special.py:138, 144, 97-98` |
 
@@ -156,5 +231,28 @@ Django 5.2.1 / `bc833e8`（`~/corpora/django`）。
 2. **`reader-followup-scope` の gold は決めていない。** 本書は
    `django-multiturn-context` の 3 ターンだけを対象にする。
 3. **turn 5 は採点しない。** 総合問題の採点方法は本書の範囲外である。
+   **turn 2 の属性側も採点しない**（§2.1）。採点される gold は 6 語である。
 4. **これは Lock B を測る器具ではない。** Lock B の副作用を見るには
    Lock B を実装した腕が要る。本書はその前提条件を $0 で用意するだけである。
+
+## 4. レビュー反映（2026-09-19）
+
+4 件のレビューの Major 5 件を反映した。**5 件とも自分で再現を確認し、
+押し返した項目は無い。** Critical は 3 レビューとも無し。
+
+| # | 指摘 | 反映 |
+|---|---|---|
+| 1 | turn 2 の gold が包含で潰れている（`"reversible" in "IrreversibleError"` は True） | §2.1 —— 属性側を採点から外し、§2.1.1 に**包含を拒む検証**を追加。規則は変えない |
+| 2 | `gold_turns` キーの範囲が未検証（`"1"` / `"6"` / `"02"`） | §2.1.1 —— 実在ターンの範囲を `prompt_turns` から導いて検証 |
+| 3 | 契約違反込み accuracy が分離できない | §1.6 —— worker 返答長を `judge.child_model_text` で併記。**記録のみ** |
+| 4 | 盲検の文言が字義で反証可能 | §2.2 —— 「最終回答テキストを読んでいない」に限定し、根拠を行番号で示した |
+| 5 | 走査契約が未規定 | §1.5 —— 列挙は宣言から導き、欠測・宣言外ファイルを別々に記録 |
+
+**#1 の直し方について。** 語境界一致への変更と、包含されないトークンへの
+差し替えは、どちらも採らなかった。前者は判定を 1 本に保つ骨子を崩し、
+後者は**既知の偽陽性を、大きさの分からない偽陰性と交換する** ——
+その率を見積もるにはアーカイブの最終回答を読む必要があり、
+gold の盲検を壊す。構造側（検証で拒む）を直し、採点範囲を狭めて記録した。
+
+**#3 は accuracy の判定には入れない。** 入れれば §1.2 の「記録のみ」が
+崩れる。別の列に置き、どちらか一方で他方を相殺できなくすることだけを行う。
