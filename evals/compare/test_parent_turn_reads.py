@@ -3,7 +3,7 @@
 `judge.py` reads one transcript per case (design 5.1), so `parent_no_read`
 only ever judges turn 1. In the multi-turn block that is the one turn where
 the parent never reads the corpus: 0 parent corpus Reads at turn 1 against
-26 across turns 2-5, in 12 of 14 conversations
+21 across turns 2-5, in 10 of 14 conversations
 (reviews/multiturn-context-2026-09-18.md section 4-2, corrected 2026-09-19).
 
 This instrument walks the follow-up transcripts run.sh already writes and
