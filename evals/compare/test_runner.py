@@ -1530,3 +1530,25 @@ class MultiturnContextCaseTests(unittest.TestCase):
     def test_it_declares_no_isolation_contract(self):
         self.assertNotIn("isolation", self.case)
         self.assertNotIn("fixture_bytes", self.case)
+
+
+class BuiltinPluginIsolationTests(unittest.TestCase):
+    """Direct mode must load no plugin at all, builtin ones included.
+
+    On 2026-09-19 the CLI began loading a builtin `agents-md` plugin, and
+    the isolation probe -- which reads `init.plugins` -- failed every run
+    before a single case billed. The four routing blocks already measured
+    ran in an environment with no such plugin, so leaving it loaded would
+    compare new runs against control data gathered without it.
+
+    Turning it off in the invocation restores that environment and leaves
+    the probe's check untouched; weakening the probe would have hidden the
+    next builtin instead.
+    """
+
+    RUNNER = Path(__file__).parent / "run.sh"
+
+    def test_the_invocation_disables_the_builtin_agents_md_plugin(self):
+        body = self.RUNNER.read_text(encoding="utf-8")
+        self.assertIn('"agents-md@builtin":false', body)
+        self.assertIn("--settings", body)

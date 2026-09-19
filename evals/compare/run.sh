@@ -346,8 +346,13 @@ PY
 }
 
 # ---------- claude invocation ----------
+# The builtin agents-md plugin loads even with --setting-sources "", which
+# the direct-mode isolation probe reads as a foreign plugin and refuses.
+# The four routing blocks of 2026-09-18 ran before it existed, so turning
+# it off restores their environment rather than departing from it.
 CLAUDE_COMMON=(-p --output-format stream-json --verbose --include-hook-events
                --forward-subagent-text --model sonnet --permission-mode acceptEdits
+               --settings '{"enabledPlugins":{"agents-md@builtin":false}}'
                --allowedTools Read,Edit,Grep,Glob,Agent,Task,Write,Bash)
 
 run_claude() { # prompt transcript extra-args...
