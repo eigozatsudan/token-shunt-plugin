@@ -178,14 +178,17 @@ def judge_turn(transcript_path, spec, turn):
     answer" become one number.
     """
     golds = (spec.get("gold_turns") or {}).get(str(turn))
-    if not golds:
-        return {"turn": turn, "scored": False}
     try:
         tr = Transcript(load_events(transcript_path))
     except (OSError, ValueError) as exc:
         return {"turn": turn, "error": str(exc)}
     if not tr.result:
         return {"turn": turn, "error": "no result event"}
+    if not golds:
+        # A reply length is not a gold verdict. Dropping it on an unscored
+        # turn would hide every contract violation that happens there.
+        return {"turn": turn, "scored": False,
+                "worker_reply_chars": worker_reply_chars(tr)}
     final = tr.final_text()
     return {
         "turn": turn,

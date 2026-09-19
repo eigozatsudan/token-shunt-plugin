@@ -104,6 +104,29 @@ class UnscoredTests(unittest.TestCase):
         self.assertIsNotNone(error)
 
 
+class UnscoredWorkerReplyTests(unittest.TestCase):
+    """A reply length is not a gold verdict, so an unscored turn keeps it.
+
+    The archived block launched five workers, all of them on turn 5 -- the
+    turn with no gold. Dropping the lengths there would hide every contract
+    violation that happens in a turn we chose not to score.
+    """
+
+    def test_an_unscored_turn_still_records_worker_reply_lengths(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = written(transcript("anything", ["y" * 4200]), d, "t5.jsonl")
+            row = judge.judge_turn(path, {"gold_turns": {"2": ["x"]}}, 5)
+        self.assertIs(row["scored"], False)
+        self.assertEqual(row["worker_reply_chars"], [4200])
+        self.assertNotIn("missing", row)
+
+    def test_an_unscored_turn_with_no_transcript_is_still_an_error(self):
+        row = judge.judge_turn("/nonexistent/t5.jsonl",
+                               {"gold_turns": {"2": ["x"]}}, 5)
+        self.assertIn("error", row)
+        self.assertNotIn("worker_reply_chars", row)
+
+
 class WorkerReplyTests(unittest.TestCase):
     def test_worker_reply_lengths_ride_alongside_the_gold(self):
         with tempfile.TemporaryDirectory() as d:
