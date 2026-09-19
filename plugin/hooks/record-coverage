@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""PostToolUse: record how much of a file the parent took, and decide nothing.
+
+Spec: docs/superpowers/specs/2026-09-19-targeted-read-coverage-design.md
+
+Lock B never denies a targeted Read, and 18 of the 21 archived parent corpus
+Reads were targeted (reviews/intake-replay-2026-09-19.md section 4). That is
+the route this measures. It does not narrow it.
+
+It writes one JSON line per Read through `write-hook-log` and produces no
+protocol output at all: there is no code path here that can refuse a call.
+`totalLines` is the reason the instrument lives in the hook rather than in a
+transcript reader -- a transcript carries only `cat -n` text, so the
+denominator is available here and nowhere else.
+"""
+
+
+def record(event):
+    """One log line for one Read, or None when there is nothing to record."""
+    if not isinstance(event, dict) or event.get('tool_name') != 'Read':
+        return None
+    inp = event.get('tool_input')
+    inp = inp if isinstance(inp, dict) else {}
+    path = inp.get('file_path')
+    if not isinstance(path, str) or not path:
+        return None
+    response = event.get('tool_response')
+    response = response if isinstance(response, dict) else {}
+    file = response.get('file')
+    file = file if isinstance(file, dict) else {}
+    # A failed read makes no claim about which lines arrived; the row stays
+    # so the count of attempts is not quietly lowered.
+    failed = bool(response.get('is_error') or response.get('error')
+                  or event.get('error'))
+    content = file.get('content')
+    return {
+        'hook': 'record-coverage',
+        'session_id': _str(event.get('session_id')),
+        'agent_id': _str(event.get('agent_id')),
+        # Both fields, because intake_ledger.py:134 needs both to tell a
+        # parent from a worker sharing the session.
+        'agent_type': _str(event.get('agent_type')),
+        'file_path': path,
+        'start': None if failed else _int(file.get('startLine')),
+        'lines': None if failed else _int(file.get('numLines')),
+        'total': None if failed else _int(file.get('totalLines')),
+        'bytes': 0 if failed or not isinstance(content, str)
+                 else len(content.encode('utf-8')),
+        'offset': _int(inp.get('offset')),
+        'limit': _int(inp.get('limit')),
+        'is_error': failed,
+    }
+
+
+def _int(value):
+    return value if type(value) is int else None
+
+
+def _str(value):
+    return value if isinstance(value, str) and value else None
