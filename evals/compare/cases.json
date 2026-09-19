@@ -2372,13 +2372,32 @@
       },
       "prompt_direct": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。 Use the Read tool to read all three specified files before answering; use consecutive ranges if needed. Then answer from the returned evidence.",
       "prompt_delegate": "`manage.py showmigrations` が実行されてから各 migration の適用状況が 出力されるまでの呼び出し経路を追え。関係するパスは {FIX}/django/django/core/management/commands/showmigrations.py、{FIX}/django/django/db/migrations/recorder.py、{FIX}/django/django/db/migrations/graph.py の 3 件である。各段の関数/メソッド名と、それが定義されている file の絶対パスを挙げよ。{WMHINT}",
-      "note": "The paired arm of reviews/subthreshold-cost-design-2026-09-18.md. Same three Django files, same gold and same prompt_delegate as django-subthreshold-bare -- byte for byte, because the cost difference is only against the arm A measured if it is that arm. What is new is direct, which run.sh launches without --plugin-dir at all, so no hook and no delegation: the baseline is the product being absent, not the product declining to route. The primary is the paired cost difference; the parent bytes and the wall clock are reported beside it and never alone. No isolation key on purpose: delegate_lt_direct_and_fixture thresholds on min(sizes), which is recorder.py at 3827 B, and A measured this arm at a 13259 B median, so the contract would fail all forty runs and judge.py would drop every mode of the case with it. SubthresholdCostCaseTests holds all of that. Deliberately billed by slot; never part of a release run.",
+      "note": "The paired arm of reviews/subthreshold-cost-design-2026-09-18.md. Same three Django files, same gold and same prompt_delegate as django-subthreshold-bare -- byte for byte, because the cost difference is only against the arm A measured if it is that arm. What is new is direct, which run.sh launches without --plugin-dir at all, so no hook and no delegation: the baseline is the product being absent, not the product declining to route. The primary is the paired cost difference; the parent bytes and the wall clock are reported beside it and never alone. No isolation key on purpose: delegate_lt_direct_and_fixture thresholds on min(sizes), which is recorder.py at 3827 B, and A measured this arm at a 13259 B median, so the contract would fail all forty runs and judge.py would drop every mode of the case with it. SubthresholdCostCaseTests holds all of that. Deliberately billed by slot; never part of a release run. Follow-up gold comes from the Django source at bc833e8, fixed before any transcript was read (design: docs/superpowers/specs/2026-09-19-multiturn-accuracy-design.md 2.2): migration.py:158-159, writer.py:304/298/129, operations/special.py:138/144/97-98. Turn 2 scores the exception only -- \"reversible\" lives inside \"IrreversibleError\", so the attribute half cannot be missing on its own. Turn 5 is synthesis and is left unscored rather than given a loose gold.",
       "prompt_turns": [
         "In {FIX}/django/django/db/migrations/migration.py, which exception does Migration.unapply raise when it reaches an operation it cannot reverse, and which attribute of the operation does it inspect to decide that?",
         "In {FIX}/django/django/db/migrations/writer.py, name the two module-level template strings that MigrationWriter relies on, and say which method of MigrationWriter returns the rendered migration file contents.",
         "In {FIX}/django/django/db/migrations/operations/special.py, which operation class sets reduces_to_sql to False, and what does RunSQL inspect to decide whether it reports itself as reversible?",
         "Using only the files already covered in this conversation, say what showmigrations prints for a migration that the recorder holds no row for but that the graph places in the forwards plan, and name which of the operation classes you have seen would still have to run for it."
-      ]
+      ],
+      "gold_turns": {
+        "2": [
+          "IrreversibleError"
+        ],
+        "3": [
+          "MIGRATION_TEMPLATE",
+          "MIGRATION_HEADER_TEMPLATE",
+          "as_string"
+        ],
+        "4": [
+          "RunPython",
+          "reverse_sql"
+        ]
+      },
+      "gold_unscored": {
+        "2": [
+          "operation.reversible"
+        ]
+      }
     }
   ]
 }

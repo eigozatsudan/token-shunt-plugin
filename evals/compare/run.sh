@@ -797,12 +797,26 @@ while IFS= read -r case; do
       fi
       mv "$VRD/$id.$mode.json.tmp" "$VRD/$id.$mode.json"
     fi
-    # Follow-up turns run after the verdict: they are measured by the probe,
-    # not judged, and judge.py reads one transcript per case (design 5.1).
+    # Follow-up turns run after the verdict. Their accuracy is recorded, never
+    # judged: judge() owns turn 1 and its route contracts, and a second
+    # delegation is correct behaviour
+    # (docs/superpowers/specs/2026-09-19-multiturn-accuracy-design.md 1.1-1.2).
     if [[ $mode == direct ]]; then
       run_followups "$transcript" "$(case_turns "$case")"
     else
       run_followups "$transcript" "$(case_turns "$case")" --plugin-dir "$ROOT/plugin"
+    fi
+    # The rows land beside the verdict, not inside it. A missed gold here
+    # must not reach `.verdict`, so nothing below touches pass/fail.
+    if [[ -n $(jq -r '.prompt_turns // empty | length' "$SPD/$id.$mode.json") ]]; then
+      if turn_rows=$(python3 "$CMP/judge.py" --turns "$TRD" "$id" "$mode" \
+          "$SPD/$id.$mode.json" 2>"$VRD/$id.$mode.turns-err"); then
+        jq --argjson rows "$turn_rows" '.turns = $rows' "$VRD/$id.$mode.json" \
+            >"$VRD/$id.$mode.turns.json" && mv "$VRD/$id.$mode.turns.json" \
+            "$VRD/$id.$mode.json"
+      else
+        say "WARN turn scoring failed for $id/$mode; verdict kept"
+      fi
     fi
     restore_fixtures
   done

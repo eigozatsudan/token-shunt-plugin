@@ -16,8 +16,11 @@ class RunnerIsolationTests(unittest.TestCase):
         self.compare = Path(self.temp.name) / "evals" / "compare"
         self.compare.mkdir(parents=True)
         source = Path(__file__).parent
+        # judge.py imports parent_turn_reads for the follow-up turn file
+        # naming; a module missing here makes the selftest abort run.sh.
         for name in ("run.sh", "cases.json", "judge.py", "routing_checks.py",
-                     "flow_checks.py", "report_text.py", "writer_unittest_check.py"):
+                     "flow_checks.py", "report_text.py", "writer_unittest_check.py",
+                     "parent_turn_reads.py"):
             shutil.copy2(source / name, self.compare / name)
         for name in ("rails", "codegen"):
             shutil.copytree(source / "fixtures" / name,
@@ -604,6 +607,38 @@ class FollowUpTurnTests(unittest.TestCase):
         log = (Path(self.temp.name) / "calls.log").read_text().split("\n")
         self.assertEqual(["case", "case resume", "case resume"],
                          [c for c in log if c.startswith("case")])
+
+    def test_the_declared_turns_are_scored_into_the_verdict(self):
+        cases = self.compare / "cases.json"
+        data = json.loads(cases.read_text())
+        base = [c for c in data["cases"] if c["id"] == "auto-small-files"][0]
+        data["cases"].append(dict(
+            base, id="turn-probe", modes=["auto"],
+            prompt_turns=["and the second file?", "and the third?"],
+            gold_turns={"2": ["BRAVO-222"], "3": ["NEVER-EMITTED"]}))
+        cases.write_text(json.dumps(data))
+        self.run_with_cli_double(only="turn-probe", SLOTS="turn-probe/auto")
+        verdict = json.loads((self.compare / "last-run.json").read_text())
+        rows = verdict["cases"]["turn-probe"]["modes"]["auto"]["turns"]
+        self.assertEqual([r["turn"] for r in rows], [2, 3])
+        self.assertEqual(rows[0]["missing"], [])
+        self.assertEqual(rows[1]["missing"], ["NEVER-EMITTED"])
+
+    def test_a_missed_gold_in_a_follow_up_does_not_fail_the_case(self):
+        # Records only: the turn rows must never reach the verdict.
+        cases = self.compare / "cases.json"
+        data = json.loads(cases.read_text())
+        base = [c for c in data["cases"] if c["id"] == "auto-small-files"][0]
+        data["cases"].append(dict(
+            base, id="turn-probe", modes=["auto"],
+            prompt_turns=["and the second file?"],
+            gold_turns={"2": ["NEVER-EMITTED"]}))
+        cases.write_text(json.dumps(data))
+        self.run_with_cli_double(only="turn-probe", SLOTS="turn-probe/auto")
+        verdict = json.loads((self.compare / "last-run.json").read_text())
+        case = verdict["cases"]["turn-probe"]["modes"]["auto"]
+        self.assertEqual(case["turns"][0]["missing"], ["NEVER-EMITTED"])
+        self.assertNotEqual(case.get("verdict"), "fail")
 
     def test_an_experiment_case_is_not_planned_by_default(self):
         # A follow-up case exists to be billed deliberately, by slot. It must

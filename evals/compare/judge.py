@@ -44,6 +44,9 @@ TS_HOOK_NAMES = {"PreToolUse:Read", "PreToolUse:Bash", "PreToolUse:Agent",
 AGENT_TOOL_NAMES = {"Agent", "Task"}
 
 
+import parent_turn_reads
+
+
 def token_count(value):
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -66,7 +69,131 @@ def spec_evidence_error(spec):
         gold = spec.get("gold")
         if not isinstance(gold, list) or not gold or not all(isinstance(g, str) and g for g in gold):
             return "declared gold_file requires a nonempty list of gold strings"
+    if "gold_turns" in spec:
+        return gold_turns_error(spec)
     return None
+
+
+def gold_turns_error(spec):
+    """Why this gold_turns declaration cannot become evidence, or None.
+
+    A key that points at no real turn, and a gold that lives inside another
+    gold of the same turn, both score silently: the first scores nothing,
+    the second cannot be missing while the longer one is present. Declaring
+    something that can never be evidence is what this refuses.
+    """
+    declared = spec.get("gold_turns")
+    if not isinstance(declared, dict) or not declared:
+        return "gold_turns must be a nonempty object keyed by turn number"
+    prompts = spec.get("prompt_turns")
+    if not isinstance(prompts, list) or not prompts:
+        return "gold_turns requires prompt_turns to say which turns exist"
+    # Follow-up turns start at 2; turn 1 is judge()'s own accuracy check.
+    last = len(prompts) + 1
+    for key, golds in declared.items():
+        if not isinstance(key, str) or not key.isdigit() or str(int(key)) != key:
+            return "gold_turns key %r is not a plain turn number" % (key,)
+        turn = int(key)
+        if turn < 2 or turn > last:
+            return ("gold_turns key %r is outside turns 2..%d" % (key, last))
+        if (not isinstance(golds, list) or not golds
+                or not all(isinstance(g, str) and g for g in golds)):
+            return "gold_turns[%r] must be a nonempty list of gold strings" % (key,)
+        for gold in golds:
+            for other in golds:
+                if gold != other and gold in other:
+                    return ("gold_turns[%r] gold %r is contained in %r; it "
+                            "cannot be missing on its own" % (key, gold, other))
+    unscored = spec.get("gold_unscored")
+    if unscored is not None:
+        if not isinstance(unscored, dict):
+            return "gold_unscored must be an object keyed by turn number"
+        for key, items in unscored.items():
+            if (not isinstance(items, list) or not items
+                    or not all(isinstance(i, str) and i for i in items)):
+                return ("gold_unscored[%r] must be a nonempty list of strings"
+                        % (key,))
+            for item in items:
+                if item in declared.get(key, []):
+                    # Scored and unscored at once says nothing; one of the two
+                    # declarations is wrong and the record would hide which.
+                    return ("gold_unscored[%r] %r is also scored in gold_turns"
+                            % (key, item))
+    return None
+
+
+def worker_reply_chars(tr):
+    """How long each worker reply to the parent was, in child_model_text.
+
+    Measured the way the turn-1 `child_msg_cap` check measures it, so a
+    reply that broke the cap counts the same on both sides of the record.
+    """
+    lengths = []
+    for use in tr.agent_uses():
+        if use["parent_tool_use_id"] is not None:
+            continue
+        returned = tr.child_return_of(use)
+        if returned and returned["parent_tool_use_id"] is None:
+            lengths.append(len(child_model_text(returned["text"])))
+    return lengths
+
+
+def judge_turns(directory, case, mode, spec):
+    """Every follow-up turn the case declares, in order, as records.
+
+    The enumeration comes from `prompt_turns`, never from the files on
+    disk: counting files would shrink the enumeration whenever a turn was
+    lost, and the missing turn would vanish with it. A file the
+    declaration does not account for is reported rather than ignored, or
+    a conversation that ran longer than declared leaves no trace.
+    """
+    prompts = spec.get("prompt_turns")
+    if not isinstance(prompts, list) or not prompts:
+        return []
+    found = {number: path for number, path
+             in parent_turn_reads.turn_files(directory, case, mode)}
+    rows = []
+    for turn in range(2, len(prompts) + 2):
+        path = found.pop(turn, None)
+        if path is None:
+            rows.append({"turn": turn, "error": "transcript missing"})
+        else:
+            rows.append(judge_turn(str(path), spec, turn))
+    found.pop(1, None)
+    for turn in sorted(found):
+        rows.append({"turn": turn, "error": "undeclared turn file"})
+    return rows
+
+
+def judge_turn(transcript_path, spec, turn):
+    """One follow-up turn's gold, recorded -- never judged.
+
+    `judge()` owns turn 1, including every route contract; those do not
+    carry over, because a second delegation is correct behaviour. This
+    reuses `Transcript`, `final_text` and the same substring gold check so
+    the scoring rule stays one rule, and returns a row for the record.
+
+    A turn that could not be read and a turn that missed its gold are
+    different fields on purpose: merged, "could not score" and "could not
+    answer" become one number.
+    """
+    golds = (spec.get("gold_turns") or {}).get(str(turn))
+    if not golds:
+        return {"turn": turn, "scored": False}
+    try:
+        tr = Transcript(load_events(transcript_path))
+    except (OSError, ValueError) as exc:
+        return {"turn": turn, "error": str(exc)}
+    if not tr.result:
+        return {"turn": turn, "error": "no result event"}
+    final = tr.final_text()
+    return {
+        "turn": turn,
+        "gold": list(golds),
+        "missing": [g for g in golds if g not in final],
+        "unscored": list((spec.get("gold_unscored") or {}).get(str(turn), [])),
+        "worker_reply_chars": worker_reply_chars(tr),
+    }
 
 
 def validate_tool_inputs(events):
@@ -2422,6 +2549,15 @@ def main():
     if len(sys.argv) == 4 and sys.argv[1] == "--leakcheck":
         # exit 0 when a leak IS found (caller treats 0 as failure signal)
         sys.exit(leakcheck(sys.argv[2], sys.argv[3]))
+    if len(sys.argv) == 6 and sys.argv[1] == "--turns":
+        # Records only (design: 2026-09-19-multiturn-accuracy-design.md 1.2),
+        # so a missed gold prints and still exits 0. Only a broken
+        # invocation is an error here.
+        spec = json.loads(open(sys.argv[5], encoding="utf-8").read())
+        rows = judge_turns(sys.argv[2], sys.argv[3], sys.argv[4], spec)
+        json.dump(rows, sys.stdout, ensure_ascii=False)
+        sys.stdout.write("\n")
+        sys.exit(0)
     if len(sys.argv) in (6, 7) and sys.argv[1] == "--aggregate":
         sys.exit(aggregate(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5],
                            sys.argv[6] if len(sys.argv) == 7 else None))
