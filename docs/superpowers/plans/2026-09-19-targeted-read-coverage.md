@@ -468,7 +468,7 @@ PY
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest evals/test_record_coverage.py -v`
-Expected: PASS（16 件）
+Expected: PASS（16 件。**最終レビュー修正後は 23 件** —— 本行は当時の期待値であり、現在の本数は spec §9 を見ること）
 
 そして**既存の配線テストを壊していないこと**を確認する:
 
@@ -825,7 +825,7 @@ if __name__ == '__main__':
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python3 -m pytest evals/compare/test_read_coverage.py -v`
-Expected: PASS（12 件）
+Expected: PASS（12 件。エンドツーエンド追加で 13 件、**最終レビュー修正後は 24 件** —— 本行は当時の期待値であり、現在の本数は spec §9 を見ること）
 
 - [ ] **Step 5: Commit**
 

@@ -104,6 +104,19 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
   **判定は動かない** —— `hook_log` は `pass()`/`deny()` の後に呼ばれて戻り値を
   使わず、`judge.py` は hooklog を読まない。主要指標（親の文脈汚染）も動かない。
   **実行時間だけが延びる。** 数字を伏せて「タダ乗り」とは呼ばない。
+- **無効時も無料ではない。** `hooks.json` の登録は無条件なので、`TOKEN_SHUNT_HOOK_LOG`
+  を立てなくても **Read 1 回につき `record-coverage` の python3 起動が 1 回増える。**
+  実測（ローカル計時、$0、20 回 × 3 セットの最小値）: **無効時 +24ms/Read**
+  （0.472s / 20）、有効時は同フックだけで **+56ms/Read**（1.128s / 20、
+  `write-hook-log` の 2 プロセス目と書き込みを含む）。§5 の上の行と同じ理由で、
+  **この数字も伏せない。**
+- **ログを立てると Bash のコマンド文字列が run のとなりに残る。** `run.sh` の
+  `_claude_call` は**全腕で**無条件に `TOKEN_SHUNT_HOOK_LOG=$out.hooklog` を
+  export するので、`check-bash-read` が書く行（コマンド文字列を含む）が
+  毎 run、transcript の隣に生まれる。**`SENDBACK_TRIAL_LOG` の opt-in 方針とは
+  わざと違う。** 理由は 1 run に 1 ファイルを固定するためで、呼び出し元が
+  export したパスを使うと 2 つの run のテレメトリが 1 本に混ざる。
+  **ログは診断物として扱う**（README の該当節と同じ扱い。リポジトリに入れない）。
 
 ## 6. 集計器 `evals/compare/read_coverage.py`
 
@@ -129,8 +142,16 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 | `overlap` | `Σlines − covered` | **同じ行を二度取り込んだ量** |
 | `segments` | 和集合の互いに素な区間の数 | 1 なら連続回収、多いなら飛び石 |
 | `bytes` | `Σbytes` | `parent_bytes.py` と突き合わせる先 |
+| `full_file_reads` | `offset` も `limit` も無い Read の本数 | **行上限で切られた全文 Read** と刻み読みを見分ける唯一の手掛かり（§8.10）。**件数であって閾値ではない。** |
+| `source` | hooklog の basename | §9 の glob は全 run・全 mode・全 case を 1 本の CSV に混ぜる。`<case>.<mode>.jsonl[.turnN.jsonl].hooklog` から**腕とケースが読める**。run ディレクトリは直後に消えるので、ここに残さないと永久に復元できない |
+
+CSV 全体の列は 16 列（上の表のほか `source` / `session_id` / `parent` /
+`agent_id` / `agent_type` / `file_path` / `total_changed` / `impossible`）。
+`source` は**グループ化キーにも入る。**
 
 - **親と worker を混ぜない。** 別行として出し、合算しない。
+  **rollup も別々に取る**（`rollup(rows, parent=True|False)`）。stderr にも
+  `# parent …` / `# worker …` の 2 行として出す。**見出しの数字は親の率である。**
 - **`total` が途中で変わったら（間に Edit が入った）`total_changed` を立て、
   その行を率の rollup から外す。** 平均に黙って混ぜない。
 - **`covered > total` になったら `impossible` を立て、率を出さない。**
@@ -139,12 +160,29 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 - **`rollup` は除外件数（`excluded`）を必ず出す。** `total_changed` の除外は
   **編集の多い会話を系統的に落とす** —— 残った母集団は「読んで終わった会話」に
   偏る。件数を出さないと、その偏りが見えない。
+  **理由ごとに分けて出す**（`excluded_changed` / `excluded_impossible` /
+  `excluded_no_total`）。1 つの数字に畳むと、どの偏りを抱えたのか言えない。
+- **`rollup` は絶対量（`overlap` と `bytes` の合計）も出す。** 1-50 行を 10 回
+  読んだ親は被覆率が変わらないのに 10 倍汚染されている。率だけでは見えない。
+- **入力が 1 本でも読めなければ、stdout に 1 バイトも書かずに非ゼロで返る。**
+  §9 の退避は `> reviews/data/….csv` なので**シェルが先に CSV を作る** ——
+  途中で落ちると、run ディレクトリが消える直前に「データ無し」に見える
+  空ファイルが commit される。coverage 行が 0 件なら、ヘッダだけを黙って
+  出さず先頭に `# NO COVERAGE ROWS` を刻む。
+- **多セッション警告は入力ファイル 1 本の中でだけ数える。** 1 hooklog = 1 turn
+  なので、入力全体で数えると 40 ケース流すたびに必ず出て、§8.7 が見たい
+  「1 会話が `--resume` で 2 つに割れた」を永久に見分けられない。
+- **親行が 1 件も無ければ stderr に警告を出す。** `_parent` の前提が外れると
+  CSV から親が消え、worker だけの 1.0 近い率が無警告で出る。
 - **`coverage` は「親が何をしたか」であって、成果でも費用でもない。**
   高い被覆率が良いとも悪いとも、この計器は言わない。
   **低い被覆率も同様である** —— 刻み読みで 30% だけ取った親（汚染）と、
   Grep で要約だけ取った親（健全）を、この計器は**区別しない。同じ 0.30 に見える。**
   本文にそう書くだけでは足りないので、**`rollup` の出力自身に
-  「これは順位ではない」と 1 行刻む。**
+  「これは順位ではない」と 1 行刻む。** stderr だけでは足りない ——
+  **commit されるのは CSV の方**なので、rollup 2 行とこの 1 行は
+  **CSV の先頭にも `#` 始まりの行として書く**（`reviews/data/` の CSV を
+  機械で読む物が無いことは確認済み）。
 - **worker 行は構造的に 1.0 に張り付く。** worker は全文を読むのが仕事である。
   親行と混ぜた rollup は**常に高く出る。** §3 の親判定が要る理由はこれである。
 - 出力は `reviews/data/read-coverage-<date>.csv`。
@@ -206,6 +244,20 @@ Lock B の腕変数テストと同じヘルパを再利用する。
    同じでなければ 1 会話の被覆が turn ごとに分かれ、**被覆率は系統的に低く出る。**
    実機でしか確かめられないので、**前提として書き、集計器に警告を出させる**
    （§6）。分かるのは最初の 1 run である。
+8. **direct 腕は観測できない。** `evals/compare/run.sh:777-781`（と 825-828）は
+   direct にだけ `--plugin-dir` を渡さないので、**direct ではこのフックが
+   1 度も走らない。** したがって **「direct の coverage が 0」はプラグインの
+   成果ではなく、計器がそこに無いという事実である。** 腕の比較に使ってはいけない
+   （`source` 列の `<case>.direct.…` は原理的に行を持たない）。
+9. **行数が変わらない Edit は見えない。** `total_changed` は `totalLines` の
+   変化しか捉えないので、**Read → 同行数 Edit → Read** の並びでは旗が立たない。
+   親が「現在の内容」を見ていない行があっても、被覆率は無印で 0.63 などと出る。
+   **これは製品自身の中心フロー**（targeted Read → Edit）なので、稀な角ではない。
+10. **行上限で切れた全文 Read は、刻み読みと同じ形で記録される。**
+   `CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS`（run.sh は 25000 に固定）で
+   切られた Read も `start`/`lines` は返ってきた分だけになる。
+   **唯一の手掛かりは `full_file_reads` 列**（`offset` も `limit` も無い Read の
+   本数、§6）であって、被覆率そのものからは区別できない。
 
 ## 9. 実装記録
 
@@ -216,12 +268,16 @@ Lock B の腕変数テストと同じヘルパを再利用する。
   6 行）、`evals/compare/run.sh`（`_claude_call` に export 1 行）、
   `evals/compare/test_runner.py`（テスト 2 件追加）
 
-**テスト件数:** `evals/test_record_coverage.py` 16 件、
-`evals/compare/test_read_coverage.py` 13 件、`evals/compare/test_runner.py` に
-2 件追加。リポジトリ全体は `evals` 391 件（3 skip）、`evals/compare` 798 件、
-いずれも green。**この 2 つの数字は Task 5（本節の直前のタスク）が着地した後に
-数え直したもの。** 途中の数字（Task 2 直後に取った 783 件）を最終値として
-使い回さないこと —— それが今回、一度そのまま spec に書かれて古くなった。
+**テスト件数（最終レビュー修正を反映した現在値）:**
+`evals/test_record_coverage.py` **23 件**（16 + 7）、
+`evals/compare/test_read_coverage.py` **24 件**（13 + 11）、
+`evals/compare/test_runner.py` に 2 件追加。リポジトリ全体は
+`evals` **398 件**（3 skip）、`evals/compare` **809 件**、いずれも green
+（`python3 -m unittest discover`。この環境に pytest は無い）。
+CSV は **16 列**（§6）。**これらの数字は最終レビュー修正が全部入った後に
+数え直したもの。** 途中の数字（Task 2 直後の 783 件、修正前の 16/13・391/798 件）を
+最終値として使い回さないこと —— それが今回、一度そのまま spec に書かれて古くなった。
+数字を直すときは**リポジトリ全体を grep する**（プラン側の期待値にも同じ数字が居た）。
 
 **mutation で確かめたこと:**
 - 行から `agent_type` を落とす → 自分のテスト 1 件だけが落ちる
@@ -233,6 +289,15 @@ Lock B の腕変数テストと同じヘルパを再利用する。
   green のまま
 - フックの `main()` を即 return させる → エンドツーエンドだけが落ち、単体テスト
   12 件は green のまま
+
+**最終レビュー（通常・敵対）の真陽性修正:** フック 4 件（stdin を先に読む /
+子の fd1・fd2 を塞ぐ / agent 2 フィールドの非文字列を `str()` で残す /
+`file_path` を realpath で記録）、集計器 9 件（親と worker の rollup 分離 /
+入力の事前可読性検査と `# NO COVERAGE ROWS` / `source` 列 / 多セッション警告を
+ファイル単位に / 親行 0 件の警告 / `full_file_reads` 列 / `excluded` の 3 分割 /
+rollup の `overlap`・`bytes` / CSV 先頭への rollup と但し書き）、
+文書 6 件（§5 の無効時コストとログの副作用、§8.8-8.10、README）。
+**閾値・判定列は足していない**（§8.4）。
 
 **まだ 1 行もデータが無い。** 実機を回した run は 1 本も無く、`reviews/data/`
 に read-coverage の CSV は存在しない。今回の作業に課金は発生していない
@@ -270,6 +335,11 @@ python3 evals/compare/read_coverage.py \
     > reviews/data/read-coverage-$(date +%Y-%m-%d).csv
 sha256sum reviews/data/read-coverage-*.csv
 ```
+
+`# NO COVERAGE ROWS` が先頭に出たら、その CSV には coverage 行が 1 本も無い
+（direct 腕は §8.8 のとおり原理的にそうなる）。**入力が 1 本でも読めなければ
+集計器は stdout に何も書かずに非ゼロで返る** ので、空 CSV を掴んだまま
+run ディレクトリを消さないこと。
 
 CSV は commit する。hooklog 本体はリポジトリに入れない（transcript と同じ
 扱いで `~/measurements/` へ、sha256 つきで）。

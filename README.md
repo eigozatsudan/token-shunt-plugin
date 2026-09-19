@@ -293,7 +293,7 @@ reader の子返答には `status: complete|partial` と空でない `stop_reaso
 
 `scripts/doctor.sh` はソースツリーのプローブです。`--plugin-dir "$ROOT/plugin"` と `--setting-sources ""` で隔離ロードし、ユーザースコープのキャッシュは見ません。`jq`、CLIバージョン、プラグインとエージェントの登録、Haiku / Sonnet の指定モデルと実際のモデル、観測可能な `effort` や終了状態を確認します。`plugin + agent registration: confirmed` はソース側の登録確認であり、導入済みコピーの有無・新旧・フック実行ビットの確認ではありません。`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` の場合はモデル比較を無効として報告します。認証などにより実機確認できない項目は `unconfirmed` とし、診断項目のうち `jq` 不足を失敗として扱います。終了コード0だけで全項目の確認済みとは判断しないでください。
 
-プラグインと両エージェントの登録を確認できると、CLIバージョンなどを [doctor-last-probe.txt](docs/distribution/doctor-last-probe.txt) に記録します。これは診断の記録であり、最低バージョンや全機能の動作保証ではありません。フック入力のトップレベル `agent_type` は別途実際の入力で確認する必要があります。`TOKEN_SHUNT_HOOK_LOG` は判定・理由と、帰属用の session_id / tool_use_id・対象パスまたはコマンドを保存します。2026-09-19以降、`record-coverage`がRead 1回ごとの開始行・行数・ファイル総行数・バイト数も保存します。**メタデータは保存しますが、Read本文（入力JSON全体やファイルの中身）は保存しません。**コマンド文字列が残るためログは診断用として管理してください。
+プラグインと両エージェントの登録を確認できると、CLIバージョンなどを [doctor-last-probe.txt](docs/distribution/doctor-last-probe.txt) に記録します。これは診断の記録であり、最低バージョンや全機能の動作保証ではありません。フック入力のトップレベル `agent_type` は別途実際の入力で確認する必要があります。`TOKEN_SHUNT_HOOK_LOG` は判定・理由と、帰属用の session_id / tool_use_id・対象パスまたはコマンドを保存します。2026-09-19以降、`record-coverage`がRead 1回ごとの開始行・行数・ファイル総行数・バイト数に加え、要求された `offset` / `limit`、および親と worker を区別するための `agent_id` / `agent_type` も保存します（ファイルパスは別名を畳むため実パスに正規化して保存します）。**メタデータは保存しますが、Read本文（入力JSON全体やファイルの中身）は保存しません。**コマンド文字列が残るためログは診断用として管理してください。
 
 Bulk-reader の Read 契約は Python 3（Unix の `fcntl` が必要）のフックで強制します。起動ごとに6試行、同時Readの拒否、実返却行によるカーソル更新、拒否後の切り捨て半減を管理します。状態はユーザー専用の一時ディレクトリにメタデータだけを保存します。識別子・返却範囲が確認できない場合は継続を拒否します。`maxTurns` はRead回数の保証ではありません。
 
