@@ -15,19 +15,27 @@ Not part of the release gate. Bills nothing.
 """
 import csv
 import json
+import os
 import sys
 
-COLUMNS = ('session_id', 'parent', 'agent_id', 'agent_type', 'file_path',
-           'reads', 'covered', 'total', 'coverage', 'overlap', 'segments',
-           'bytes', 'total_changed', 'impossible')
+COLUMNS = ('source', 'session_id', 'parent', 'agent_id', 'agent_type',
+           'file_path', 'reads', 'covered', 'total', 'coverage', 'overlap',
+           'segments', 'bytes', 'full_file_reads', 'total_changed',
+           'impossible')
 
 
 def load(path):
-    """The coverage lines of one hook log, in order.
+    """The coverage lines of one hook log, in order, tagged with its name.
 
     The log is shared with every other hook, and a run killed mid-write
     leaves a partial last line; neither is a reason to produce no number.
+
+    The basename rides along because the salvage in section 9 globs every
+    run, mode and case into one CSV, and the run directories are deleted
+    right afterwards: `<case>.<mode>.jsonl[.turnN.jsonl].hooklog` is the
+    only surviving record of which arm and which case a row came from.
     """
+    name = os.path.basename(path)
     found = []
     with open(path, encoding='utf-8', errors='replace') as source:
         for entry in source:
@@ -36,7 +44,7 @@ def load(path):
             except ValueError:
                 continue
             if isinstance(row, dict) and row.get('hook') == 'record-coverage':
-                found.append(row)
+                found.append(dict(row, source=name))
     return found
 
 
@@ -64,11 +72,12 @@ def rows(records):
     """One row per (session, reader, file): the union of the lines taken."""
     groups = {}
     for row in records:
-        key = (row.get('session_id'), _parent(row), row.get('agent_id'),
-               row.get('agent_type'), row.get('file_path'))
+        key = (row.get('source'), row.get('session_id'), _parent(row),
+               row.get('agent_id'), row.get('agent_type'),
+               row.get('file_path'))
         groups.setdefault(key, []).append(row)
     out = []
-    for (session, parent, agent, agent_type, path), taken in groups.items():
+    for (source, session, parent, agent, agent_type, path), taken in groups.items():
         spans = [(r['start'], r['start'] + r['lines'] - 1) for r in taken
                  if type(r.get('start')) is int and type(r.get('lines')) is int
                  and r['lines'] > 0]
@@ -81,6 +90,7 @@ def rows(records):
         # that the parent recovered 140% of it.
         impossible = bool(total) and covered > total
         out.append({
+            'source': source,
             'session_id': session, 'parent': parent, 'agent_id': agent,
             'agent_type': agent_type, 'file_path': path,
             'reads': len(taken), 'covered': covered, 'total': total,
@@ -89,9 +99,16 @@ def rows(records):
             'overlap': sum(end - start + 1 for start, end in spans) - covered,
             'segments': len(merged),
             'bytes': sum(r.get('bytes') or 0 for r in taken),
+            # A whole-file Read cut short by the line cap
+            # (CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS) is recorded in the
+            # same shape as a deliberate slice. This count is the only tell,
+            # and the motive for the instrument was that 18 of 21 parent
+            # reads were targeted. It is a count, never a threshold.
+            'full_file_reads': sum(1 for r in taken if r.get('offset') is None
+                                   and r.get('limit') is None),
             'total_changed': changed, 'impossible': impossible})
-    return sorted(out, key=lambda r: (r['session_id'] or '', not r['parent'],
-                                      r['agent_id'] or '',
+    return sorted(out, key=lambda r: (r['source'] or '', r['session_id'] or '',
+                                      not r['parent'], r['agent_id'] or '',
                                       r['agent_type'] or '', r['file_path']))
 
 
@@ -110,21 +127,59 @@ def _merge(spans):
     return [tuple(span) for span in merged]
 
 
-def rollup(counted):
-    """The rate across the files that have one.
+def rollup(counted, parent=True):
+    """The rate across one reader's files that have one.
+
+    Parent and worker are rolled up apart and never summed. A worker reads
+    whole files by design, so its rows sit at 1.0 and a mixed rate always
+    reads high (section 6). The headline number is the parent's.
 
     A file whose size changed mid-session has no defensible denominator, so
-    it is left out here rather than averaged in silently. `excluded` is
-    reported because that exclusion is not random: it drops the files an
-    edit touched, which leaves a population of files that were only read.
+    it is left out here rather than averaged in silently. The exclusion is
+    not random -- it drops the files an edit touched, leaving a population
+    of files that were only read -- so each reason is counted separately;
+    one folded number could not say which bias it carried.
+
+    Every field describes the same population: the usable rows only.
     """
-    usable = [r for r in counted if r['coverage'] is not None]
+    mine = [r for r in counted if bool(r['parent']) is parent]
+    usable = [r for r in mine if r['coverage'] is not None]
     covered = sum(r['covered'] for r in usable)
     total = sum(r['total'] for r in usable)
+    left_out = [r for r in mine if r['coverage'] is None]
     return {'files': len(usable), 'reads': sum(r['reads'] for r in usable),
             'covered': covered, 'total': total,
             'coverage': (covered / total) if total else None,
-            'excluded': len(counted) - len(usable)}
+            # The same coverage can hide ten times the pollution: lines
+            # 1-50 read ten times move overlap and bytes, not the rate.
+            'overlap': sum(r['overlap'] for r in usable),
+            'bytes': sum(r['bytes'] for r in usable),
+            'full_file_reads': sum(r['full_file_reads'] for r in usable),
+            'excluded': len(left_out),
+            'excluded_changed': sum(1 for r in left_out if r['total_changed']),
+            'excluded_impossible': sum(1 for r in left_out if r['impossible']),
+            'excluded_no_total': sum(1 for r in left_out if not r['total_changed']
+                                     and not r['impossible'])}
+
+
+def _summary(label, roll):
+    """One `#` line for one reader's rollup."""
+    return ('# %s files=%d reads=%d covered=%d total=%d overlap=%d bytes=%d'
+            ' full_file_reads=%d excluded=%d (changed=%d impossible=%d'
+            ' no_total=%d) coverage=%s'
+            % (label, roll['files'], roll['reads'], roll['covered'],
+               roll['total'], roll['overlap'], roll['bytes'],
+               roll['full_file_reads'], roll['excluded'],
+               roll['excluded_changed'], roll['excluded_impossible'],
+               roll['excluded_no_total'],
+               '-' if roll['coverage'] is None else '%.4f' % roll['coverage']))
+
+
+# This number is not a ranking. A parent that took 30% in slices polluted
+# itself; a parent that took 30% because Grep answered the question did
+# not. They print the same.
+CAVEAT = ('# coverage is what the parent did, not how well it did it: a low'
+          ' rate is neither good nor bad, and this is not a ranking')
 
 
 def main(argv=None):
@@ -132,29 +187,52 @@ def main(argv=None):
     if not argv:
         print('usage: read_coverage.py <hooklog> [...]', file=sys.stderr)
         return 2
-    records = []
+    # Every input is opened before one byte reaches stdout. The salvage in
+    # section 9 redirects with `>`, so the shell has already created the
+    # CSV: dying mid-write would commit a file that looks like "no data"
+    # exactly as the run directories are deleted.
+    loaded, unreadable = [], []
     for path in argv:
-        records.extend(load(path))
+        try:
+            loaded.append((path, load(path)))
+        except OSError as problem:
+            unreadable.append('%s: %s' % (path, problem.strerror or problem))
+    if unreadable:
+        print('ERROR: %d of %d inputs could not be read; wrote nothing'
+              % (len(unreadable), len(argv)), file=sys.stderr)
+        for problem in unreadable:
+            print('  ' + problem, file=sys.stderr)
+        return 1
+    records = [row for _, rows_of in loaded for row in rows_of]
     counted = rows(records)
+    parent = rollup(counted, parent=True)
+    worker = rollup(counted, parent=False)
+    # The CSV is what gets committed; stderr is not. The caveat and the
+    # rollup ride in the file itself. Nothing machine-reads these CSVs.
+    header = ([] if counted else ['# NO COVERAGE ROWS'])
+    header += [_summary('parent', parent), _summary('worker', worker), CAVEAT]
+    for note in header:
+        print(note)
     writer = csv.DictWriter(sys.stdout, fieldnames=COLUMNS)
     writer.writeheader()
     for row in counted:
         writer.writerow(row)
-    summary = rollup(counted)
-    print('# files=%(files)d reads=%(reads)d covered=%(covered)d '
-          'total=%(total)d excluded=%(excluded)d' % summary, file=sys.stderr)
-    print('# coverage=%s' % ('-' if summary['coverage'] is None
-                             else '%.4f' % summary['coverage']), file=sys.stderr)
-    # This number is not a ranking. A parent that took 30% in slices
-    # polluted itself; a parent that took 30% because Grep answered the
-    # question did not. They print the same.
-    print('# coverage is what the parent did, not how well it did it:'
-          ' a low rate is neither good nor bad', file=sys.stderr)
-    found = sessions(records)
-    if len(found) > 1:
-        print('# WARNING: %d session ids in this log (%s): one conversation'
-              ' split across sessions reads as a lower rate'
-              % (len(found), ','.join(found)), file=sys.stderr)
+    for note in header:
+        print(note, file=sys.stderr)
+    # One log is one turn of one conversation, so two session ids inside one
+    # file is the `--resume` split of section 8.7. Counting across the whole
+    # input would fire on every multi-case run and mean nothing.
+    for path, rows_of in loaded:
+        found = sessions(rows_of)
+        if len(found) > 1:
+            print('# WARNING: %d session ids in %s (%s): one conversation'
+                  ' split across sessions reads as a lower rate'
+                  % (len(found), os.path.basename(path), ','.join(found)),
+                  file=sys.stderr)
+    if counted and not any(row['parent'] for row in counted):
+        print('# WARNING: no parent rows at all: if the parent test stopped'
+              ' matching, what remains is worker rows, which sit near 1.0',
+              file=sys.stderr)
     return 0
 
 

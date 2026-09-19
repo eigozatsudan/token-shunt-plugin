@@ -107,6 +107,74 @@ class CoverageTests(unittest.TestCase):
             [line(session='s1'), line(session='s2'), line(session='s1')]))
 
 
+    def test_the_rollup_counts_the_parent_and_the_worker_apart(self):
+        # Worker rows sit at 1.0 by design (section 6), so a rollup that
+        # mixes them always reads high: 30/100 for the parent plus 100/100
+        # for a worker prints as 0.65 and hides the parent's actual 0.30.
+        counted = read_coverage.rows([
+            line(path='/c/a.py', start=1, lines=30, total=100),
+            line(path='/c/b.py', agent='a7', start=1, lines=100, total=100)])
+        parent = read_coverage.rollup(counted, parent=True)
+        worker = read_coverage.rollup(counted, parent=False)
+        self.assertEqual((1, 30, 100, 0.30),
+                         (parent['files'], parent['covered'], parent['total'],
+                          parent['coverage']))
+        self.assertEqual((1, 100, 100, 1.0),
+                         (worker['files'], worker['covered'], worker['total'],
+                          worker['coverage']))
+
+    def test_the_rollup_carries_the_absolute_amounts(self):
+        # A parent that read lines 1-50 ten times has the same coverage as
+        # one that read them once and ten times the pollution.
+        counted = read_coverage.rows([line(start=1, lines=10, bytes=500),
+                                      line(start=1, lines=10, bytes=500)])
+        got = read_coverage.rollup(counted)
+        self.assertEqual((10, 1000), (got['overlap'], got['bytes']))
+
+    def test_the_rollup_names_each_reason_a_row_was_left_out(self):
+        # The docstring says the exclusion drops the files an edit touched.
+        # One number folded five reasons together and could not say so.
+        counted = read_coverage.rows([
+            line(path='/c/ok.py', start=1, lines=25, total=100),
+            line(path='/c/edited.py', start=1, lines=10, total=100),
+            line(path='/c/edited.py', start=20, lines=10, total=140),
+            line(path='/c/over.py', start=1, lines=140, total=100),
+            line(path='/c/failed.py', start=None, lines=None, total=None,
+                 bytes=0, is_error=True)])
+        got = read_coverage.rollup(counted)
+        self.assertEqual(3, got['excluded'])
+        self.assertEqual(1, got['excluded_changed'])
+        self.assertEqual(1, got['excluded_impossible'])
+        self.assertEqual(1, got['excluded_no_total'])
+
+    def test_a_read_without_offset_or_limit_is_counted_as_a_full_file_read(self):
+        # The motive for this instrument is that 18 of 21 parent reads were
+        # targeted. A whole-file Read truncated by
+        # CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS is recorded in exactly the
+        # shape of a deliberate slice, and this count is the only tell.
+        # It is a count, not a threshold.
+        got = self.only(line(start=1, lines=10, offset=1, limit=10),
+                        line(start=1, lines=100, offset=None, limit=None))
+        self.assertEqual(1, got['full_file_reads'])
+        self.assertEqual(0, self.only(line(offset=1, limit=10))['full_file_reads'])
+        self.assertEqual(1, self.only(line(offset=None, limit=None))['full_file_reads'])
+
+    def test_the_hooklog_name_becomes_a_column_and_a_grouping_key(self):
+        # The section 9 salvage glob pours every run, mode and case into one
+        # CSV, and the run directories are deleted right after. Without the
+        # basename the arm and the case can never be recovered.
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        names = ('deep-read.plugin.jsonl.hooklog', 'deep-read.direct.jsonl.hooklog')
+        records = []
+        for name in names:
+            path = Path(temp.name) / name
+            path.write_text(json.dumps(line(start=1, lines=10)) + '\n')
+            records.extend(read_coverage.load(str(path)))
+        got = read_coverage.rows(records)
+        self.assertEqual([names[1], names[0]], [r['source'] for r in got])
+        self.assertEqual(sorted(names), sorted(r['source'] for r in got))
+
 class LoadTests(unittest.TestCase):
     def test_other_hooks_lines_are_ignored(self):
         # The hook log is shared: check-file-size writes {hook,decision,...}
@@ -169,3 +237,80 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(3000, row['bytes'])
         self.assertIs(False, row['total_changed'])
         self.assertIs(False, row['impossible'])
+
+
+class MainTests(unittest.TestCase):
+    """What lands in the committed CSV, and what only warns beside it."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def log(self, name, *records):
+        path = self.root / name
+        path.write_text(''.join(json.dumps(r) + '\n' for r in records))
+        return str(path)
+
+    def run_main(self, *argv):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = read_coverage.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_an_unreadable_input_stops_before_anything_is_written(self):
+        # Section 9 salvages with `> reviews/data/....csv`, so the shell
+        # creates the CSV first. Failing mid-write commits an empty file
+        # that looks like "no data" just as the run directory disappears.
+        good = self.log('a.hooklog', line(start=1, lines=10))
+        code, out, err = self.run_main(good, str(self.root / 'missing.hooklog'))
+        self.assertNotEqual(0, code)
+        self.assertEqual('', out)
+        self.assertIn('missing.hooklog', err)
+
+    def test_a_log_with_no_coverage_rows_says_so_in_the_file(self):
+        empty = self.log('b.hooklog', {'hook': 'check-file-size',
+                                       'decision': 'deny'})
+        code, out, err = self.run_main(empty)
+        self.assertEqual(0, code)
+        self.assertEqual('# NO COVERAGE ROWS', out.splitlines()[0])
+
+    def test_the_csv_carries_the_rollup_and_the_caveat_itself(self):
+        # stderr is not committed; the CSV is.
+        path = self.log('c.hooklog', line(start=1, lines=30, total=100))
+        code, out, err = self.run_main(path)
+        head = [l for l in out.splitlines() if l.startswith('#')]
+        self.assertTrue(out.startswith('#'), out)
+        self.assertTrue(any('parent' in l and 'coverage=0.3000' in l for l in head), head)
+        self.assertTrue(any('worker' in l for l in head), head)
+        self.assertTrue(any('not' in l and 'ranking' in l for l in head), head)
+        self.assertIn('source,', out)
+        self.assertIn('full_file_reads', out)
+
+    def test_two_sessions_warn_only_when_they_share_one_input_file(self):
+        # Forty cases are forty files and forty session ids, so counting
+        # across the whole input fires every time and can never point at
+        # what section 8.7 wants: one conversation split by `--resume`.
+        one = self.log('d.hooklog', line(session='s1'))
+        two = self.log('e.hooklog', line(session='s2'))
+        self.assertNotIn('WARNING', self.run_main(one, two)[2])
+        split = self.log('f.hooklog', line(session='s1'), line(session='s2'))
+        self.assertIn('WARNING', self.run_main(split)[2])
+
+    def test_a_log_with_no_parent_row_at_all_warns(self):
+        # If the parent test ever stops matching, the parent vanishes from
+        # the CSV and the near-1.0 worker rate prints unremarked.
+        path = self.log('g.hooklog', line(agent='a7'))
+        self.assertIn('WARNING', self.run_main(path)[2])
+
+    def test_the_stderr_summary_keeps_parent_and_worker_on_separate_lines(self):
+        path = self.log('h.hooklog', line(start=1, lines=30, total=100),
+                        line(path='/c/w.py', agent='a7', start=1, lines=100,
+                             total=100))
+        err = self.run_main(path)[2]
+        self.assertTrue(any(l.startswith('# parent') and 'coverage=0.3000' in l
+                            for l in err.splitlines()), err)
+        self.assertTrue(any(l.startswith('# worker') and 'coverage=1.0000' in l
+                            for l in err.splitlines()), err)
