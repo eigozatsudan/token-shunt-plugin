@@ -164,6 +164,55 @@ class CorpusReadCountTests(unittest.TestCase):
         self.assertEqual(1, self.scan()["total_reads"])
 
 
+class ReadRowTests(unittest.TestCase):
+    """The same parse, one row per Read, for a caller that needs the order.
+
+    `turn_reads` answers "how much"; Lock B's $0 replay has to ask, read by
+    read, whether the cumulative total was already over budget. Both come
+    from one scan: a second parser is how a count of 26 in 12 of 14 got
+    published against the real 21 in 10 of 14.
+    """
+    ROOT = "/run/work/fixtures"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "c.auto.jsonl"
+
+    def rows_for(self, *items):
+        self.path.write_text(rows(*items))
+        return parent_turn_reads.read_rows(self.path, self.ROOT)
+
+    def test_each_successful_read_is_one_row_in_transcript_order(self):
+        got = self.rows_for(use("a", self.ROOT + "/first.py"),
+                            result("a", "x" * 40),
+                            use("b", self.ROOT + "/second.py"),
+                            result("b", "y" * 60))
+        self.assertEqual([(self.ROOT + "/first.py", 40),
+                          (self.ROOT + "/second.py", 60)],
+                         [(r["path"], r["bytes"]) for r in got])
+
+    def test_a_denied_read_is_not_a_row(self):
+        deny = {"type": "user", "parent_tool_use_id": None,
+                "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": "a",
+                     "is_error": True, "content": "denied"}]}}
+        self.assertEqual([], self.rows_for(use("a", self.ROOT + "/m.py"), deny))
+
+    def test_a_workers_read_is_not_a_row(self):
+        self.assertEqual([], self.rows_for(
+            use("a", self.ROOT + "/m.py", parent="agent-1"),
+            result("a", "x" * 40, parent="agent-1")))
+
+    def test_the_rows_add_up_to_what_turn_reads_reports(self):
+        items = (use("a", self.ROOT + "/m.py"), result("a", "x" * 40),
+                 use("b", "/elsewhere/x.py"), result("b", "z" * 10))
+        got = self.rows_for(*items)
+        count, total, _ = parent_turn_reads.turn_reads(self.path, self.ROOT)
+        self.assertEqual(count, len(got))
+        self.assertEqual(total, sum(r["bytes"] for r in got))
+
+
 class CommandLineTests(unittest.TestCase):
     """Pointing it at five blocks staged under five different roots."""
 

@@ -940,9 +940,13 @@ according to --worker-model. auto starts with haiku.
   `docs/superpowers/specs/2026-09-19-cumulative-intake-design.md`（Lock B）。
   セッション単位の取り込み台帳を `delegated_paths` と同じ機構で持ち、
   `PostToolUse` で加算・`PreToolUse` で超過後の全文読みを deny する。
-  閾値 16,384 バイトは実測から引いた —— auto 14 会話のうち
+  閾値 16,384 バイトは累積バイトの実測から引いた —— auto 14 会話のうち
   **16,384 で掛かるのは 1 本、32,768 では 0 本**で、
   **32,768 は動機になった当の 1 本（32,098 バイト）を取り逃がす。**
+  ただし**出荷するコードを当てて再生すると 100〜23,391 が同じ答えを出す** ——
+  健全な 13 本は targeted Read しかしておらず、**免除がほぼすべてを選り分けている**
+  （`reviews/intake-replay-2026-09-19.md`）。**この値は実測が選んだのではなく、
+  §26.2 の小仕事予算に揃えた判断である。**
   targeted Read は加算するが deny しない（§26.5 の編集経路を殺さないため）。
   実装は `plugin/hooks/intake_ledger.py`、入口は `check-intake-budget` /
   `record-intake`。**出荷既定は 0（無効）で、16,384 は

@@ -104,13 +104,19 @@ def _all_read_paths(transcript):
     return found
 
 
-def turn_reads(transcript, root):
-    """(count, bytes, paths) the parent itself Read under `root`."""
-    reads, count, total, paths = {}, 0, 0, []
+def read_rows(transcript, root):
+    """[{path, bytes}] for the parent's own successful Reads, in order.
+
+    One scan serves both callers: `turn_reads` sums these, and Lock B's $0
+    replay walks them in order to ask, read by read, whether the session was
+    already over budget. A second parser is how a count of 26 in 12 of 14
+    got published against the real 21 in 10 of 14.
+    """
+    reads, found = {}, []
     try:
         source = open(transcript, encoding="utf-8", errors="replace")
     except OSError:
-        return 0, 0, []
+        return []
     with source:
         for line in source:
             try:
@@ -128,18 +134,27 @@ def turn_reads(transcript, root):
                 if block.get("type") == "tool_use" and block.get("name") == "Read":
                     path = (block.get("input") or {}).get("file_path")
                     if isinstance(path, str) and path:
-                        reads[block.get("id")] = path
+                        reads[block.get("id")] = (path, block.get("input") or {})
                 elif block.get("type") == "tool_result":
-                    path = reads.get(block.get("tool_use_id"))
-                    if path is None or block.get("is_error"):
+                    call = reads.get(block.get("tool_use_id"))
+                    if call is None or block.get("is_error"):
                         continue
+                    path, inp = call
                     if root is not None and not os.path.abspath(path).startswith(
                             os.path.abspath(root) + os.sep):
                         continue
-                    count += 1
-                    paths.append(path)
-                    total += len(_text(block.get("content")).encode("utf-8"))
-    return count, total, paths
+                    found.append({
+                        "path": path,
+                        "bytes": len(_text(block.get("content")).encode("utf-8")),
+                        "offset": inp.get("offset"), "limit": inp.get("limit")})
+    return found
+
+
+def turn_reads(transcript, root):
+    """(count, bytes, paths) the parent itself Read under `root`."""
+    found = read_rows(transcript, root)
+    return (len(found), sum(r["bytes"] for r in found),
+            [r["path"] for r in found])
 
 
 def _text(content):

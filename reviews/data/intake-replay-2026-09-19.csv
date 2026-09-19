@@ -1,0 +1,15 @@
+run,mode,total_reads,total_bytes,turn_bytes,first_deny_turn_8192,first_deny_turn_16384,first_deny_turn_32768,denied_reads_16384,bytes_from_first_deny_16384
+run.2gXhO3lK,auto,3,32098,0|10619|12773|8706|0,3,4,,1,8706
+run.BlFx27pa,auto,1,398,0|0|0|398|0,,,,0,0
+run.FUjNlKA7,auto,1,152,0|0|0|152|0,,,,0,0
+run.L1DqGoOV,auto,3,6690,0|2585|0|4105|0,,,,0,0
+run.UWDv1roq,auto,2,1621,0|0|1242|379|0,,,,0,0
+run.Uj6yO7We,auto,0,0,0|0|0|0|0,,,,0,0
+run.VwFxLSdp,auto,0,0,0|0|0|0|0,,,,0,0
+run.evObSvPG,auto,2,2680,0|2237|0|443|0,,,,0,0
+run.gyiPA7Zl,auto,1,2585,0|2585|0|0|0,,,,0,0
+run.hiusl6C9,auto,3,3907,0|3095|433|379|0,,,,0,0
+run.mbEyjHmy,auto,0,0,0|0|0|0|0,,,,0,0
+run.p917Mmnp,auto,0,0,0|0|0|0|0,,,,0,0
+run.qNK33FOQ,auto,1,598,0|0|0|598|0,,,,0,0
+run.sM7k6XGD,auto,4,8301,0|2802|1773|1378|2348,,,,0,0
