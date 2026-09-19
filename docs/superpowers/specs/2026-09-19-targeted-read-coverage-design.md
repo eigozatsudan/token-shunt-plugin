@@ -61,8 +61,11 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 - **`is_error` を見る。** エラーで返った Read は行域を主張できないので
   `start`/`lines`/`total` を `null` にし、**行自体は残す**（回数を落とさない）。
   `parent_turn_reads.read_rows` が同じ判断をしている。
-- **`agent_id` を持たせる。** 親の回収と worker の回収を混ぜたら被覆率は
-  意味を失う。集計側で親行（`agent_id` が `null`）だけ選べるようにする。
+- **`agent_id` と `agent_type` の両方を持たせる。** `intake_ledger.py:134` は
+  親を `not (agent_id or agent_type)` で判定している —— **2 つ要る。**
+  `agent_id` だけを見ると、`agent_type` しか載っていない worker の Read が
+  **親の行として集計される。** 親の回収と worker の回収を混ぜたら被覆率は
+  意味を失う（§6 も参照: worker 行は構造的に 1.0 に張り付く）。
 - **`offset`/`limit` は生のまま。** 「刻み読み」かどうかは集計側の定義であって、
   **フックが判定してはいけない。**
 - **Read のみ。** Bash 経由（`sed -n '1,200p'`）の刻みには `totalLines` が無い。
@@ -95,6 +98,12 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
   `TOKEN_SHUNT_SESSION_BUDGET_BYTES` 化と同型）。
   向け先は run ディレクトリ配下、`cost_probe.py` と同じ `<out>.hooklog` 命名。
   **課金を増やす変更ではない。次に何かを回したときに勝手に行が溜まる。**
+- **ただし無料ではない。** これを立てると**全フック**がログを吐く。実測で
+  フック 1 回あたり **+16ms**（`check-file-size` × 20 回、0.656s → 0.975s）、
+  Read 1 回は Pre 4 本 + Post 3 本なので**ツール呼び出し 1 回あたり約 +110ms**。
+  **判定は動かない** —— `hook_log` は `pass()`/`deny()` の後に呼ばれて戻り値を
+  使わず、`judge.py` は hooklog を読まない。主要指標（親の文脈汚染）も動かない。
+  **実行時間だけが延びる。** 数字を伏せて「タダ乗り」とは呼ばない。
 
 ## 6. 集計器 `evals/compare/read_coverage.py`
 
@@ -102,8 +111,14 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 `json.loads` 以上のことをしない。**transcript は読まない**（読むと §2 で
 捨てた分母の問題が戻ってくる）。
 
-`(session_id, agent_id, file_path)` ごとに `[start, start+lines-1]` の
-閉区間を集める。
+`(session_id, 親か否か, agent_id, file_path)` ごとに `[start, start+lines-1]`
+の閉区間を集める。**親判定は `agent_id` と `agent_type` の両方から取る**（§3）。
+
+**hooklog は turn ごとに別ファイルである**（`run_claude_resume` は turn ごとに
+別の `$out` を使う）。5 ターンの会話は 5 本の hooklog に散る。集計は
+`session_id` で束ね直すので正しく合流する —— **`--resume` でも `session_id` が
+同じなら。これは未検証の前提である**（§8.7）。集計器は 1 会話で複数の
+`session_id` を見たら stderr に警告を出す。
 
 | 列 | 定義 | なぜ要るか |
 |---|---|---|
@@ -118,8 +133,20 @@ Lock B は targeted Read を deny しない（`2026-09-19-cumulative-intake-desi
 - **親と worker を混ぜない。** 別行として出し、合算しない。
 - **`total` が途中で変わったら（間に Edit が入った）`total_changed` を立て、
   その行を率の rollup から外す。** 平均に黙って混ぜない。
+- **`covered > total` になったら `impossible` を立て、率を出さない。**
+  `check-reader-contract:143` が `start+count-1 <= total` を妥当性条件に
+  使っている。破れたのはデータが壊れた合図であって、1.4 という被覆率ではない。
+- **`rollup` は除外件数（`excluded`）を必ず出す。** `total_changed` の除外は
+  **編集の多い会話を系統的に落とす** —— 残った母集団は「読んで終わった会話」に
+  偏る。件数を出さないと、その偏りが見えない。
 - **`coverage` は「親が何をしたか」であって、成果でも費用でもない。**
   高い被覆率が良いとも悪いとも、この計器は言わない。
+  **低い被覆率も同様である** —— 刻み読みで 30% だけ取った親（汚染）と、
+  Grep で要約だけ取った親（健全）を、この計器は**区別しない。同じ 0.30 に見える。**
+  本文にそう書くだけでは足りないので、**`rollup` の出力自身に
+  「これは順位ではない」と 1 行刻む。**
+- **worker 行は構造的に 1.0 に張り付く。** worker は全文を読むのが仕事である。
+  親行と混ぜた rollup は**常に高く出る。** §3 の親判定が要る理由はこれである。
 - 出力は `reviews/data/read-coverage-<date>.csv`。
   **run ディレクトリが消える前に出す**（88 対を 1 度失っている）。
 
@@ -175,3 +202,7 @@ Lock B の腕変数テストと同じヘルパを再利用する。
 6. **Lock B の穴を塞がない。** cumulative-intake spec §3.3 が残した
    「targeted Read だけで 32 KB を取り込む会話に Lock B は何もしない」は
    **そのまま残る。** 塞ぐかどうかは、測った後の別の決定である。
+7. **`--resume` をまたいで `session_id` が同じかどうかを確かめていない。**
+   同じでなければ 1 会話の被覆が turn ごとに分かれ、**被覆率は系統的に低く出る。**
+   実機でしか確かめられないので、**前提として書き、集計器に警告を出させる**
+   （§6）。分かるのは最初の 1 run である。

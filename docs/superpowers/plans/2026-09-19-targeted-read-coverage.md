@@ -20,6 +20,11 @@
 - **`start`/`lines`/`total` は `tool_response.file` の `startLine`/`numLines`/`totalLines` をそのまま使う。フックが数え直さない**（spec §3）。
 - **Read のみ。Bash は対象外**（spec §3、§8.3）。
 - **閾値を持たない。判定列を作らない**（spec §8.4）。
+- **親判定は `agent_id` と `agent_type` の両方から取る。** `intake_ledger.py:134`
+  が `not (agent_id or agent_type)` を使っている。**片方だけ見ると worker の Read が
+  親に混ざる**（spec §3、§6）。
+- **`rollup` の出力に「これは順位ではない」と刻む。** 低い被覆率は健全さの証拠でも
+  汚染の証拠でもない（spec §6）。
 - **`evals` の release gate に入れない**（spec §8.5）。
 - **課金しない。** 全テストはローカルの合成イベントで回る（spec §7）。
 - commit message は必ず次の 2 行で終わる:
@@ -50,7 +55,7 @@
 - Consumes: なし（最初のタスク）
 - Produces: `record(event) -> dict | None`。`event` は PostToolUse のフック入力 dict。返す dict のキーは
   `hook`(str, 常に `"record-coverage"`), `session_id`(str|None), `agent_id`(str|None),
-  `file_path`(str), `start`(int|None), `lines`(int|None), `total`(int|None),
+  `agent_type`(str|None), `file_path`(str), `start`(int|None), `lines`(int|None), `total`(int|None),
   `bytes`(int), `offset`(int|None), `limit`(int|None), `is_error`(bool)。
   Read 以外・`file_path` 無しは `None`。
 
@@ -73,6 +78,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -91,14 +97,14 @@ exec(compile(SOURCE.read_bytes(), str(SOURCE), 'exec'), hook.__dict__)
 
 def event(path='/corpus/migration.py', start=139, lines=50, total=316,
           content='x' * 2814, offset=139, limit=50, agent_id=None,
-          is_error=False, **extra):
+          agent_type=None, is_error=False, **extra):
     response = {'type': 'text', 'file': {
         'filePath': path, 'content': content,
         'startLine': start, 'numLines': lines, 'totalLines': total}}
     if is_error:
         response['is_error'] = True
     body = {'hook_event_name': 'PostToolUse', 'tool_name': 'Read',
-            'session_id': 's1', 'agent_id': agent_id,
+            'session_id': 's1', 'agent_id': agent_id, 'agent_type': agent_type,
             'tool_input': {'file_path': path},
             'tool_response': response}
     if offset is not None:
@@ -114,13 +120,59 @@ class RecordTests(unittest.TestCase):
         # Fails if the hook ever counts lines itself instead of reading
         # startLine/numLines/totalLines back.
         got = hook.record(event())
-        self.assertEqual(('record-coverage', 's1', None, '/corpus/migration.py'),
+        self.assertEqual(('record-coverage', 's1', None, None,
+                          '/corpus/migration.py'),
                          (got['hook'], got['session_id'], got['agent_id'],
-                          got['file_path']))
+                          got['agent_type'], got['file_path']))
         self.assertEqual((139, 50, 316), (got['start'], got['lines'], got['total']))
         self.assertEqual((139, 50), (got['offset'], got['limit']))
         self.assertEqual(2814, got['bytes'])
         self.assertIs(False, got['is_error'])
+
+    def test_a_worker_read_carries_both_of_the_fields_that_identify_it(self):
+        # intake_ledger.py:134 judges a parent by `not (agent_id or
+        # agent_type)`. Recording only agent_id files a worker Read whose
+        # event carries agent_type alone as if the parent had made it, and
+        # worker reads are full-file by design -- they would drag every
+        # rate up.
+        self.assertEqual(('a7', None),
+                         (hook.record(event(agent_id='a7'))['agent_id'],
+                          hook.record(event(agent_id='a7'))['agent_type']))
+        typed = hook.record(event(agent_type='token-shunt:bulk-reader'))
+        self.assertEqual('token-shunt:bulk-reader', typed['agent_type'])
+
+    def test_a_failed_read_keeps_the_row_but_claims_no_lines(self):
+        # Fails if the hook drops error rows: the count of attempts would
+        # silently fall, which is how a corrected count of 21 in 10 of 14
+        # once got published as 26 in 12 of 14.
+        got = hook.record(event(is_error=True))
+        self.assertEqual((None, None, None, 0),
+                         (got['start'], got['lines'], got['total'], got['bytes']))
+        self.assertIs(True, got['is_error'])
+        self.assertEqual('/corpus/migration.py', got['file_path'])
+
+    def test_a_full_read_records_no_offset_and_no_limit(self):
+        # The hook must not decide what counts as "targeted"; it reports the
+        # raw input and lets the aggregator define it.
+        got = hook.record(event(offset=None, limit=None, start=1, lines=316))
+        self.assertEqual((None, None), (got['offset'], got['limit']))
+        self.assertEqual((1, 316, 316), (got['start'], got['lines'], got['total']))
+
+    def test_a_non_read_event_records_nothing(self):
+        self.assertIsNone(hook.record(dict(event(), tool_name='Bash')))
+
+    def test_a_malformed_response_records_a_row_without_line_numbers(self):
+        # Fails if the hook raises on junk: a telemetry crash must not reach
+        # the tool call.
+        for junk in ('', [], {'file': 'not-an-object'}, {'file': {'startLine': 'x'}}):
+            with self.subTest(junk=junk):
+                got = hook.record(dict(event(), tool_response=junk))
+                self.assertEqual('/corpus/migration.py', got['file_path'])
+                self.assertIsNone(got['start'])
+
+    def test_an_event_without_a_path_records_nothing(self):
+        self.assertIsNone(hook.record(dict(event(), tool_input={})))
+        self.assertIsNone(hook.record(dict(event(), tool_input='junk')))
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -178,6 +230,9 @@ def record(event):
         'hook': 'record-coverage',
         'session_id': _str(event.get('session_id')),
         'agent_id': _str(event.get('agent_id')),
+        # Both fields, because intake_ledger.py:134 needs both to tell a
+        # parent from a worker sharing the session.
+        'agent_type': _str(event.get('agent_type')),
         'file_path': path,
         'start': None if failed else _int(file.get('startLine')),
         'lines': None if failed else _int(file.get('numLines')),
@@ -198,12 +253,39 @@ def _str(value):
     return value if isinstance(value, str) and value else None
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest evals/test_record_coverage.py -v`
-Expected: PASS（1 件）
+Expected: PASS（7 件）
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Mutation-check the three tests that guard a specific line**
+
+通ったテストをそのまま信用しない。1 つずつ本番を壊し、**対応するテストだけが
+落ちる**ことを見る。壊したら必ず戻す。
+
+```bash
+# 1) agent_type を落とす -> test_a_worker_read_carries_both_of_the_fields...
+sed -i "s/'agent_type': _str(event.get('agent_type')),/'agent_type': None,/" plugin/hooks/record-coverage
+python3 -m pytest evals/test_record_coverage.py -v   # 1 fail を確認
+git checkout plugin/hooks/record-coverage 2>/dev/null || true
+
+# 2) error 行を捨てる -> test_a_failed_read_keeps_the_row_but_claims_no_lines
+sed -i "s/    if not isinstance(path, str) or not path:/    if not isinstance(path, str) or not path or response.get('is_error'):/" plugin/hooks/record-coverage
+python3 -m pytest evals/test_record_coverage.py -v   # 1 fail を確認
+git checkout plugin/hooks/record-coverage 2>/dev/null || true
+
+# 3) 型を信じる -> test_a_malformed_response_records_a_row_without_line_numbers
+sed -i 's/    return value if type(value) is int else None/    return int(value) if value is not None else None/' plugin/hooks/record-coverage
+python3 -m pytest evals/test_record_coverage.py -v   # 1 fail を確認
+git checkout plugin/hooks/record-coverage 2>/dev/null || true
+```
+
+**落ちなかったテストは、書き直すか捨てる。**
+（まだ commit 前なので `git checkout` が効かない。その場合は編集を手で戻すか、
+先に Step 6 で commit してから mutation を回す。**どちらでもよいが、mutation を
+飛ばしてはいけない。**）
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add plugin/hooks/record-coverage evals/test_record_coverage.py
@@ -211,7 +293,9 @@ git commit -m "$(cat <<'EOF'
 feat: turn one Read into one coverage line
 
 totalLines is why this lives in the hook: a transcript carries only cat -n
-text, so the denominator exists here and nowhere else.
+text, so the denominator exists here and nowhere else. The row carries both
+agent_id and agent_type, because a parent is `not (agent_id or agent_type)`
+and a worker read filed as the parent's would drag every rate up.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Ea4ect8vUPUdiaXkjn2q8w
@@ -221,111 +305,7 @@ EOF
 
 ---
 
-### Task 2: 記録の欠損と異常入力
-
-**Files:**
-- Modify: `plugin/hooks/record-coverage`（必要なら）
-- Test: `evals/test_record_coverage.py`（`RecordTests` に追加）
-
-**Interfaces:**
-- Consumes: Task 1 の `record(event) -> dict | None`
-- Produces: 追加の公開関数なし。`record` の契約が固まる。
-
-- [ ] **Step 1: Write the failing tests**
-
-`RecordTests` の中に追加:
-
-```python
-    def test_a_failed_read_keeps_the_row_but_claims_no_lines(self):
-        # Fails if the hook drops error rows: the count of attempts would
-        # silently fall, which is how a corrected count of 21 in 10 of 14
-        # once got published as 26 in 12 of 14.
-        got = hook.record(event(is_error=True))
-        self.assertEqual((None, None, None, 0),
-                         (got['start'], got['lines'], got['total'], got['bytes']))
-        self.assertIs(True, got['is_error'])
-        self.assertEqual('/corpus/migration.py', got['file_path'])
-
-    def test_a_full_read_records_no_offset_and_no_limit(self):
-        # The hook must not decide what counts as "targeted"; it reports the
-        # raw input and lets the aggregator define it.
-        got = hook.record(event(offset=None, limit=None, start=1, lines=316))
-        self.assertEqual((None, None), (got['offset'], got['limit']))
-        self.assertEqual((1, 316, 316), (got['start'], got['lines'], got['total']))
-
-    def test_a_worker_read_carries_its_agent_id(self):
-        # Fails if agent_id is dropped: parent and worker coverage would be
-        # summed together, and the number would mean nothing.
-        self.assertEqual('a7', hook.record(event(agent_id='a7'))['agent_id'])
-
-    def test_a_non_read_event_records_nothing(self):
-        self.assertIsNone(hook.record(dict(event(), tool_name='Bash')))
-
-    def test_a_malformed_response_records_a_row_without_line_numbers(self):
-        # Fails if the hook raises on junk: a telemetry crash must not reach
-        # the tool call.
-        for junk in ('', [], {'file': 'not-an-object'}, {'file': {'startLine': 'x'}}):
-            with self.subTest(junk=junk):
-                got = hook.record(dict(event(), tool_response=junk))
-                self.assertEqual('/corpus/migration.py', got['file_path'])
-                self.assertIsNone(got['start'])
-
-    def test_an_event_without_a_path_records_nothing(self):
-        self.assertIsNone(hook.record(dict(event(), tool_input={})))
-        self.assertIsNone(hook.record(dict(event(), tool_input='junk')))
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `python3 -m pytest evals/test_record_coverage.py -v`
-Expected: Task 1 の実装が既にこれらを満たしていれば **PASS してしまう。** その場合は
-**テストが本番の変更を捕まえられるか mutation で確かめる**（下記 Step 3）。
-`_int` を `int(value)` に変えると `test_a_malformed_response_...` が
-`ValueError` で落ちる —— それを確認してから元に戻す。
-
-- [ ] **Step 3: Mutation-check each new test**
-
-1 つずつ本番を壊して、対応するテストだけが落ちることを見る:
-
-```bash
-# 1) error 行を捨てる -> test_a_failed_read_keeps_the_row_but_claims_no_lines
-sed -i "s/    if not isinstance(path, str) or not path:/    if not isinstance(path, str) or not path or event.get('tool_response', {}).get('is_error'):/" plugin/hooks/record-coverage
-python3 -m pytest evals/test_record_coverage.py -v   # 1 fail を確認
-git checkout plugin/hooks/record-coverage
-
-# 2) agent_id を落とす -> test_a_worker_read_carries_its_agent_id
-sed -i "s/'agent_id': _str(event.get('agent_id')),/'agent_id': None,/" plugin/hooks/record-coverage
-python3 -m pytest evals/test_record_coverage.py -v   # 1 fail を確認
-git checkout plugin/hooks/record-coverage
-```
-
-**落ちなかったテストは、書き直すか捨てる。**
-
-- [ ] **Step 4: Run the full file**
-
-Run: `python3 -m pytest evals/test_record_coverage.py -v`
-Expected: PASS（7 件）
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add evals/test_record_coverage.py plugin/hooks/record-coverage
-git commit -m "$(cat <<'EOF'
-test: pin the coverage row's missing cases
-
-A failed read keeps its row and claims no lines, a worker read keeps its
-agent_id, and junk in tool_response never raises. Each of the three was
-mutation-checked against the production line that would break it.
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01Ea4ect8vUPUdiaXkjn2q8w
-EOF
-)"
-```
-
----
-
-### Task 3: `main()` —— 書き出し、既定 OFF、deny 経路なし
+### Task 2: `main()` —— 書き出し、既定 OFF、deny 経路なし
 
 **Files:**
 - Modify: `plugin/hooks/record-coverage`
@@ -333,7 +313,7 @@ EOF
 - Test: `evals/test_record_coverage.py`
 
 **Interfaces:**
-- Consumes: Task 1–2 の `record(event) -> dict | None`
+- Consumes: Task 1 の `record(event) -> dict | None`
 - Produces: `main() -> None`（stdin から 1 イベントを読み、`TOKEN_SHUNT_HOOK_LOG` があれば
   `write-hook-log` に 1 行流す）。実行ファイルとしての契約: **exit 0、stdout 空。**
 
@@ -397,9 +377,15 @@ class EntryPointTests(unittest.TestCase):
         # The safety property is structural, not behavioural: if a decision
         # path is ever added, this fails before any test of its behaviour.
         source = SOURCE.read_text()
-        for forbidden in ('hookSpecificOutput', 'permissionDecision',
-                          'intake_ledger'):
+        for forbidden in ('hookSpecificOutput', 'permissionDecision'):
             self.assertNotIn(forbidden, source)
+
+    def test_the_hook_does_not_import_lock_b(self):
+        # Lock B is inert at budget 0, which is the shipped default. Sharing
+        # a module with it would make this instrument inert too. A comment
+        # may cite intake_ledger.py:134 -- only an import is forbidden.
+        self.assertIsNone(re.search(r'(?m)^\s*(import|from)\s+intake_ledger',
+                                    SOURCE.read_text()))
 
     def test_stdout_stays_empty_even_for_a_read_it_records(self):
         result = self.run_hook(event(), self.root / 'hooklog')
@@ -482,7 +468,7 @@ PY
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest evals/test_record_coverage.py -v`
-Expected: PASS（15 件）
+Expected: PASS（16 件）
 
 そして**既存の配線テストを壊していないこと**を確認する:
 
@@ -511,21 +497,25 @@ EOF
 
 ---
 
-### Task 4: `read_coverage.py` —— 行域の和集合
+### Task 3: `read_coverage.py` —— 行域の和集合
 
 **Files:**
 - Create: `evals/compare/read_coverage.py`
 - Test: `evals/compare/test_read_coverage.py`
 
 **Interfaces:**
-- Consumes: Task 1–3 が書く JSONL 行（キーは Task 1 の Produces を参照）
+- Consumes: Task 1–2 が書く JSONL 行（キーは Task 1 の Produces を参照）
 - Produces:
   - `load(path) -> list[dict]` —— hooklog から `hook == "record-coverage"` の行だけ
   - `rows(records) -> list[dict]` —— キーは
-    `session_id, agent_id, file_path, reads, covered, total, coverage,
-    overlap, segments, bytes, total_changed`。
-    `coverage` は `float | None`（`total_changed` または `total` が無い/0 のとき `None`）
-  - `rollup(rows) -> dict` —— キーは `files, reads, covered, total, coverage`
+    `session_id, parent, agent_id, agent_type, file_path, reads, covered,
+    total, coverage, overlap, segments, bytes, total_changed, impossible`。
+    `parent` は `bool`（`not (agent_id or agent_type)`）。
+    `coverage` は `float | None`（`total_changed` / `impossible` / `total` が
+    無い・0 のとき `None`）
+  - `rollup(rows) -> dict` —— キーは `files, reads, covered, total, coverage, excluded`
+  - `sessions(records) -> list[str]` —— 現れた `session_id`。1 会話で 2 つ以上なら
+    `--resume` が別セッションになっている合図（spec §8.7）
   - `COLUMNS: tuple[str, ...]` —— CSV の列順
   - `main(argv=None) -> int`
 
@@ -553,11 +543,12 @@ import read_coverage  # noqa: E402
 
 
 def line(path='/c/a.py', start=1, lines=10, total=100, bytes=500,
-         session='s1', agent=None, offset=1, limit=10, is_error=False):
+         session='s1', agent=None, agent_type=None, offset=1, limit=10,
+         is_error=False):
     return {'hook': 'record-coverage', 'session_id': session, 'agent_id': agent,
-            'file_path': path, 'start': start, 'lines': lines, 'total': total,
-            'bytes': bytes, 'offset': offset, 'limit': limit,
-            'is_error': is_error}
+            'agent_type': agent_type, 'file_path': path, 'start': start,
+            'lines': lines, 'total': total, 'bytes': bytes, 'offset': offset,
+            'limit': limit, 'is_error': is_error}
 
 
 class CoverageTests(unittest.TestCase):
@@ -602,9 +593,27 @@ class CoverageTests(unittest.TestCase):
 
     def test_parent_and_worker_are_separate_rows(self):
         got = read_coverage.rows([line(agent=None), line(agent='a7')])
-        self.assertEqual([None, 'a7'], sorted(
-            (r['agent_id'] for r in got), key=lambda v: (v is not None, v)))
+        self.assertEqual([True, False], [r['parent'] for r in got])
         self.assertEqual([10, 10], [r['covered'] for r in got])
+
+    def test_a_worker_known_only_by_its_type_is_not_filed_as_the_parent(self):
+        # intake_ledger.py:134 judges a parent by `not (agent_id or
+        # agent_type)`. Grouping on agent_id alone merges this worker's
+        # full-file reads into the parent's row.
+        got = read_coverage.rows([
+            line(agent=None, start=1, lines=10),
+            line(agent=None, agent_type='token-shunt:bulk-reader',
+                 start=1, lines=100)])
+        self.assertEqual(2, len(got))
+        self.assertEqual([True, False], [r['parent'] for r in got])
+        self.assertEqual([10, 100], [r['covered'] for r in got])
+
+    def test_a_read_past_the_end_of_the_file_reports_no_rate(self):
+        # check-reader-contract:143 treats start+count-1 <= total as a
+        # validity condition. Broken data is not a coverage of 1.4.
+        got = self.only(line(start=1, lines=140, total=100))
+        self.assertIs(True, got['impossible'])
+        self.assertIsNone(got['coverage'])
 
     def test_the_rollup_leaves_out_the_rows_with_no_rate(self):
         got = read_coverage.rollup(read_coverage.rows([
@@ -615,6 +624,13 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(25, got['covered'])
         self.assertEqual(100, got['total'])
         self.assertEqual(0.25, got['coverage'])
+        self.assertEqual(1, got['excluded'])
+
+    def test_two_sessions_in_one_log_are_reported(self):
+        # A follow-up turn that starts a new session would split one
+        # conversation's coverage in two and read as a lower rate.
+        self.assertEqual(['s1', 's2'], read_coverage.sessions(
+            [line(session='s1'), line(session='s2'), line(session='s1')]))
 
 
 class LoadTests(unittest.TestCase):
@@ -661,8 +677,9 @@ import csv
 import json
 import sys
 
-COLUMNS = ('session_id', 'agent_id', 'file_path', 'reads', 'covered', 'total',
-           'coverage', 'overlap', 'segments', 'bytes', 'total_changed')
+COLUMNS = ('session_id', 'parent', 'agent_id', 'agent_type', 'file_path',
+           'reads', 'covered', 'total', 'coverage', 'overlap', 'segments',
+           'bytes', 'total_changed', 'impossible')
 
 
 def load(path):
@@ -683,14 +700,35 @@ def load(path):
     return found
 
 
+def _parent(row):
+    """Whether the parent issued this read, not a worker sharing the session.
+
+    Both fields, because `intake_ledger.py:134` uses both: a worker whose
+    event carries only `agent_type` would otherwise be filed as the parent,
+    and a worker reads whole files by design.
+    """
+    return not (row.get('agent_id') or row.get('agent_type'))
+
+
+def sessions(records):
+    """Every session id in the log, sorted.
+
+    One conversation should be one id across its follow-up turns. Two means
+    `--resume` started a new session, and the coverage of one conversation
+    has been split in two.
+    """
+    return sorted({r.get('session_id') for r in records if r.get('session_id')})
+
+
 def rows(records):
-    """One row per (session, agent, file): the union of the lines taken."""
+    """One row per (session, reader, file): the union of the lines taken."""
     groups = {}
     for row in records:
-        key = (row.get('session_id'), row.get('agent_id'), row.get('file_path'))
+        key = (row.get('session_id'), _parent(row), row.get('agent_id'),
+               row.get('agent_type'), row.get('file_path'))
         groups.setdefault(key, []).append(row)
     out = []
-    for (session, agent, path), taken in groups.items():
+    for (session, parent, agent, agent_type, path), taken in groups.items():
         spans = [(r['start'], r['start'] + r['lines'] - 1) for r in taken
                  if type(r.get('start')) is int and type(r.get('lines')) is int
                  and r['lines'] > 0]
@@ -699,16 +737,22 @@ def rows(records):
         covered = sum(end - start + 1 for start, end in merged)
         changed = len(set(totals)) > 1
         total = totals[-1] if totals else None
+        # A read past the end of the file means the event was wrong, not
+        # that the parent recovered 140% of it.
+        impossible = bool(total) and covered > total
         out.append({
-            'session_id': session, 'agent_id': agent, 'file_path': path,
+            'session_id': session, 'parent': parent, 'agent_id': agent,
+            'agent_type': agent_type, 'file_path': path,
             'reads': len(taken), 'covered': covered, 'total': total,
-            'coverage': None if changed or not total else covered / total,
+            'coverage': None if changed or impossible or not total
+                        else covered / total,
             'overlap': sum(end - start + 1 for start, end in spans) - covered,
             'segments': len(merged),
             'bytes': sum(r.get('bytes') or 0 for r in taken),
-            'total_changed': changed})
-    return sorted(out, key=lambda r: (r['session_id'] or '',
-                                      r['agent_id'] or '', r['file_path']))
+            'total_changed': changed, 'impossible': impossible})
+    return sorted(out, key=lambda r: (r['session_id'] or '', not r['parent'],
+                                      r['agent_id'] or '',
+                                      r['agent_type'] or '', r['file_path']))
 
 
 def _merge(spans):
@@ -730,14 +774,17 @@ def rollup(counted):
     """The rate across the files that have one.
 
     A file whose size changed mid-session has no defensible denominator, so
-    it is left out here rather than averaged in silently.
+    it is left out here rather than averaged in silently. `excluded` is
+    reported because that exclusion is not random: it drops the files an
+    edit touched, which leaves a population of files that were only read.
     """
     usable = [r for r in counted if r['coverage'] is not None]
     covered = sum(r['covered'] for r in usable)
     total = sum(r['total'] for r in usable)
     return {'files': len(usable), 'reads': sum(r['reads'] for r in usable),
             'covered': covered, 'total': total,
-            'coverage': (covered / total) if total else None}
+            'coverage': (covered / total) if total else None,
+            'excluded': len(counted) - len(usable)}
 
 
 def main(argv=None):
@@ -755,9 +802,19 @@ def main(argv=None):
         writer.writerow(row)
     summary = rollup(counted)
     print('# files=%(files)d reads=%(reads)d covered=%(covered)d '
-          'total=%(total)d' % summary, file=sys.stderr)
+          'total=%(total)d excluded=%(excluded)d' % summary, file=sys.stderr)
     print('# coverage=%s' % ('-' if summary['coverage'] is None
                              else '%.4f' % summary['coverage']), file=sys.stderr)
+    # This number is not a ranking. A parent that took 30% in slices
+    # polluted itself; a parent that took 30% because Grep answered the
+    # question did not. They print the same.
+    print('# coverage is what the parent did, not how well it did it:'
+          ' a low rate is neither good nor bad', file=sys.stderr)
+    found = sessions(records)
+    if len(found) > 1:
+        print('# WARNING: %d session ids in this log (%s): one conversation'
+              ' split across sessions reads as a lower rate'
+              % (len(found), ','.join(found)), file=sys.stderr)
     return 0
 
 
@@ -768,7 +825,7 @@ if __name__ == '__main__':
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python3 -m pytest evals/compare/test_read_coverage.py -v`
-Expected: PASS（9 件）
+Expected: PASS（12 件）
 
 - [ ] **Step 5: Commit**
 
@@ -779,7 +836,9 @@ feat: aggregate per-file coverage from the hook log
 
 Adjacent reads join into one segment, overlapping lines are counted once,
 and a file whose totalLines moved mid-session reports no rate at all rather
-than an average across two denominators.
+than an average across two denominators. Parent and worker are told apart
+by both agent fields, since a worker reads whole files by design, and the
+rollup says in its own output that the rate is not a ranking.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Ea4ect8vUPUdiaXkjn2q8w
@@ -789,14 +848,14 @@ EOF
 
 ---
 
-### Task 5: `run.sh` の pass-through
+### Task 4: `run.sh` の pass-through
 
 **Files:**
 - Modify: `evals/compare/run.sh`（`_claude_call` 内、`TOKEN_SHUNT_SESSION_BUDGET_BYTES` の export の直後）
 - Test: `evals/compare/test_runner.py`
 
 **Interfaces:**
-- Consumes: Task 3 の `TOKEN_SHUNT_HOOK_LOG` 依存
+- Consumes: Task 2 の `TOKEN_SHUNT_HOOK_LOG` 依存
 - Produces: run ごとに `<transcript>.hooklog` が生まれる（`cost_probe.py` と同じ命名）
 
 - [ ] **Step 1: Write the failing test**
@@ -823,30 +882,47 @@ cat "$TRD/base"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(result.stdout.endswith('/base.hooklog'), result.stdout)
 
-    def test_a_callers_hook_log_cannot_escape_the_run_directory(self):
-        # A path exported by the caller would send one run's telemetry into
-        # another run's file, or outside the measurement tree entirely.
+    def test_each_call_gets_its_own_hook_log(self):
+        # Not "a caller's export cannot escape": _claude_call unsets every
+        # TOKEN_SHUNT_* name before this line runs, so a buggy
+        # ${TOKEN_SHUNT_HOOK_LOG:-$out.hooklog} would pass that test too. What
+        # can actually break is pinning one path for the whole run, which
+        # would pour five follow-up turns into one file and make a turn
+        # impossible to tell from its successor.
         result = self.shell('''
 ONLY=''; SUITE=''; setup_run || exit 1
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/claude" <<'CLI'
 #!/bin/bash
-printf '%s' "${TOKEN_SHUNT_HOOK_LOG-unset}"
+printf '%s\n' "${TOKEN_SHUNT_HOOK_LOG-unset}"
 CLI
 chmod +x "$TMP/bin/claude"
 export PATH="$TMP/bin:$PATH"
-export TOKEN_SHUNT_HOOK_LOG=/tmp/somewhere-else
-run_claude prompt "$TRD/base"
-cat "$TRD/base"
+run_claude prompt "$TRD/one"
+run_claude prompt "$TRD/two"
+cat "$TRD/one" "$TRD/two"
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout.endswith('/base.hooklog'), result.stdout)
+        got = result.stdout.split()
+        self.assertEqual(2, len(got), result.stdout)
+        self.assertTrue(got[0].endswith('/one.hooklog'), got)
+        self.assertTrue(got[1].endswith('/two.hooklog'), got)
+        self.assertNotEqual(got[0], got[1])
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest evals/compare/test_runner.py -k hook_log -v`
 Expected: FAIL —— 両方 `'unset'` が返る（`_claude_call` が剥がしたまま）。
+
+**そして、通した後に mutation で確かめる:**
+
+```bash
+# run 全体で 1 本に固定する実装にすると、2 本目のテストだけが落ちる
+sed -i 's|export TOKEN_SHUNT_HOOK_LOG=$out.hooklog|export TOKEN_SHUNT_HOOK_LOG=$TRD/run.hooklog|' evals/compare/run.sh
+python3 -m pytest evals/compare/test_runner.py -k hook_log -v   # 1 fail を確認
+git checkout evals/compare/run.sh
+```
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -885,13 +961,13 @@ EOF
 
 ---
 
-### Task 6: エンドツーエンド —— 計器の両端を 1 本のテストで結ぶ
+### Task 5: エンドツーエンド —— 計器の両端を 1 本のテストで結ぶ
 
 **Files:**
 - Test: `evals/compare/test_read_coverage.py`（`EndToEndTests` を追加）
 
 **Interfaces:**
-- Consumes: Task 3 の実行ファイル契約、Task 4 の `load`/`rows`
+- Consumes: Task 2 の実行ファイル契約、Task 3 の `load`/`rows`
 - Produces: なし（検証のみ）
 
 - [ ] **Step 1: Write the failing test**
@@ -920,7 +996,7 @@ class EndToEndTests(unittest.TestCase):
         # and one gap, so every column has a value worth getting wrong.
         for start, count in ((1, 40), (31, 40), (120, 20)):
             body = {'hook_event_name': 'PostToolUse', 'tool_name': 'Read',
-                    'session_id': 'e2e', 'agent_id': None,
+                    'session_id': 'e2e', 'agent_id': None, 'agent_type': None,
                     'tool_input': {'file_path': '/c/big.py',
                                    'offset': start, 'limit': count},
                     'tool_response': {'type': 'text', 'file': {
@@ -936,6 +1012,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(1, len(got))
         row = got[0]
         # 1-70 is 70 lines, 120-139 is 20: 90 of 200.
+        self.assertIs(True, row['parent'])
         self.assertEqual(3, row['reads'])
         self.assertEqual(90, row['covered'])
         self.assertEqual(200, row['total'])
@@ -944,13 +1021,14 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(2, row['segments'])
         self.assertEqual(3000, row['bytes'])
         self.assertIs(False, row['total_changed'])
+        self.assertIs(False, row['impossible'])
 ```
 
 - [ ] **Step 2: Run test to verify it fails, then passes**
 
 Run: `python3 -m pytest evals/compare/test_read_coverage.py::EndToEndTests -v`
 
-Task 1–5 が済んでいれば PASS する。**PASS したら mutation で確かめる:**
+Task 1–4 が済んでいれば PASS する。**PASS したら mutation で確かめる:**
 
 ```bash
 # 隣接を結合しない実装にすると segments が 3 になる
@@ -986,7 +1064,7 @@ EOF
 
 ---
 
-### Task 7: ドキュメント —— 何が計られ、何が計られないか
+### Task 6: ドキュメント —— 何が計られ、何が計られないか
 
 **Files:**
 - Modify: `README.md`（環境変数の表）
@@ -994,7 +1072,7 @@ EOF
 - Modify: `docs/superpowers/specs/2026-09-19-targeted-read-coverage-design.md`（実装記録の節）
 
 **Interfaces:**
-- Consumes: Task 1–6 の全部
+- Consumes: Task 1–5 の全部
 - Produces: なし
 
 - [ ] **Step 1: README の環境変数表に 1 行足す**
@@ -1025,6 +1103,10 @@ EOF
 
 `docs/superpowers/specs/2026-09-19-targeted-read-coverage-design.md` の末尾に `## 9. 実装記録` を作り、
 実際に書いたファイル・テスト件数・mutation で確認した項目・**まだ 1 行もデータが無いこと**を書く。
+併せて、**最初の 1 run で確かめる 2 点**を書き残す:
+(a) `--resume` をまたいで `session_id` が同じか（spec §8.7、集計器の警告で分かる）、
+(b) worker の Read が `agent_id`／`agent_type` のどちらを載せて来るか
+（両方記録しているので、**最初の CSV の `parent` 列を見れば分かる**）。
 **設計と実装が食い違っていたら、spec 側を直して両方を commit する**（片方だけ直さない）。
 
 - [ ] **Step 4: 退避の手順を run sheet の書式で書く**
