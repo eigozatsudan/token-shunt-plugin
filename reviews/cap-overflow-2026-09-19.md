@@ -15,8 +15,9 @@ Fisher 両側 **p = 0.35942**。**差は決まらない。**
 treated 39 run のうち `stop_reason: cap_reached` を返した run は **0 件**。
 `status: partial` も treated **1/39** で、control **2/39** より**低い**。
 設計 §5-2 は「効いているなら partial は上がるはず」と書いた。**上がっていない。**
-**規則は読まれた形跡が無い。** 率が動かなかったのではなく、
-**そもそも規則が使われなかった。**
+**規則が届いていなかったのではない。** §6 で $0 で確かめた通り、
+**追加文は worker に届き、出力の書式まで変えている**（Fisher p = 1.72e-12）。
+**見えていて、条件に当てはまる 14 回で、使われなかった。**
 
 **3. 盲検は失われている。**（§7.2.2）
 `--runs` の取り違えで止まった理由を調べる過程で、driver のログの
@@ -162,12 +163,82 @@ runtime 側（返答が上限を超えたら worker に送り返す）が次の�
 **本ブロックはそこまで言わない**（設計 §6-3 の通り）。
 **残高（上限 $200 に対し累計 約 $190.3）でも、次のブロックは組めない。**
 
-`capfix` ブランチ（契約文の変更、`77ef7b1`）の扱いは**別途決める。**
+`capfix` は `9690a72` で main にマージ済み（`--no-ff`、根拠は §6 ではなく §1.1 の穴）。
 **「超過率を下げた」という根拠には使えない。**
 ただし**悪化もしていない**ので、
 「上限を超えるときの逃げ道が契約に無い」という §1.1 の指摘自体は残る。
 
-## 6. 残したもの
+## 6. 追記 — 規則は届いていた（$0、2026-09-19、事後）
+
+§0-2 は「規則が使われなかった」と書いた。**では届いていたのか。**
+届いていなければ、このブロックは何も測っていない。**$0 で確認した。**
+
+### 6.1 配送経路
+
+`run.sh:759` は `--plugin-dir "$ROOT/plugin"`、`ROOT` は
+`evals/compare` から見た worktree の根である（`run.sh:11`）。
+**腕ごとの worktree の `plugin/` がそのまま読まれる。**
+
+- control `~/wt/ts-cap-control/plugin/agents/bulk-reader.md`
+  6,653 B、当該文 **0 件**
+- treated `~/wt/ts-cap-treated/plugin/agents/bulk-reader.md`
+  7,025 B、当該文 **1 件**
+- **両方とも 10:27 に書かれ、以後変更なし**（`git status -- plugin/` は clean）。
+  最初の run は control 10:29 / treated 10:48。**走る前から所定の内容である。**
+- `run.sh` の `probe-load` は毎 run
+  `token-shunt:bulk-reader` の登録を確認しており、
+  **78 run すべて `errors=[]`** である。
+
+### 6.2 transcript では確認できない
+
+**agent の system prompt は transcript に現れない。**
+追加文が出てこないのは当然で、**既存の契約文
+（`4000 characters maximum`）も 1 件も出てこない。**
+**不在は証拠にならない。** ここで止めれば「届いたか不明」で終わる。
+
+### 6.3 worker の出力が腕で分かれている
+
+`stop_reason` の**書式**を数えた（`judge.reader_fields` で抽出）。
+
+| 腕 | snake_case のトークン | 散文 | n |
+|---|---|---|---|
+| control | **4** | 38 | 42 |
+| treated | **34** | 5 | 39 |
+
+Fisher 両側 **p = 1.72e-12**。
+
+control は `All three files read in full; call chain traced from…` のような
+**文章**を返し、treated は `all_files_read_successfully` /
+`all_facts_retrieved` / `unread_dependency` のような
+**トークン**を返している。
+
+**case も prompt も corpus も model も同一で、腕の違いは
+あの 1 段落しかない。** したがって **追加文は worker に届いている。**
+
+### 6.4 では何が起きたのか
+
+**これが本ブロックの本当の結果である。**
+
+> **追加文は読まれ、出力の書式を変え、しかし
+> 上限のところでは使われなかった。**
+
+`cap_reached` が 0/39 なのは、規則が見えていなかったからではない。
+**見えていて、条件に当てはまる 14 回で、使われなかった。**
+
+### 6.5 この節の位置づけ
+
+**事前登録していない。** 「届いたか」を確かめる方針は
+transcript を見る前に決めたが、
+**`stop_reason` の書式という指標は、表を見た後に選んだ。**
+p = 1.72e-12 は**探索的**であり、§2 の主要指標と同じ重みでは読まない。
+
+書式が変わった**理由**も確定していない。
+control の契約文には既に `stop_reason: unreadable_line` という
+snake_case の例が 1 つあり、追加文はそれを 2 つに増やした。
+**もっともらしいが、証明していない。**
+**言えるのは「腕で出力が分かれた、ゆえに届いた」までである。**
+
+## 7. 残したもの
 
 - `reviews/data/cap-overflow-2026-09-19.csv` — 78 行、run ごとの腕・判定・返答長
 - `reviews/data/cap-overflow-2026-09-19-meta.tar.gz` — summary.json 78 件
@@ -177,7 +248,7 @@ runtime 側（返答が上限を超えたら worker に送り返す）が次の�
 CSV は `judge.py` 自身の機構（`judge.Transcript` / `judge.load_events` /
 `judge.child_model_text`）で作った。**別の採点器は書いていない。**
 
-### 6.1 sha256
+### 7.1 sha256
 
 | ファイル | sha256 |
 |---|---|
