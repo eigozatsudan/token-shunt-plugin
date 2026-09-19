@@ -77,8 +77,19 @@ setup_run() {
     | while IFS=$'\t' read -r cid env; do
         external_ready "$env" || printf '%s\n' "$cid"
       done | jq -Rsc 'split("\n") | map(select(length > 0))') || return 1
+  # A typo in the arm's own variable must not read as the baseline: such a
+  # run would bill, complete, and be filed under the wrong arm.
+  if [[ ! ${SESSION_BUDGET_BYTES:-0} =~ ^[0-9]+$ ]]; then
+    say "FAIL: SESSION_BUDGET_BYTES must be a whole number of bytes: ${SESSION_BUDGET_BYTES}"
+    return 1
+  fi
+  # Which arm this run is. Lock B ships off and is turned on by an
+  # environment variable, so two runs of the same checkout differ only here;
+  # a run that never fired the lock is otherwise indistinguishable from a
+  # baseline one (the measured rate is 1 conversation in 14).
   jq --arg only "$ONLY" --arg suite "$SUITE" --arg modes "$MODES" \
-     --arg slots "$SLOTS" --argjson absent "$absent" '
+     --arg slots "$SLOTS" --argjson absent "$absent" \
+     --argjson budget "${SESSION_BUDGET_BYTES:-0}" '
     ($only | split(",") | map(select(length > 0))) as $ids |
     ($modes | split(",") | map(select(length > 0))) as $ms |
     ($slots | split(",") | map(select(length > 0))) as $sl |
@@ -97,7 +108,8 @@ setup_run() {
      # `required` is what a complete suite means, so it never follows the
      # selection: the shelf is out of it whether or not this run named it.
      required:(.cases | map(select(.suite != "X")) | pairs),
-     unknown_slots:($sl | map(select(. as $p | $declared | index($p) | not)))}' \
+     unknown_slots:($sl | map(select(. as $p | $declared | index($p) | not))),
+     session_budget_bytes:$budget}' \
     "$CMP/cases.json" >"$MANIFEST" || return 1
   if ! jq -e '.unknown_slots | length == 0' "$MANIFEST" >/dev/null; then
     say "FAIL: no declared case/mode for slot: $(jq -r '.unknown_slots | join(", ")' "$MANIFEST")"

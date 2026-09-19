@@ -298,7 +298,12 @@ worktree・run ディレクトリ・ログは `/tmp` の外（`~/wt/`、`~/measu
 
 ### 5.6 腕・盲検・停止規則
 
-- 腕の差は `plugin/` の Lock B のみ。
+- **腕の差は環境変数 `SESSION_BUDGET_BYTES` 1 つだけである（2026-09-19 改訂、§7.7）。**
+  初版は「腕の差は `plugin/` の Lock B のみ」と書いたが、**既定が 0 になった
+  以上、両腕は同一のチェックアウトで走る** —— control は何も渡さず、
+  treated だけ `SESSION_BUDGET_BYTES=16384` を渡す。
+  cap-overflow が worktree の `plugin/` で腕を作ったのと違い、
+  **コードは 1 本になるので、腕の取り違えはコードの差ではなく記録の問題になる。**
 - **1 run 目から 5/5 交互。** cap-overflow は最初の 20 run が
   control 10 → treated 10 で、時刻と腕が相関した。
 - **ブロック中に driver の FAIL 行を読まない。** cap-overflow の盲検は
@@ -428,3 +433,22 @@ treated 腕だけが `SESSION_BUDGET_BYTES=16384` を渡す。
 機構の正常動作とするか**を決める必要がある。**本書では決めない** ——
 昇格は §5 の実行結果とセットであり、**先に契約だけ動かすと、
 測定前にゲートの意味が変わる。**
+
+### 7.7 腕を記録する経路を作った（2026-09-19、$0）
+
+§5.6 を環境変数 1 つに変えたことで、**run ディレクトリ自身が腕を言えなければ
+ならなくなった。** cap-overflow では worktree のパスが腕の証拠だったが、
+Lock B の両腕は同じチェックアウトで走る。しかも
+**発火率は 1/14 なので、発火しなかった treated run は control run と
+見分けがつかない。**
+
+- `run.sh` の `setup_run` が manifest に `session_budget_bytes` を書く。
+- `judge.aggregate` がそれを `summary.json` / `last-run.json` へ通す。
+  **Lock B 以前の manifest は 0（無効）として読む** —— 実際そう走っていた。
+- `SESSION_BUDGET_BYTES` が数字でなければ **run を止める** ——
+  腕の変数の打ち間違いが**課金して完走し、間違った腕に集計される**のが
+  最悪の壊れ方なので、そこだけ fail-closed にした
+  （フック側の fail-open（§2）は変えていない。壊れた台帳は何も拒まない）。
+
+テストは `evals/compare/test_runner.py` 3 件と `test_aggregate.py` 2 件。
+**課金は発生していない。**

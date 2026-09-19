@@ -2537,6 +2537,14 @@ def aggregate(verdict_dir, spec_dir, fix_dir, out_path, manifest_path=None):
                     "release_gate": False}
     out = {"generated_at": __import__("datetime").datetime.now().isoformat(),
            "cases": cases, "fail_count": fails, "errors": errors,
+           # Which arm this run is. Lock B ships off and is switched on by
+           # an environment variable, so the checkout does not say, and a
+           # treated run that never fired the lock looks exactly like a
+           # baseline one. A manifest written before Lock B existed ran with
+           # it off.
+           "session_budget_bytes": (manifest.get("session_budget_bytes")
+                                    if numeric(manifest.get("session_budget_bytes"))
+                                    else 0),
            "selected_run_valid": fails == 0,
            "release_eligible": fails == 0 and planned == mandatory,
            "parent_token_deltas": deltas, "suite_cost_usd": cost_summary}

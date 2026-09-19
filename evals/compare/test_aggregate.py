@@ -103,6 +103,23 @@ class AggregateTests(unittest.TestCase):
         self.assertTrue(out['selected_run_valid'])
         self.assertFalse(out['release_eligible'])
 
+    def test_the_session_budget_travels_from_manifest_to_summary(self):
+        # With Lock B the two arms of the cumulative-intake block differ by
+        # one environment variable, not by the checkout, so a run directory
+        # can only say which arm it was if the number is written down.
+        self.add()
+        self.manifest['session_budget_bytes'] = 16384
+        status, out = self.run_aggregate()
+        self.assertEqual(status, 0)
+        self.assertEqual(16384, out['session_budget_bytes'])
+
+    def test_a_manifest_without_the_budget_reads_as_the_shipped_default(self):
+        # Every run recorded before Lock B existed ran with it off.
+        self.add()
+        status, out = self.run_aggregate()
+        self.assertEqual(status, 0)
+        self.assertEqual(0, out['session_budget_bytes'])
+
     def test_empty_and_missing_manifest_fail(self):
         self.assertEqual(self.run_aggregate()[0], 1)
         with contextlib.redirect_stdout(io.StringIO()):

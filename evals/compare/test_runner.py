@@ -466,6 +466,33 @@ cat "$TRD/on"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, '16384')
 
+    def test_the_manifest_records_which_arm_the_run_is(self):
+        result = self.shell('''
+SESSION_BUDGET_BYTES=16384
+ONLY=auto-small-files; SUITE=B; setup_run || exit 1
+jq -r '.session_budget_bytes' "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual('16384', result.stdout.strip())
+
+    def test_the_manifest_records_the_baseline_arm_as_zero(self):
+        result = self.shell('''
+ONLY=auto-small-files; SUITE=B; setup_run || exit 1
+jq -r '.session_budget_bytes' "$MANIFEST"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual('0', result.stdout.strip())
+
+    def test_an_unusable_session_budget_stops_the_run(self):
+        # A typo in the arm's own variable must not read as the baseline:
+        # the run would bill, complete, and be filed under the wrong arm.
+        result = self.shell('''
+SESSION_BUDGET_BYTES=16k
+ONLY=auto-small-files; SUITE=B; setup_run || exit 1
+''')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('SESSION_BUDGET_BYTES', result.stdout + result.stderr)
+
     def test_modes_restricts_planned_pairs_and_unset_keeps_every_mode(self):
         result = self.shell('''
 ONLY=auto-small-files; SUITE=B; setup_run || exit 1
