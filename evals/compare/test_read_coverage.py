@@ -120,3 +120,52 @@ class LoadTests(unittest.TestCase):
             name = handle.name
         self.addCleanup(lambda: Path(name).unlink())
         self.assertEqual(1, len(read_coverage.load(name)))
+
+
+import json as _json
+import os
+import subprocess
+
+HOOK = Path(__file__).resolve().parents[2] / 'plugin' / 'hooks' / 'record-coverage'
+
+
+class EndToEndTests(unittest.TestCase):
+    """Three real Reads through the real hook, then the real aggregator."""
+
+    def test_the_two_ends_of_the_instrument_agree(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        log = Path(temp.name) / 'hooklog'
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith('TOKEN_SHUNT_')}
+        env['TOKEN_SHUNT_HOOK_LOG'] = str(log)
+        # 1-40, 31-70, 120-139 of a 200-line file: one overlap of ten lines
+        # and one gap, so every column has a value worth getting wrong.
+        for start, count in ((1, 40), (31, 40), (120, 20)):
+            body = {'hook_event_name': 'PostToolUse', 'tool_name': 'Read',
+                    'session_id': 'e2e', 'agent_id': None, 'agent_type': None,
+                    'tool_input': {'file_path': '/c/big.py',
+                                   'offset': start, 'limit': count},
+                    'tool_response': {'type': 'text', 'file': {
+                        'filePath': '/c/big.py', 'content': 'x' * (count * 30),
+                        'startLine': start, 'numLines': count,
+                        'totalLines': 200}}}
+            result = subprocess.run([sys.executable, str(HOOK)],
+                                    input=_json.dumps(body), text=True,
+                                    timeout=10, capture_output=True, env=env)
+            self.assertEqual((0, ''), (result.returncode, result.stdout))
+
+        got = read_coverage.rows(read_coverage.load(str(log)))
+        self.assertEqual(1, len(got))
+        row = got[0]
+        # 1-70 is 70 lines, 120-139 is 20: 90 of 200.
+        self.assertIs(True, row['parent'])
+        self.assertEqual(3, row['reads'])
+        self.assertEqual(90, row['covered'])
+        self.assertEqual(200, row['total'])
+        self.assertEqual(0.45, row['coverage'])
+        self.assertEqual(10, row['overlap'])
+        self.assertEqual(2, row['segments'])
+        self.assertEqual(3000, row['bytes'])
+        self.assertIs(False, row['total_changed'])
+        self.assertIs(False, row['impossible'])
