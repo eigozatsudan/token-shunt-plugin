@@ -31,7 +31,13 @@
 
 - Skill 読み込みターン **9 回中 1 回**（目標 0 回）= ×
 - `gold_confirmed` **`auto-explicit-multifile` の 6 実行すべてで 3 件欠落**
-  （目標 0 件）= ×。**原因が本計画由来かは未確定**と同レビューが記している。
+  （目標 0 件）= ×。**2026-09-20 に原因を名指しした（$0）**:
+  変更前後あわせて **36 件すべてが `parent dropped the worker's path`** で、
+  worker は 12 実行すべて正しく絶対パス付きで確認していた。
+  ただし **この 12 実行で deny は 1 度も出ておらず**（`parent_reads` は 6 実行中 5 で 0）、
+  保持要件を持つ `reader-call-contract` は deny に載って届く。
+  **この終了条件は、それが試す指示が届かない経路で採点されていた。**
+  —— `reviews/gold-confirmed-cause-2026-09-20.md`（判断が要る点は同 §4）。
 
 **リリースゲートの合格ではなく、deny プロトコルの改善としてマージされた**
 （final review の Assessment 末尾）。

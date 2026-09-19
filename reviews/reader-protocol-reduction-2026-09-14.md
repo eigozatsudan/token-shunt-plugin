@@ -174,6 +174,21 @@ Notifiable, after_create, WelcomeEmailJob`）。よって
 **`missing_gold` は本プランの変更とは独立した既存のギャップ**であり、
 deny へ契約を載せた変更が壊したものではない。
 
+> **原因の名指しと、付随所見の撤回（2026-09-20、$0）。**
+> `judge.gold_confirmed_source`（2026-09-16 以後）を同じ transcript に当てると、
+> **変更前後あわせて 36 件の欠落すべてが `parent dropped the worker's path`** である。
+> worker は 12 実行すべてで 3 つの gold を照合可能な絶対パス付きで確認していた。
+>
+> **下の「worker の引用元が相対ファイル名」は artifact だった。**
+> 当時の `rejudge.*.json` の `fixture_root` だけが相対で（probe 本体は絶対で走っている）、
+> `item_citations` は絶対パスしか拾わないので、**どんな回答でも通らない採点だった。**
+> 判定（× / 6 実行とも失敗）は変わらない —— 親は適格な項目を 1 つも出していない。
+>
+> さらに、**この 12 実行で deny は 1 度も出ていない**（`parent_reads` は 6 実行中 5 で 0）。
+> 保持要件を持つ `reader-call-contract` は deny に載って届くので、
+> **この終了条件は指示が届かない経路で採点されていた。**
+> —— `reviews/gold-confirmed-cause-2026-09-20.md`
+
 #### 付随して見えた差（結論は変えない）
 
 親最終回答に `confirmed:` 形式の項目が出た実行数を数えると:
