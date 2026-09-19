@@ -10,6 +10,46 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-19-targeted-read-coverage-design.md`
 
+## 状態: 実行済み・マージ済み（2026-09-19〜20）。追加作業なし（2026-09-20 確認）
+
+**下の 30 個のチェックボックスは 1 つも付いていないが、未着手という意味ではない。**
+実行中に更新されなかっただけで、計器は実装・レビュー・マージ済みで、実機 3 本と
+アーカイブ 239 会話の再生を通っている。**チェックボックスは記録ではない。**
+30 個を一括で ✓ にはしない —— 手順ごとの検証をしていないものを、したことにしない。
+
+現物で確認したもの（2026-09-20）:
+
+| 確認 | 証拠 |
+|---|---|
+| フックが出荷されている | `plugin/hooks/record-coverage`（4,850 B） |
+| 登録されている | `plugin/hooks/hooks.json:125`、**PostToolUse / matcher `Read`** |
+| 集計器 | `evals/compare/read_coverage.py`（312 行）、`test_read_coverage.py` 30 tests OK |
+| **deny しない** | ソースに `hookSpecificOutput` が 0 箇所 |
+| **`intake_ledger` を import しない** | 出現 2 箇所はいずれもコメント（`:49`、`:77`） |
+| 実機 3 本 | `reviews/read-coverage-2026-09-20.md`（$1.7261） |
+| アーカイブ 239 会話 | `reviews/read-coverage-archive-2026-09-20.md`（$0） |
+
+マージ後に入った修正: `99babe4`（親と worker の率を分ける）、`e768ac2`（stdin を
+読み切る・子を黙らせる）、`ac8c1b3`（hooklog 名ではなく会話でグループ化）、
+`6a50383`（`bytes` 列を `parent_bytes.py` と突き合わせる）、`b794b1f`。
+
+**spec §9 が未検証と書いた 2 点には答えが出た**（実機 3 本、live note §2）:
+worker は `agent_id` と `agent_type` の両方を運ぶ。`--resume` は `session_id` を変えない（n=1）。
+
+**まだ閉じていないもの:**
+
+1. **閾値は無いままである。** spec は「線を引く根拠になる実測は 1 本も無い」と書いた。
+   アーカイブ再生が分布を 1 つ与えた（targeted のみで 0.1398、最大 0.519）が、
+   **24 行・6 ケースである。まだ線を引かない。**
+2. **direct 腕は観測できない**（spec §8.8）。`run.sh` は direct に `--plugin-dir` を
+   渡さないのでフックが走らない。**「direct の被覆率が 0」は成果ではなく計器の不在である。**
+   代わりに direct 腕の読み取りの形は transcript から測った
+   （`reviews/direct-arm-read-shape-2026-09-20.md`、199 Read 中 195 が全文）。
+3. **逐次回収の基底率は低い** —— 親の 24 行中 2 行、うち 1 行はターンをまたいだ。
+   この 1 行が、会話でグループ化するという設計判断（`ac8c1b3`）を実データで支えている。
+
+---
+
 ## Global Constraints
 
 - **このフックは deny してはならない。** stdout に何も書かない。`hookSpecificOutput` という文字列がソースに出現してはならない（spec §4）。

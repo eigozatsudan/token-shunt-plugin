@@ -5,8 +5,17 @@ Design: docs/superpowers/specs/2026-09-19-targeted-read-coverage-design.md
 
 Lock B never denies a targeted Read, and 18 of the 21 archived parent corpus
 Reads were targeted. This says how much of each file those reads added up
-to. It parses no transcript: the denominator (totalLines) is in the hook
-event and nowhere else, so the input is the hook's own log.
+to. The input is the hook's own log, because the hook is the observation
+point on a live run.
+
+It parses no transcript, but the denominator is not exclusive to the hook:
+a transcript's `tool_use_result.file` carries the same `startLine` /
+`numLines` / `totalLines`, so an archived run can be replayed through this
+same aggregator at no cost. `reviews/data/read-coverage-archive-2026-09-20.py`
+does that and reproduces this module's own CSV exactly on the three live
+runs. An earlier version of this docstring said the denominator was in the
+hook event "and nowhere else"; that was wrong, and it is why the archive
+went unmeasured for a day.
 
 It reports what the parent did. High coverage is not a verdict, and there
 is no threshold here, because no measurement supports one yet.
