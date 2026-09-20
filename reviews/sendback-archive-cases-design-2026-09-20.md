@@ -107,6 +107,10 @@ run ディレクトリは消える。
 2. **transcript** → `~/measurements/sendback-2026-09-20/` に **sha256 つきで**。
    リポジトリに入れない。
 3. `summary.json` / `manifest.json` も run ごとに残す。
+4. **`<transcript>.sendback.jsonl`**（§8.1 で追加）。
+   **これが腕の記録である** —— 無い run は `SENDBACK` が届いていない。
+   フック 1 回につき 1 レコードなので、block 0 件の run でも
+   「判定に至ったが block しなかった」と「そもそも呼ばれていない」を分けられる。
 
 ## 8. 走る前に（$0、全部やってから 1 run 目）
 
@@ -117,6 +121,47 @@ run ディレクトリは消える。
 5. **`SENDBACK=on` が届くことを、1 run 目の前に $0 で確認する** ——
    `run.sh:396` は `${SENDBACK:-off}` なので、渡し忘れると
    **「完走した基準線の測定」**になり、block 0 件と区別がつかない。
+
+## 8.1 事前チェックの結果（2026-09-20、$0、実施済み）
+
+**5 項目すべて通った。まだ 1 セントも使っていない。**
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | `~/wt/ts-sendback` | 作成。**detached HEAD（`98e2dbb`）** —— 下記の逸脱を参照 |
+| 2 | `judge.py --selftest` | `selftest: all checks passed` |
+| 3 | unittest 2 スイート | `evals/compare` 815 OK / `evals` 398 OK（skipped 3） |
+| 4 | `DJANGO_ROOT` | `~/src/django` が `bc833e8`、`git describe --tags` = `5.2.1` |
+| 5 | `SENDBACK=on` の到達 | 2 段に分けて確認、下記 |
+
+**逸脱（再開前に記録する）。** §3 は `~/wt/ts-sendback` を作るとだけ書いたが、
+`git worktree add ~/wt/ts-sendback main` は
+`fatal: 'main' is already used by worktree at '/home/dev/projects/skills/token-shunt'`
+で失敗した。**`--detach` で `98e2dbb` に固定した。**
+このブロックは worktree 内で commit しないので、腕の同一性（どの commit を
+測ったか）は detached の方がむしろ明示的である。**測定内容は変わらない。**
+
+**到達確認（項目 5）。** `run.sh:396` の既定 off は、渡し忘れが
+「完走した基準線」に化ける経路なので、**実機を使わずに 2 段で確かめた。**
+
+- **(a) `drive.sh` → runner。** `TS_RUNNER` を差し替えた double で
+  `SENDBACK=on bash evals/compare/drive.sh` を回すと、runner 側で
+  `SENDBACK=on` が 2 回とも見えた。`drive.sh` は `SENDBACK` に触れず、
+  env も洗っていない（`grep` で確認）。
+- **(b) `run.sh` → `claude` プロセス。** `run.sh` を source し、
+  `claude` を環境変数を印字するだけの double に置き換えて
+  `run_claude` を 2 回呼んだ:
+
+  | 渡したもの | `TOKEN_SHUNT_SENDBACK` | `SENDBACK_TRIAL_LOG` |
+  |---|---|---|
+  | `SENDBACK=on` | `on` | `<transcript>.sendback.jsonl` |
+  | `SENDBACK=off` | `off` | 未設定 |
+
+**副産物: 事後に腕を証明できる。** `SENDBACK=on` のときだけ
+`run.sh:409` が transcript の隣に `*.sendback.jsonl` を置く。
+**このファイルの有無が、run ごとの腕の記録である** ——
+Lock B の `session_budget_bytes` 列と同じ役割を果たす。
+block が 0 件だったときに「渡し忘れ」と区別できる。§7 の退避対象に加える。
 
 ## 9. これが答えないこと
 
