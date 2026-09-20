@@ -1,0 +1,10 @@
+run,case,direct_read_bytes,auto_read_bytes,direct_cost_usd,auto_cost_usd,direct_accuracy,auto_accuracy,direct_pass,auto_pass,auto_reasons
+run.3wusqHhT,django-subthreshold-bare,,376,,0.2042,,1,,0,child_msg_cap: agent result 4108 chars > 4000
+run.G1Xd4PM1,django-subthreshold-bare,,25901,,0.1125,,1,,0,"agent_type: no Agent with subagent_type=token-shunt:bulk-reader (saw []); agent_calls: 0 Agent calls, want 1..4; single_invocation: no Agent prompt contains all 3 paths; child_reads_once: no successful carrier Read: /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/db/migrations/graph.py; child_reads_once: no successful carrier Read: /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/core/management/commands/showmigrations.py; child_reads_once: no successful carrier Read: /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/db/migrations/recorder.py; parent_no_read: parent Read succeeded on /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/core/management/commands/showmigrations.py; parent_no_read: parent Read succeeded on /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/db/migrations/recorder.py; parent_no_read: parent Read succeeded on /home/dev/wt/ts-sendback/evals/compare/tmp/runs/run.G1Xd4PM1/work/fixtures/django/django/db/migrations/graph.py"
+run.RNES7N0k,django-subthreshold-bare,,0,,0.1927,,1,,1,
+run.Rv9uhXjg,django-subthreshold-bare,,0,,0.1921,,1,,1,
+run.fj3nHRRm,django-subthreshold-bare,,0,,0.1915,,1,,0,child_msg_cap: agent result 5150 chars > 4000
+run.hFXszq8W,django-subthreshold-bare,,0,,0.1763,,1,,1,
+run.u02JElgT,django-subthreshold-bare,,0,,0.1965,,1,,1,
+run.wZM4SCU8,django-subthreshold-bare,,0,,0.1799,,1,,1,
+run.yregs32O,django-subthreshold-bare,,735,,0.2099,,1,,0,child_msg_cap: agent result 4922 chars > 4000
